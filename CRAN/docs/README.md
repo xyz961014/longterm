@@ -7,24 +7,24 @@
 - $num\_steps$ 只能按时间步计算，因此计算中将计算分到每个时间步中，期望的输入和输出变为$X \in (batch\_size, embedding\_dim)$,$h \in (batch\_size,  hidden\_size)$
 - 设计一个Memory来存储之前已建模的语义信息。Memory中最多存N个键值对。
 $$ \mathcal{M} = \{ < K_n, V_n > \}_{n=1}^{N} $$
->> 其中每个$V_i$代表一个区域（长度为L，未填满用padding填上），$V_i \in (L, hidden\_size)$。
->>$K \in (N, d_k)$, $V \in (N,L, hidden\_size)$。$d_k$是key的维数,暂时取与$embedding\_dim$相等，若不等则之后查询的第一步可以加一个线性层。
+>> 其中每个$V_i$代表一个区域（长度为L，未填满用padding填上），$V_i \in (b, L, hidden\_size)$。
+>>$K \in ( N,b, d_k)$, $V \in (N,L,b, hidden\_size)$。$d_k$是key的维数,暂时取与$embedding\_dim$相等，若不等则之后查询的第一步可以加一个线性层。
 
 >1. 查询：查询当前时间步需要Attention的区域
-$$ weights = softmax(X \cdot K^T) $$
-$$ y =topk (weights) $$
->>$y \in  R^{d_k}$, 是取出的k个区域对应的权值， $y_i$对应的区域是$V_i (i = 1,2,3,...,k)$
->> $V_i \in (L, hidden\_size)$
+$$ weights = softmax(X \cdot K^T)    \ (dim:(b, N)) $$
+$$ y =topk (weights)  \ (dim:(b, k)) $$
+>>$y \in  (b, k)$, 是取出的k个区域对应的权值， $y_i$对应的区域是$V_i (i = 1,2,3,...,k)$
+>> $V_i \in (b, L, hidden\_size)$
 
 >2. 分别做Attention，对于每个 $(y_i, V_i)$
 $$ Query = X, Keys = V_i, Values = V_i$$
 $$ Q = W_Q X, K = V_i  W_K, V = V_i$$
-$$Attn_i = \sum_j softmax(\frac{QK^T}{\sqrt{d_k}})_j \cdot V\_{ij}$$
+$$Attn_i = \sum_j softmax(\frac{QK^T}{\sqrt{d_k}})_j \cdot V_{ij} \ (dim: (b,d_h))$$
 最后加权求和
-$$ Attention  = \sum\_{i=1}^k y_i \cdot Attn_i$$
+$$ Attention  = \sum_{i=1}^k y_i \cdot Attn_i \ (dim: (b, d_h))$$
 
 >3. 更新$hidden\_state$
-$$ h = W_h \cdot concat(Attention, X) + b_h$$
+$$ h = W_h \cdot concat(Attention, X) + b_h \ (dim: (b, d_h))$$
 >4. 更新Memory
 
   $V \in (N, L, hidden\_size)$，考察V中是否是满的（即是否还有全零的空位）

@@ -11,16 +11,26 @@ class Cache(nn.Module):
         Arguments of args:
         N: size of the Cache
         dk: dimension of key
-        dv: dimension of value
+        dv: dimension of value, the same as hidden_size
         L: max length of a sequence stored in one value
         k: select top k values
         """
         self.args = args
-        self.keys = torch.zeros(args.cache_N, args.cache_dk, requires_grad=False)
-        self.values = torch.zeros(args.cache_N, args.cache_L, args.cache_dv, requires_grad=False)
+        self.keys = nn.ParameterDict({
+            str(i): nn.Parameter(torch.zeros(args.batch_size, args.cache_dk), requires_grad=False) for i in range(args.cache_N)
+            })
+        self.values = nn.ParameterDict({
+            str(i): nn.Parameter(torch.zeros(args.cache_L, args.batch_size, args.hidden_size), requires_grad=False) for i in range(args.cache_N)
+            })
         self.renew_state = [0, 0] # current renew place
         self.attn = DotProductAttention()
-        self.summary = nn.Linear(args.cache_L*args.cache_dv, args.cache_dk) # to compute the key from a Zone, may be sub with a more complicated one
+        self.lookup = nn.Linear(args.embedding_dim, args.cache_dk)
+        self.summary = nn.Linear(args.cache_L*args.hidden_size, args.cache_dk) # to compute the key from a Zone, may be sub with a more complicated one
+        self.batch_size = args.batch_size
+        self.L = args.cache_L
+        self.N = args.cache_N
+        self.dk = args.cache_dk
+        self.dv = args.hidden_size
         self.topk = args.cache_k
 
     def to(self, device):
@@ -28,21 +38,58 @@ class Cache(nn.Module):
         self.keys = self.keys.to(device)
         self.values = self.values.to(device)
 
+    def _get_keys(self):
+        keys = self.keys.values()
+        #print("keys:",keys)
+        keys = torch.cat(tuple(keys), 0)
+        keys = keys.view(self.N, -1, self.dk)
+        return keys
+
+    def _get_values(self):
+        values = self.values.values()
+        values = torch.cat(tuple(values), 0)
+        values = values.view(self.N, self.L, -1, self.dv)
+        return values
+
+    def set_batch_size(self, batch_size):
+        self.batch_size = batch_size
+        self.keys.clear()
+        self.values.clear()
+        self.keys.update({
+            str(i): nn.Parameter(torch.zeros(batch_size, self.dk), requires_grad=False) for i in range(self.N)
+            })
+        self.values.update({
+            str(i): nn.Parameter(torch.zeros(self.L, batch_size, self.dv), requires_grad=False) for i in range(self.N)
+            })
+        self.renew_state = [0, 0]
+
+
     def forward(self, query):
-        #print("1",query.shape, self.keys.shape, self.values.shape)
+        #query = self.lookup(query)
+        keys = self._get_keys()
+        values = self._get_values()
+
+        keys = keys.transpose(0, 1).contiguous()
+        values = values.transpose(0, 2).contiguous()
+        values = values.transpose(1, 2).contiguous()
+        #print("1",query.shape, keys.shape, values.shape)
         #print(query.type(), self.keys.type(), self.values.type())
-        attention, _ = self.attn(query, self.keys, self.values.view([1]+list(self.values.size())))
+        attention, _ = self.attn(query, keys, values)
+
         topk_weights, topk_indices = attention.topk(self.topk)
-        topk_weights = topk_weights.view(-1)
-        topk_indices = topk_indices.view(-1)
-        #print(attention, topk_indices)
-        outputs = torch.tensor([], device=self.values.device)
-        #print(topk_indices.shape)
-        #print(self.values.shape)
-        for ind in topk_indices:
-            zone = self.values[ind.item()]
-            zone = zone.view([1]+list(zone.size()))
-            outputs = torch.cat((outputs, zone), 0)
+        #topk_weights = topk_weights.view(-1)
+        #topk_indices = topk_indices.view(-1)
+        topk_indices = topk_indices.transpose(0, 2).contiguous().view(self.topk, -1)
+        outputs = torch.tensor([], device=values.device)
+        for batch in topk_indices:
+            zones = torch.tensor([], device=values.device)
+            for ib, ind in enumerate(batch):
+                #print(self.values, "key", ib+max(0, self.renew_state[0]-self.N+1))
+                zone = self.values[str(ind.item()+max(0, self.renew_state[0]-self.N+1))][:, ib, :]
+                zone = zone.view([1]+list(zone.size()))
+                zones = torch.cat((zones, zone), 0)
+            zones = zones.view([1]+list(zones.size()))
+            outputs = torch.cat((outputs, zones), 0)
         #print("cacheoutput", outputs.shape)
             
         return topk_weights, outputs
@@ -51,37 +98,37 @@ class Cache(nn.Module):
         #print("hidden", hidden.shape)
         hidden = hidden.detach()
         n, l = self.renew_state
-        if l < self.args.cache_L - 1:
-            value_to_update = self.values[n]
+        if l < self.L:
+            try:
+                value_to_update = self.values[str(n)]
+            except:
+                print(self)
             value_to_update[l] = hidden
             l += 1
             #print(self.keys[n].shape, self.summary(value_to_update.view(-1)).shape)
-            self.keys[n] = torch.mean(value_to_update, 0)
-            self.values[n] = value_to_update
+            self.keys.update({str(n): nn.Parameter(F.relu(self.summary(value_to_update.view(-1, self.L*self.dv))), requires_grad=False)})
+            self.values[str(n)] = value_to_update
             self.renew_state = [n, l]
-        elif l == self.args.cache_L - 1:
-            if n < self.args.cache_N - 1:
-                self.renew_state = [n+1, 0]
-                self.renew(hidden)
-            elif n == self.args.cache_N - 1:
+        elif l == self.L:
+            if n >= self.N - 1:
                 self.eliminate_last()
-                n -= 1
-                l = 0
-                self.renew_state = [n, l]
-                self.renew(hidden)
+            self.renew_state = [n+1, 0]
+            self.renew(hidden)
 
     def eliminate_last(self):
-        new_key = torch.tensor([], device=self.keys.device)
-        new_value = torch.tensor([], device=self.values.device)
-        for ind, (key, val) in enumerate(list(zip(self.keys,self.values))):
-            if ind > 0:
-                new_key = torch.cat((new_key, key.view([1]+list(key.size()))), 0)
-                new_value = torch.cat((new_value, val.view([1]+list(val.size()))), 0)
-        else:
-            zero_key = torch.zeros(1, key.size(0), device=self.keys.device)
-            zero_value = torch.zeros(1, val.size(0), val.size(1), device=self.values.device)
-            new_key = torch.cat((new_key, zero_key), 0)
-            new_value = torch.cat((new_value, zero_value), 0)
-        self.values = new_value
-        self.keys = new_key
-        
+        #print(self.keys.keys(), self.values.keys())
+        keys_keys = list(self.keys.keys())
+        keys_values = list(self.values.keys())
+        keys_keys = sorted(list(map(int, keys_keys)))
+        keys_values = sorted(list(map(int, keys_values)))
+        eli_key = self.keys.pop(str(keys_keys[0]))
+        eli_value = self.values.pop(str(keys_values[0]))
+        self.keys.update({
+            str(keys_keys[-1]+1): nn.Parameter(torch.zeros(self.batch_size, self.dk), requires_grad=False)
+            })
+        self.values.update({
+            str(keys_values[-1]+1): nn.Parameter(torch.zeros(self.L, self.batch_size, self.dv), requires_grad=False)
+            })
+        device = eli_key.device
+        self.to(device)
+                

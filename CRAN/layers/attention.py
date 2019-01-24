@@ -13,7 +13,10 @@ class DotProductAttention(nn.Module):
         query_attn = query.view(-1, 1, query.size(-1))
         keys_T = keys_T.view(-1, keys_T.size(-2), keys_T.size(-1))
         values_attn = values.view(list(values.size())[:2]+[-1])
-        #print(query_attn.shape, keys_T.shape, values_attn.shape)
+        try:
+            assert (query_attn.size(0) == keys_T.size(0) and query_attn.size(0) == values_attn.size(0) and keys_T.size(0) == values_attn.size(0)), "Batch size not justified, please check"
+        except:
+            print(query_attn.shape, keys_T.shape, values_attn.shape)
         assert (query_attn.size(0) == keys_T.size(0) and query_attn.size(0) == values_attn.size(0) and keys_T.size(0) == values_attn.size(0)), "Batch size not justified, please check"
         weights = F.softmax(torch.matmul(query_attn, keys_T) / np.sqrt(keys_T.size(-2)), 2)
         #print(query_attn, keys_T, weights)

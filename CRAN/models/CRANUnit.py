@@ -20,43 +20,39 @@ class CRANUnit(nn.Module):
             k: select top k values
         """
         super().__init__()
+        self.args = args
         self.batch_size = args.batch_size
         self.attention_wq = nn.Linear(args.embedding_dim, args.hidden_size)
         self.attention_wk = nn.Linear(args.hidden_size, args.hidden_size)
         self.compute_hidden = nn.Linear(args.hidden_size*2, args.hidden_size)
 
-        self.caches = nn.ModuleList([Cache(args) for _ in range(args.batch_size)])
+        self.cache = Cache(args)
         self.attn = DotProductAttention()
 
     def to(self, device):
         super().to(device)
-        for cache in self.caches:
-            cache.to(device)
+        self.cache.to(device)
 
     def set_batch_size(self, batch_size):
+        #self.args.batch_size = batch_size
         self.batch_size = batch_size
+        self.cache.set_batch_size(batch_size)
         
     def forward(self, inputs):
         #print(inputs.shape)
-        hidden_states = torch.tensor([], device=inputs.device)
-        for i in range(self.batch_size):
-            weights, zones = self.caches[i](inputs[i])
-            #print(weights.shape, zones.shape)
-            attention_output = torch.zeros_like(zones[0][0])
-            for weight, zone in list(zip(weights, zones)):
-                query = self.attention_wq(inputs[i])
-                key = self.attention_wk(zone)
-                key, zone = key.view([1]+list(key.size())), zone.view([1]+list(zone.size()))
-                #print(query.shape, key.shape, zone.shape)
-                _, output = self.attn(query, key, zone)
-                output = output.view(-1)
-                attention_output += output * weight
-                #print(attention_output.shape, inputs.shape)
-            hidden_state = self.compute_hidden(torch.cat((attention_output, inputs[i]), 0))
-            self.caches[i].renew(hidden_state)
-            hidden_states = torch.cat((hidden_states, hidden_state.view([1]+list(hidden_state.size()))), 0)
+        weights, zones = self.cache(inputs)
+        #print(weights.shape, zones.shape)
+        query = self.attention_wq(inputs)
+        query = torch.cat(tuple(query.view([1]+list(query.size())) for _ in range(self.args.cache_k)), 0)
+        keys = self.attention_wk(zones)
+        zones = zones.view([-1]+list(zones.size()[2:]))
+        _, output = self.attn(query, keys, zones)
+        output = output.view(self.args.cache_k, self.batch_size, -1).transpose(0, 1).contiguous()
+        attention_output = torch.matmul(weights, output).view(self.batch_size, -1)
+        hidden_state = F.relu(self.compute_hidden(torch.cat((attention_output, inputs), 1)))
+        self.cache.renew(hidden_state)
 
-        return hidden_states
+        return hidden_state
 
 
         

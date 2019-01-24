@@ -49,4 +49,5 @@ class CRANModel(nn.Module):
         return outputs
 
     def set_batch_size(self, batch_size):
+        #self.args.batch_size = batch_size
         self.cranunit.set_batch_size(batch_size)
