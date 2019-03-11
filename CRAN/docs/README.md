@@ -24,7 +24,15 @@ $$Attn_i = \sum_j softmax(\frac{QK^T}{\sqrt{d_k}})_j \cdot V_{ij} \ (dim: (b,d_h
 $$ Attention  = \sum_{i=1}^k y_i \cdot Attn_i \ (dim: (b, d_h))$$
 
 >3. 更新$hidden\_state$
-$$ h = W_h \cdot concat(Attention, X) + b_h \ (dim: (b, d_h))$$
+
+标准方法：
+$$ h = W_h \cdot concat(Attention, X) + b_h \ (dim: (b, d_h)) $$
+
+gated方法(与GRU相同)：
+$$ r = \sigma(W_r \cdot concat(Attention, X) + b_r) \ (dim: (b, d_h)) $$
+$$ z = \sigma(W_z \cdot concat(Attention, X) + b_z) \ (dim: (b, d_h)) $$
+$$ n = tanh(r \cdot (W_nX + b_n) + W_i \cdot Atention + b_i) \ (dim: (b, d_h)) $$
+$$ h = (1 - z)\cdot n + z \cdot Attention \ (dim: (b, d_h))$$
 >4. 更新Memory
 
   $V \in (N, L, hidden\_size)$，考察V中是否是满的（即是否还有全零的空位）

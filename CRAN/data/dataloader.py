@@ -82,7 +82,7 @@ class Corpus(object):
     def get_train_loader(self, batch_size=20, num_steps=35):
         self.train_data.batchify(batch_size)
         self.train_data.set_num_steps(num_steps)
-        return DataLoader(self.train_data, batch_size, drop_last=True)
+        return DataLoader(self.train_data, batch_size, shuffle=False, drop_last=True)
 
     def get_valid_loader(self, batch_size=10, num_steps=35):
         self.valid_data.batchify(batch_size)
@@ -157,6 +157,7 @@ class textDataset(Dataset):
     def __init__(self, raw_data, batch_size=20, num_steps=35, transform=None):
         self.raw_data = raw_data
         self.transform = transform
+        self.batch_size = batch_size
         self.num_steps = num_steps
         
         self.batchify(batch_size)
@@ -169,6 +170,10 @@ class textDataset(Dataset):
 
     def set_num_steps(self, num_steps):
         self.num_steps = num_steps
+
+    def shuffle(self):
+        ind = torch.randperm(self.batch_size)
+        self.data = self.data[ind]
 
     def __len__(self):
         return self.batch_size * ((self.data.size(1) - 2) // self.num_steps)
