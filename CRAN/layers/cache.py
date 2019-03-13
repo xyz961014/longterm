@@ -102,13 +102,13 @@ class Cache(nn.Module):
             topk_weights, topk_indices = attention.topk(self.N)
             topk_indices = topk_indices.transpose(0, 2).contiguous().view(self.N, -1)
             batch = torch.cat(tuple(torch.arange(self.batch_size) for _ in range(self.N))).view(self.N, -1)
-            topk_weights = F.softmax(topk_weights[0][0][:self.topk] * self.args.normc, 0).view(-1, 1, self.topk)
+            topk_weights = F.softmax(topk_weights[0][0][:self.topk], 0).view(-1, 1, self.topk)
             topk_weights = torch.cat((topk_weights, torch.zeros(self.N - self.topk, device=topk_weights.device).view(-1, 1, self.N - self.topk)), 2)
         else:
             topk_weights, topk_indices = attention.topk(self.topk)
             topk_indices = topk_indices.transpose(0, 2).contiguous().view(self.topk, -1)
             batch = torch.cat(tuple(torch.arange(self.batch_size) for _ in range(self.topk))).view(self.topk, -1)
-            topk_weights = F.softmax(topk_weights * self.args.normc, 2)
+            topk_weights = F.softmax(topk_weights, 2)
         #outputs = torch.tensor([], device=values.device)
         #for batch in topk_indices:
         #    zones = torch.tensor([], device=values.device)

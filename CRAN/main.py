@@ -32,13 +32,12 @@ def parseargs(args=None):
     parser.add_argument("--vocab_size", type=int, default=10000, help="vocabulary size, default: 10000")
     parser.add_argument("--embedding_dim", type=int, default=300, help="dimension of embedding, default: 300")
     parser.add_argument("--hidden_size", type=int, default=300, help="size of hidden state, default: 300")
-    parser.add_argument("--normc", type=float, default=10, help="norm constant multiplied when normalize the weight, default: 10")
     parser.add_argument("--cache_N", type=int, default=5, help="size of Cache, default: 5")
     parser.add_argument("--cache_dk", type=int, default=300, help="dimension of key, default: 300")
     parser.add_argument("--cache_L", type=int, default=10, help="max length of a sequence in one value, default: 10")
     parser.add_argument("--cache_k", type=int, default=3, help="select top k values, default: 3")
     parser.add_argument("--lr", type=float, default=0.1, help="learning rate, default: 0.1")
-    parser.add_argument("--max_epoch", type=int, default=10, help="max number of training epochs, default: 10")
+    parser.add_argument("--max_epoch", type=int, default=30, help="max number of training epochs, default: 10")
     parser.add_argument("--dropout", type=float, default=0.1, help="dropout, default: 0.1")
     parser.add_argument("--seed", type=int, default=1111, help="random seed, default: 1111")
     parser.add_argument("--update", type=str, default="standard", choices=["standard", "gated"], help="method of updating hidden state, options: standard, gated. default: standard")
@@ -123,14 +122,14 @@ def main(args):
             if re.match(r"cranunit.cache.keys", key) or re.match(r"cranunit.cache.values", key):
                 popitem = checkpoint["model_state_dict"].pop(key)
                 update_key = key.split(".")
-                update_key[-1] = str(int(update_key[-1]) % 5)
+                update_key[-1] = str(int(update_key[-1]) % model_args.cache_N)
                 update_key = ".".join(update_key)
                 if re.match(r"cranunit.cache.keys", key):
                     checkpoint["model_state_dict"].update({update_key: torch.zeros(model_args.batch_size, model_args.cache_dk, device=popitem.device)})
                     if model_args.demo:
                         update_key = key.split(".")
                         update_key[2] = "words"
-                        update_key[-1] = str(int(update_key[-1]) % 5)
+                        update_key[-1] = str(int(update_key[-1]) % model_args.cache_N)
                         update_key = ".".join(update_key)
                         checkpoint["model_state_dict"].update({update_key: torch.zeros(model_args.cache_L, model_args.batch_size, device=popitem.device)})
                 elif re.match(r"cranunit.cache.values", key):
@@ -154,9 +153,9 @@ def main(args):
     optimizer = optim.SGD(model.parameters(), lr=args.lr)
 
 
-    train_loader = corpus.get_train_loader(batch_size=args.batch_size, num_steps=args.num_steps)
-    valid_loader = corpus.get_valid_loader(batch_size=args.eval_batch_size, num_steps=args.num_steps)
-    test_loader = corpus.get_test_loader(batch_size=args.eval_batch_size, num_steps=args.num_steps)
+    train_loader = corpus.get_train_loader(batch_size=model.args.batch_size, num_steps=model.args.num_steps)
+    valid_loader = corpus.get_valid_loader(batch_size=model.args.eval_batch_size, num_steps=model.args.num_steps)
+    test_loader = corpus.get_test_loader(batch_size=model.args.eval_batch_size, num_steps=model.args.num_steps)
 
 
     for epoch in range(1, args.max_epoch+1):
@@ -168,7 +167,6 @@ def main(args):
                 'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),valid_loss, np.exp(valid_loss)))
         print('-' * 89)
         writer.add_scalar("valid/ppl", np.exp(valid_loss), epoch)
-        ipdb.set_trace()
         torch.save({
             "model_args": model.args,
             "model_state_dict": model.state_dict(),
