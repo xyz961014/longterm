@@ -154,7 +154,8 @@
 	对于填入$h^{(t)}$的Key-Value对，需要更新其Key：
 	\begin{itemize}
 		\item \textbf{4.1} $Key = ReLU(W_S\cdot Value + b_S)$
-		\item \textbf{4.2} $Key = multiheadattentions(Value)$
+		\item \textbf{4.2} $Key = multiheadselfattentions(Value)$
+		\item \textbf{4.3} $Key = BiLSTM(Value)$
 	\end{itemize}
 %----------------------------------------------------------------------------------------
 

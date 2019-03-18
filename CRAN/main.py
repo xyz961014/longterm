@@ -41,6 +41,13 @@ def parseargs(args=None):
     parser.add_argument("--dropout", type=float, default=0.1, help="dropout, default: 0.1")
     parser.add_argument("--seed", type=int, default=1111, help="random seed, default: 1111")
     parser.add_argument("--update", type=str, default="standard", choices=["standard", "gated"], help="method of updating hidden state, options: standard, gated. default: standard")
+    parser.add_argument("--summary", type=str, default="standard", choices=["standard", "mlp", "bilstm", "transformer"], help="method of summary a key from a zone, options: standard, mlp, bilstm, transformer. default: standard")
+    parser.add_argument("--summary_bilstm_num_layers", type=int, default=2, help="layer numbers of bilstm in summary if chosen, default: 2")
+    parser.add_argument("--summary_mlp_num_layers", type=int, default=3, help="layer numbers of mlp in summary if chosen, default: 3")
+    parser.add_argument("--summary_mlp_hidden", type=int, default=300, help="hidden size of mlp in summary if chosen, default: 300")
+    parser.add_argument("--summary_transformer_num_layers", type=int, default=6, help="layer numbers of transformer in summary if chosen, default: 6")
+    parser.add_argument("--summary_transformer_num_head", type=int, default=6, help="head numbers of transformer in summary if chosen, default: 6")
+    parser.add_argument("--summary_transformer_d_ff", type=int, default=1024, help="hidden size of FFN in transformer in summary if chosen, default: 1024")
     parser.add_argument("--load", type=str, default="",  help="load model from saved models")
     return parser.parse_args(args)
     

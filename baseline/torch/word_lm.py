@@ -12,10 +12,13 @@ import torch.optim as optim
 
 from torch.utils.data import DataLoader
 
+import os
 import sys
 sys.path.append("../..")
 from CRAN.data import dataloader
 import argparse
+
+from tensorboardX import SummaryWriter
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -24,6 +27,7 @@ LSTM = "lstm"
 def parseargs(arg=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", help="data path of ptb data directory")
+    parser.add_argument("--name",type=str, default="baseline", help="baseline name")
     return parser.parse_args(arg)
 
 def repackage_state(s):
@@ -63,8 +67,8 @@ class PTBModel(nn.Module):
     def init_weights(self):
         init_scale = self.config.init_scale
         self.embeddings.weight.data.uniform_(-init_scale, init_scale)
+        self.hidden2tag.bias.data.zero_()
         self.hidden2tag.weight.data.uniform_(-init_scale, init_scale)
-        self.hidden2tag.weight.data.zero_()
 
     def to(self, device):
         super().to(device)
@@ -160,7 +164,7 @@ class SmallConfig(object):
   batch_size = 20
   eval_batch_size = 10
   vocab_size = 10000
-  disp_freq = 5
+  disp_freq = 50
   rnn_mode = LSTM
 
 
@@ -203,6 +207,8 @@ def run_epoch(model, data_loader, criterion, optimizer, epoch):
                     'loss {:5.2f} | ppl {:8.2f}'.format(
                 epoch + 1, i, len(data_loader), model.config.learning_rate,
                 elapsed * 1000 / model.config.disp_freq, cur_loss, np.exp(cur_loss)))
+            writer.add_scalar("train/loss", cur_loss, len(data_loader)*(epoch-1)+i)
+            writer.add_scalar("train/ppl", np.exp(cur_loss), len(data_loader)*(epoch-1)+i)
             total_loss = 0.
             start_time = time.time()
 
@@ -263,6 +269,7 @@ def main(args):
         print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
                 'valid ppl {:8.2f}'.format(epoch + 1, (time.time() - epoch_start_time),valid_loss, np.exp(valid_loss)))
         print('-' * 89)
+        writer.add_scalar("valid/ppl", np.exp(valid_loss), epoch)
         #for i, (data, targets) in enumerate(train_loader):
             #model.train()
             #states = repackage_state(states)
@@ -320,6 +327,9 @@ def main(args):
 
 if __name__ == "__main__":
     args = parseargs()
+    if not os.path.exists("./log/" + args.name):
+        os.mkdir("./log/" + args.name)
+    writer = SummaryWriter("log/" + args.name)
     main(args)
             
 

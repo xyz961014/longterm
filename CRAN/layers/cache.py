@@ -4,6 +4,8 @@ import torch.nn.functional as F
 import ipdb
 
 from CRAN.layers.attention import DotProductAttention
+from CRAN.layers.attention import Transformer
+from CRAN.layers.utils import MLP
 
 class Cache(nn.Module):
     def __init__(self, args, corpus=None):
@@ -32,7 +34,28 @@ class Cache(nn.Module):
         self.renew_state = [0, 0] # current renew place
         self.attn = DotProductAttention()
         self.lookup = nn.Linear(args.embedding_dim, args.cache_dk)
-        self.summary = nn.Linear(args.cache_L*args.hidden_size, args.cache_dk) # to compute the key from a Zone, may be sub with a more complicated one
+        if args.summary == "standard":
+            self.summary = nn.Linear(args.cache_L*args.hidden_size, args.cache_dk) # to compute the key from a Zone, may be sub with a more complicated one
+        elif args.summary == "mlp":
+            self.summary = MLP(
+                    num_layers=args.summary_mlp_num_layers,
+                    input_size=args.cache_L * args.hidden_size,
+                    hidden_size=args.summary_mlp_hidden,
+                    output_size=args.cache_dk)
+        elif args.summary == "bilstm":
+            self.summary = nn.LSTM(
+                    input_size=args.hidden_size,
+                    hidden_size=args.cache_dk,
+                    num_layers=args.summary_bilstm_num_layers,
+                    dropout=args.dropout,
+                    bidirectional=True)
+        elif args.summary == "transformer":
+            self.summary = Transformer(
+                    num_layers=args.summary_transformer_num_layers,
+                    d_model=args.hidden_size,
+                    num_head=args.summary_transformer_num_head,
+                    d_ff=args.summary_transformer_d_ff,
+                    dropout=args.dropout)
         self.batch_size = args.batch_size
         self.L = args.cache_L
         self.N = args.cache_N
@@ -148,7 +171,18 @@ class Cache(nn.Module):
             value_to_update[l] = hidden
             l += 1
             #print(self.keys[n].shape, self.summary(value_to_update.view(-1)).shape)
-            self.keys.update({str(n): nn.Parameter(F.relu(self.summary(value_to_update.view(-1, self.L*self.dv))), requires_grad=False)})
+            if self.args.summary == "standard":
+                new_key = F.relu(self.summary(value_to_update.view(-1, self.L*self.dv)))
+            elif self.args.summary == "mlp":
+                new_key = self.summary(value_to_update.view(-1, self.L*self.dv))
+            elif self.args.summary == "bilstm":
+                output, _ = self.summary(value_to_update)
+                output = torch.mean(output.view(self.L, self.batch_size, -1, self.dk), 2)
+                new_key = (output[0] + output[-1]) / 2
+            elif self.args.summary == "transformer":
+                output = self.summary(value_to_update)
+                new_key = torch.mean(output, 0)
+            self.keys.update({str(n): nn.Parameter(new_key, requires_grad=False)})
             self.values[str(n)] = value_to_update
             self.renew_state = [n, l]
         elif l == self.L:
