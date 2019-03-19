@@ -104,7 +104,6 @@ class Cache(nn.Module):
 
         self.renew_state = [0, 0]
 
-
     def forward(self, query):
         #query = self.lookup(query)
         keys = self._get_keys()

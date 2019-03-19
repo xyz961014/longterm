@@ -57,7 +57,6 @@ def repackage_state(s):
         return s.detach()
     else:
         return list(repackage_state(v) for v in s)
-
 def train(model, data_loader, criterion, optimizer, epoch, arg):
     model.set_batch_size(arg.batch_size)
     model.to(device)

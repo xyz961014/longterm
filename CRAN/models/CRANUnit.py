@@ -60,7 +60,6 @@ class CRANUnit(nn.Module):
         self.batch_size = batch_size
         self.cache.set_batch_size(batch_size)
 
-        
     def forward(self, inputs, hiddens, words=None):
         hiddens = repackage_state(hiddens)
         if self.demo:
