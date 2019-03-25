@@ -151,7 +151,7 @@ class PTBModel(nn.Module):
 class SmallConfig(object):
   """Small config."""
   init_scale = 0.1
-  learning_rate = 10.0
+  learning_rate = 20.0
   max_grad_norm = 0.25
   num_layers = 2
   num_steps = 35
@@ -159,12 +159,12 @@ class SmallConfig(object):
   embedding_dim = 200
   max_epoch = 4
   max_max_epoch = 13
-  keep_prob = 1.0
+  keep_prob = 0.8
   lr_decay = 0.5
   batch_size = 20
   eval_batch_size = 10
   vocab_size = 10000
-  disp_freq = 50
+  disp_freq = 200
   rnn_mode = LSTM
 
 
@@ -241,7 +241,6 @@ def main(args):
     train_loader = corpus.get_train_loader(batch_size=config.batch_size, num_steps=config.num_steps)
     valid_loader = corpus.get_valid_loader(batch_size=config.eval_batch_size, num_steps=config.num_steps)
     test_loader = corpus.get_test_loader(batch_size=config.eval_batch_size, num_steps=config.num_steps)
-    print(corpus.vocabulary.num_words)
     config.vocab_size = corpus.vocabulary.num_words
     
     model = PTBModel(config)
@@ -270,6 +269,10 @@ def main(args):
                 'valid ppl {:8.2f}'.format(epoch + 1, (time.time() - epoch_start_time),valid_loss, np.exp(valid_loss)))
         print('-' * 89)
         writer.add_scalar("valid/ppl", np.exp(valid_loss), epoch)
+    test_loss = evaluate(model, test_loader, loss_function)
+    print('-' * 89)
+    print('| end of training | test ppl {:8.2f}'.format(np.exp(test_loss)))
+    print('-' * 89)
         #for i, (data, targets) in enumerate(train_loader):
             #model.train()
             #states = repackage_state(states)

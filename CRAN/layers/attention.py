@@ -11,7 +11,7 @@ class DotProductAttention(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, query, keys, values):
+    def forward(self, query, keys, values, mask=None):
         keys_T = keys.transpose(-2, -1)
         keys_T = keys_T.view(-1, keys_T.size(-2), keys_T.size(-1))
         values_attn = values.view(list(values.size())[:2]+[-1])
@@ -21,6 +21,9 @@ class DotProductAttention(nn.Module):
         except:
             print("Q:%s, K:%s, V:%s" % (query_attn.shape, keys_T.shape, values_attn.shape))
         assert (query_attn.size(0) == keys_T.size(0) and query_attn.size(0) == values_attn.size(0) and keys_T.size(0) == values_attn.size(0)), "Batch size not justified, please check"
+        if mask:
+            mask = torch.cat(tuple(mask.view([1]+list(mask.size())) for _ in range(keys_T.size(0))), 0)
+            keys_T = torch.matmul(keys_T, mask)
         weights = F.softmax(torch.matmul(query_attn, keys_T) / np.sqrt(keys_T.size(-2)), 2)
         #print(query_attn, keys_T, weights)
         outputs = torch.matmul(weights, values_attn)
@@ -40,9 +43,14 @@ class MultiheadSelfAttention(nn.Module):
         self.LinKs = nn.ModuleList([nn.Linear(d_model, d_model // num_head) for i in range(num_head)])
         self.LinVs = nn.ModuleList([nn.Linear(d_model, d_model // num_head) for i in range(num_head)])
 
-    def forward(self, inputs):
+    def forward(self, inputs, mask=False):
         inputs = inputs.transpose(0, 1).contiguous()
-        heads = tuple(self.attn(self.LinQs[i](self.drop(inputs)), self.LinKs[i](self.drop(inputs)), self.LinVs[i](self.drop(inputs)))[1] for i in range(self.num_head))
+        if mask:
+            l = inputs.size(1)
+            mask_matrix = torch.tensor([[1.0 if j < i else 0.0 for j in range(l)] for i in range(l)], device=inputs.device)
+            heads = tuple(self.attn(self.LinQs[i](self.drop(inputs)), self.LinKs[i](self.drop(inputs)), self.LinVs[i](self.drop(inputs)), mask_matrix)[1] for i in range(self.num_head))
+        else:
+            heads = tuple(self.attn(self.LinQs[i](self.drop(inputs)), self.LinKs[i](self.drop(inputs)), self.LinVs[i](self.drop(inputs)))[1] for i in range(self.num_head))
         concat = torch.cat(heads, -1)
         return self.LinO(concat)
 
@@ -60,11 +68,14 @@ class Transformer(nn.Module):
         self.FFN_2 = nn.Linear(d_ff, d_model)
         self.pos = 0
 
-    def forward(self, x):
+    def forward(self, x, leftward=False):
         size = x.size()
         x = self.positional_encoding(x)
         for i in range(self.num_layers):
-            x = self.attn(x).view(size)
+            if leftward:
+                x = self.attn(x, mask=True).view(size)
+            else:
+                x = self.attn(x).view(size)
             x = self.FFN_2(F.relu(self.FFN_1(x)))
         return x
 
