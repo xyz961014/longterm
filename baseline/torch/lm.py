@@ -45,7 +45,7 @@ def parse_args():
                         help='initial learning rate')
     parser.add_argument('--clip', type=float, default=0.25,
                         help='gradient clipping')
-    parser.add_argument('--epochs', type=int, default=10,
+    parser.add_argument('--epochs', type=int, default=40,
                         help='upper epoch limit')
     parser.add_argument('--batch_size', type=int, default=20, metavar='N',
                         help='batch size')
@@ -82,6 +82,7 @@ class TransformerLM(nn.Module):
                 d_model=args.nhid,
                 num_head=args.nhead,
                 d_ff=args.d_ff,
+                num_steps=args.num_steps,
                 dropout=args.dropout)
         self.decoder = nn.Linear(args.nhid, args.vocab_size)
 
@@ -89,7 +90,7 @@ class TransformerLM(nn.Module):
 
     def forward(self, x, is_training=True):
         emb = self.drop(self.embedding(x))
-        output = self.encoder(emb)
+        output = self.encoder(emb, leftward=True)
         if is_training:
             tag = self.decoder(output)
         else:

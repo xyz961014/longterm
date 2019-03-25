@@ -21,7 +21,7 @@ class DotProductAttention(nn.Module):
         except:
             print("Q:%s, K:%s, V:%s" % (query_attn.shape, keys_T.shape, values_attn.shape))
         assert (query_attn.size(0) == keys_T.size(0) and query_attn.size(0) == values_attn.size(0) and keys_T.size(0) == values_attn.size(0)), "Batch size not justified, please check"
-        if mask:
+        if mask is not None:
             mask = torch.cat(tuple(mask.view([1]+list(mask.size())) for _ in range(keys_T.size(0))), 0)
             keys_T = torch.matmul(keys_T, mask)
         weights = F.softmax(torch.matmul(query_attn, keys_T) / np.sqrt(keys_T.size(-2)), 2)
@@ -32,7 +32,7 @@ class DotProductAttention(nn.Module):
 
 
 class MultiheadSelfAttention(nn.Module):
-    def __init__(self, d_model, num_head, dropout):
+    def __init__(self, d_model, num_head, num_steps, dropout):
         super().__init__()
         self.d_model = d_model
         self.num_head = num_head
@@ -43,12 +43,13 @@ class MultiheadSelfAttention(nn.Module):
         self.LinKs = nn.ModuleList([nn.Linear(d_model, d_model // num_head) for i in range(num_head)])
         self.LinVs = nn.ModuleList([nn.Linear(d_model, d_model // num_head) for i in range(num_head)])
 
+        self.mask_matrix = torch.tensor([[1.0 if j < i else 0.0 for j in range(num_steps)] for i in range(num_steps)])
+
     def forward(self, inputs, mask=False):
         inputs = inputs.transpose(0, 1).contiguous()
         if mask:
-            l = inputs.size(1)
-            mask_matrix = torch.tensor([[1.0 if j < i else 0.0 for j in range(l)] for i in range(l)], device=inputs.device)
-            heads = tuple(self.attn(self.LinQs[i](self.drop(inputs)), self.LinKs[i](self.drop(inputs)), self.LinVs[i](self.drop(inputs)), mask_matrix)[1] for i in range(self.num_head))
+            self.mask_matrix = self.mask_matrix.to(inputs.device)
+            heads = tuple(self.attn(self.LinQs[i](self.drop(inputs)), self.LinKs[i](self.drop(inputs)), self.LinVs[i](self.drop(inputs)), self.mask_matrix)[1] for i in range(self.num_head))
         else:
             heads = tuple(self.attn(self.LinQs[i](self.drop(inputs)), self.LinKs[i](self.drop(inputs)), self.LinVs[i](self.drop(inputs)))[1] for i in range(self.num_head))
         concat = torch.cat(heads, -1)
@@ -58,11 +59,11 @@ class MultiheadSelfAttention(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, num_layers, d_model, num_head, d_ff, dropout):
+    def __init__(self, num_layers, d_model, num_head, d_ff, num_steps, dropout):
         super().__init__()
         self.num_layers = num_layers
         self.d_model = d_model
-        self.attn = MultiheadSelfAttention(d_model, num_head, dropout)
+        self.attn = MultiheadSelfAttention(d_model, num_head, num_steps, dropout)
         self.drop = nn.Dropout(dropout)
         self.FFN_1 = nn.Linear(d_model, d_ff)
         self.FFN_2 = nn.Linear(d_ff, d_model)
