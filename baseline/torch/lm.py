@@ -27,6 +27,10 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str, default='/home/xyz/Documents/Dataset/ptb_sample',
                         help='location of the data corpus')
+    parser.add_argument('--demo', action='store_true',
+                        help='demo mode')
+    parser.add_argument('--adam', action='store_true',
+                        help='adam optimizer')
     parser.add_argument('--model', type=str, default='LSTM',
                         help='type of recurrent net (RNN_TANH, RNN_RELU, LSTM, GRU)')
     parser.add_argument('--rnn', action='store_true', 
@@ -59,8 +63,10 @@ def parse_args():
                         help='random seed')
     parser.add_argument('--log-interval', type=int, default=200, metavar='N',
                         help='report interval')
-    parser.add_argument('--save', type=str, default='model.pt',
+    parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
+    parser.add_argument('--load', type=str, default='',
+                        help='path to load the model')
     args = parser.parse_args()
     return args
 
@@ -75,6 +81,7 @@ def repackage_hidden(h):
 class TransformerLM(nn.Module):
     def __init__(self, args):
         super().__init__()
+        self.args = args
         self.drop = nn.Dropout(args.dropout)
         self.embedding = nn.Embedding(args.vocab_size, args.emsize)
         self.encoder = Transformer(
@@ -91,6 +98,7 @@ class TransformerLM(nn.Module):
     def forward(self, x, is_training=True):
         emb = self.drop(self.embedding(x))
         output = self.encoder(emb, leftward=True)
+        output = self.drop(output)
         if is_training:
             tag = self.decoder(output)
         else:
@@ -113,6 +121,7 @@ class TransformerLM(nn.Module):
 class RNNModel(nn.Module):
     def __init__(self, args):
         super().__init__()
+        self.args = args
         self.drop = nn.Dropout(args.dropout)
         self.embedding = nn.Embedding(args.vocab_size, args.emsize)
         self.rnn_type = args.model
@@ -166,14 +175,15 @@ def train(model, train_loader, criterion, optimizer, args, epoch):
     total_loss = 0.
 
     for batch, (data, targets) in enumerate(train_loader):
-        data, targets = data.transpose(0, 1).contiguous(), targets.transpose(0, 1).contiguous()
+        data, targets = data.to(device), targets.to(device)
+        data, targets = data.t().contiguous(), targets.t().contiguous()
         model.zero_grad()
         if args.rnn:
             hidden = repackage_hidden(hidden)
             output, hidden = model(data, hidden)
         else:
             output = model(data)
-        loss = criterion(output.view(-1, args.vocab_size), targets.view(-1))
+        loss = criterion(output.view(-1, model.args.vocab_size), targets.view(-1))
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
@@ -184,11 +194,11 @@ def train(model, train_loader, criterion, optimizer, args, epoch):
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
-            print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
+            print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.3f} | ms/batch {:5.2f} | '
                     'loss {:5.2f} | ppl {:8.2f}'.format(
-                epoch, batch, len(train_loader), args.lr,
+                epoch, batch, len(train_loader), optimizer.state_dict()["param_groups"][0]["lr"],
                 elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
-            total_loss = 0
+            total_loss = 0.
             start_time = time.time()
 
 
@@ -215,21 +225,38 @@ def main(args):
     torch.manual_seed(args.seed)
 
     corpus = dataloader.Corpus(args.data)
-
+    args.vocab_size = corpus.vocabulary.num_words
     eval_batch_size = args.eval_batch_size
+
+    if args.load:
+        checkpoint = torch.load(args.load)
+        model_args = checkpoint["model_args"]
+        model_args.demo = args.demo
+        args.rnn = model_args.rnn
+        if args.demo:
+            model_args.batch_size = 1
+        if model_args.rnn:
+            model = RNNModel(model_args).to(device)
+        else:
+            model = TransformerLM(model_args).to(device)
+        model.load_state_dict(checkpoint["model_state_dict"])
+    else:
+        if args.rnn:
+            model = RNNModel(args).to(device)
+        else:
+            model = TransformerLM(args).to(device)
+
     train_loader = corpus.get_train_loader(batch_size=args.batch_size, num_steps=args.num_steps)
     valid_loader = corpus.get_valid_loader(batch_size=eval_batch_size, num_steps=args.num_steps)
     test_loader = corpus.get_test_loader(batch_size=eval_batch_size, num_steps=args.num_steps)
 
-    args.vocab_size = corpus.vocabulary.num_words
 
-    if args.rnn:
-        model = RNNModel(args).to(device)
-    else:
-        model = TransformerLM(args).to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=args.lr)
+    if args.adam:
+        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+    else:
+        optimizer = optim.SGD(model.parameters(), lr=args.lr)
 
     for epoch in range(1, args.epochs+1):
         epoch_start_time = time.time()
@@ -240,6 +267,11 @@ def main(args):
                 'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
                                            eval_loss, math.exp(eval_loss)))
         print('-' * 89)
+        torch.save({
+            "model_args": model.args,
+            "model_state_dict": model.state_dict(),
+            }, "save/" + args.save + "_" + str(epoch) + ".pt")
+
 
     test_loss = evaluate(model, test_loader, criterion, args)
     print('=' * 89)

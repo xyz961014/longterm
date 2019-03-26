@@ -47,13 +47,14 @@ class MultiheadSelfAttention(nn.Module):
 
     def forward(self, inputs, mask=False):
         inputs = inputs.transpose(0, 1).contiguous()
+        size = inputs.size()
         if mask:
             self.mask_matrix = self.mask_matrix.to(inputs.device)
             heads = tuple(self.attn(self.LinQs[i](self.drop(inputs)), self.LinKs[i](self.drop(inputs)), self.LinVs[i](self.drop(inputs)), self.mask_matrix)[1] for i in range(self.num_head))
         else:
             heads = tuple(self.attn(self.LinQs[i](self.drop(inputs)), self.LinKs[i](self.drop(inputs)), self.LinVs[i](self.drop(inputs)))[1] for i in range(self.num_head))
         concat = torch.cat(heads, -1)
-        return self.LinO(concat)
+        return self.LinO(concat).view(size).transpose(0, 1).contiguous()
 
 
 
@@ -70,13 +71,12 @@ class Transformer(nn.Module):
         self.pos = 0
 
     def forward(self, x, leftward=False):
-        size = x.size()
         x = self.positional_encoding(x)
         for i in range(self.num_layers):
             if leftward:
-                x = self.attn(x, mask=True).view(size)
+                x = self.attn(x, mask=True)
             else:
-                x = self.attn(x).view(size)
+                x = self.attn(x)
             x = self.FFN_2(F.relu(self.FFN_1(x)))
         return x
 
