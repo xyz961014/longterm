@@ -6,7 +6,7 @@ import collections
 import os
 import sys
 import re
-import mosestokenizer
+#import mosestokenizer
 
 import numpy as np
 import torch
@@ -17,9 +17,9 @@ SOS_token = 1  # Start-of-sentence token
 EOS_token = 2  # End-of-sentence token
 UNK_token = 3  # Unknown word token
 
-normalize = mosestokenizer.MosesPunctuationNormalizer("en")
+#normalize = mosestokenizer.MosesPunctuationNormalizer("en")
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = torch.device("cpu")
 
 class Vocabulary(object):
     def __init__(self, name):
@@ -102,10 +102,11 @@ class Corpus(object):
 
     def _tokenize(self, filename):
         with open(filename, "r", encoding="utf8") as f:
-            corpus = torch.LongTensor()
+            lines = []
             for line in f:
-                line_ids = torch.LongTensor(indexesFromSentence(self.vocabulary, line))
-                corpus = torch.cat((corpus, line_ids))
+                line_ids = torch.LongTensor(indexesFromSentence(self.vocabulary, line)).to(device)
+                lines.append(line_ids)
+            corpus = torch.cat(lines)
         return corpus
         
 
@@ -153,7 +154,7 @@ def ptb_raw_data(data_path=None):
 
 
 class textDataset(Dataset):
-
+    
     def __init__(self, raw_data, batch_size=20, num_steps=35, transform=None):
         self.raw_data = raw_data
         self.transform = transform
@@ -166,7 +167,7 @@ class textDataset(Dataset):
         self.batch_size = batch_size
         batch_len = len(self.raw_data) // batch_size
         self.data = self.raw_data.narrow(0, 0, batch_len * batch_size)
-        self.data = self.data.view(batch_size, -1).to(device)
+        self.data = self.data.view(batch_size, -1)
 
     def set_num_steps(self, num_steps):
         self.num_steps = num_steps

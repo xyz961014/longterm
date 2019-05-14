@@ -1,0 +1,153 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Journal Article
+% LaTeX Template
+% Version 1.4 (15/5/16)
+%
+% This template has been downloaded from:
+% http://www.LaTeXTemplates.com
+%
+% Original author:
+% Frits Wenneker (http://www.howtotex.com) with extensive modifications by
+% Vel (vel@LaTeXTemplates.com)
+%
+% License:
+% CC BY-NC-SA 3.0 (http://creativecommons.org/licenses/by-nc-sa/3.0/)
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%----------------------------------------------------------------------------------------
+%	PACKAGES AND OTHER DOCUMENT CONFIGURATIONS
+%----------------------------------------------------------------------------------------
+
+\documentclass{article}
+
+\usepackage{xeCJK}
+\usepackage{CJK}         % CJK 中文支持
+\usepackage{fancyhdr}
+\usepackage{ctex}
+\usepackage{amsmath,amsfonts,amssymb,graphicx}    % EPS 图片支持
+\usepackage{subfigure}   % 使用子图形
+\usepackage{indentfirst} % 中文段落首行缩进
+\usepackage{bm}          % 公式中的粗体字符（用命令\boldsymbol）
+\usepackage{multicol}    % 正文双栏
+\usepackage[sc]{mathpazo} % Use the Palatino font
+\usepackage[T1]{fontenc} % Use 8-bit encoding that has 256 glyphs
+\linespread{1.05} % Line spacing - Palatino needs more space between lines
+\usepackage{microtype} % Slightly tweak font spacing for aesthetics
+
+\usepackage[english]{babel} % Language hyphenation and typographical rules
+
+\usepackage[hmarginratio=1:1,top=32mm,columnsep=20pt]{geometry} % Document margins
+\usepackage[hang, small,labelfont=bf,up,textfont=it,up]{caption} % Custom captions under/above floats in tables or figures
+\usepackage{booktabs} % Horizontal rules in tables
+
+
+
+\usepackage{enumitem} % Customized lists
+\setlist[itemize]{noitemsep} % Make itemize lists more compact
+
+
+
+\usepackage{fancyhdr} % Headers and footers
+\pagestyle{fancy} % All pages have headers and footers
+\fancyhead{} % Blank out the default header
+\fancyfoot{} % Blank out the default footer
+\fancyhead[C]{Cache-based Recurrent Transformer Network} % Custom header text
+\fancyfoot[RO,LE]{\thepage} % Custom footer text
+
+\usepackage{titling} % Customizing the title section
+
+\usepackage{hyperref} % For hyperlinks in the PDF
+
+%----------------------------------------------------------------------------------------
+%	TITLE SECTION
+%----------------------------------------------------------------------------------------
+
+\setlength{\droptitle}{-4\baselineskip} % Move the title up
+
+\pretitle{\begin{center}\Huge\bfseries} % Article title formatting
+\posttitle{\end{center}} % Article title closing formatting
+\title{Cache-based Recurrent Transformer Network} % Article title
+\author{%
+% Your institution address
+%\and % Uncomment if 2 authors are required, duplicate these 4 lines if more
+%\textsc{Jane Smith}\thanks{Corresponding author} \\[1ex] % Second author's name
+%\normalsize University of Utah \\ % Second author's institution
+%\normalsize \href{mailto:jane@smith.com}{jane@smith.com} % Second author's email address
+}
+\date{} % Leave empty to omit a date
+
+%----------------------------------------------------------------------------------------
+
+\begin{document}
+
+% Print the title
+\maketitle
+
+%----------------------------------------------------------------------------------------
+%	ARTICLE CONTENTS
+\section*{概览}
+	对于时间步t，输入片段（向量）为$X_t \in R^{L\times d}$，Memory为$\mathcal{M} = \{K_i, V_i\}_{i=1}^N$,网络的更新步骤大致分为
+	\subsection*{查询}
+		\begin{equation}
+			\{\alpha_i, Z_i\}_k = Query(X_t, \mathcal{M})
+		\end{equation}
+		其中$Z_i$为需要进行回忆（以Transformer Memory的方式拼接进当前区域）的k个区域，$\alpha_i$为其对应的权重\\
+		$\mathcal{M}$是Memory，存储N个Key-Value对，Value即为区域，对应的Key为该区域的一个意义向量。
+	\subsection*{更新hidden state}
+		\begin{equation}
+			h_t^{1:m} = Transformer(\alpha_{1:k},Z_{1:k}, X_t)
+		\end{equation}
+	\subsection*{更新Memory}
+		\begin{equation}
+			\mathcal{M} = renew(h_t^{1:m}, \mathcal{M})
+		\end{equation}
+\section{查询}
+		\begin{itemize}
+			\item \textbf{1.1} standard
+			$$\{\alpha_i, Z_i\}_k = topk(softmax(summary(X_t)\cdot Keys^T))$$ 其中$summary$函数与之后更新Memory时使用的相同
+
+		\item \textbf{1.2} computefirst：$\{\alpha_i, Z_i\}_k = Query(summary(Transformer(X_t)) ,\mathcal{M})$
+			$$\{\alpha_i, Z_i\}_k = topk(softmax(summary(Transformer(X_t))\cdot Keys^T))$$
+			其中$summary$函数与之后更新Memory时使用的相同， $Transformer$共享模型参数
+	\end{itemize}
+
+\section{更新hidden state}
+	\begin{itemize}
+		\item \textbf{3.1} standard：采用Transformer-XL的方法
+			$$h_t^{1:m} = \text{Transfromer-XL}(\alpha_{1:k}, Z_{1:k}, X_t)$$ 
+			对于n=1，...，m
+			
+	$$\textbf{m}_t^{n-1} = concat(Z_{1:k}^{n-1})$$
+	$$\tilde{\textbf{m}}_t^{n-1} = concat(\{\alpha_iZ_i^{n-1}\}_{i=1}^k) $$
+			
+$$\tilde{\mathbf{h}}_{t}^{n-1}=\left[\operatorname{SG}\left(\mathbf{m}_{t}^{n-1}\right) \circ \mathbf{h}_{t}^{n-1}\right]$$
+$$\hat{\mathbf{h}}_{t}^{n-1}=\left[\operatorname{SG}\left(\tilde{\mathbf{m}}_{t}^{n-1}\right) \circ \mathbf{h}_{t}^{n-1}\right]$$
+$$\mathbf{q}_{t}^{n}, \mathbf{k}_{t}^{n}, \mathbf{v}_{t}^{n}=\mathbf{h}_{t}^{n-1} \mathbf{W}_{q}^{n \top}, \tilde{\mathbf{h}}_{t}^{n-1} {\mathbf{W}_{k, E}^{n}}^{\top}, \hat{\mathbf{h}}_{t}^{n-1} \mathbf{W}_{v}^{n \top}$$
+$$\mathbf{A}_{t, i, j}^{n}={\mathbf{q}_{t, i}^{n}}^{\top} \mathbf{k}_{t, j}^{n}+{\mathbf{q}_{t, i}^{n}}^{\top} \mathbf{W}_{k, R}^{n} \mathbf{R}_{i-j}+u^{\top} \mathbf{k}_{t, j}+v^{\top} \mathbf{W}_{k, R}^{n} \mathbf{R}_{i-j}$$
+$$\mathbf{a}_{t}^{n}=\operatorname{Masked}-\operatorname{Softmax}\left(\mathbf{A}_{t}^{n}\right) \mathbf{v}_{t}^{n}$$
+$$\mathbf{o}_{t}^{n}=\text { LayerNorm (Linear }\left(\mathbf{a}_{t}^{n}\right)+\mathbf{h}_{t}^{n-1} )$$
+$$\mathbf{h}_{t}^{n}=\text { Positionwise-Feed-Forward }\left(\mathbf{o}_{t}^{n}\right)$$
+
+
+	\end{itemize}
+\section{更新Memory}
+	Memory的大小为N个Key-Value对，每个Value为一个片段$X_i$的所有层的表示。分成两种情况来将上一步生成的$h_t^{1:m}$存入Memory:
+	\begin{itemize}
+		\item[1] Memory不满，直接将$h_t^{1:m}$填入Memory中的第一个空位
+		\item[2] Memory满，将第一个Key-Value对删除，其余的向前递补，最后一个Key-Value对为空，成为第1种情况
+	\end{itemize}
+	对于填入$h^{(t)}$的Key-Value对，需要更新其Key，用最顶层表示更新Key：
+	$$Key = summary(h_t^n)$$
+	\begin{itemize}
+		\item \textbf{4.1} $Key = ReLU(W_S\cdot h_t^n + b_S)$
+		\item \textbf{4.2} $Key = MLP(h_t^n)$
+			$$(N \times)\ \ \ \  x = ReLU(Wx + b)$$
+		\item \textbf{4.3} $Key = BiLSTM(h_t^n)$
+	\end{itemize}
+%----------------------------------------------------------------------------------------
+
+
+%----------------------------------------------------------------------------------------
+
+\end{document}

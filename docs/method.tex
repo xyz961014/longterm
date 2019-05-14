@@ -1,0 +1,167 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Journal Article
+% LaTeX Template
+% Version 1.4 (15/5/16)
+%
+% This template has been downloaded from:
+% http://www.LaTeXTemplates.com
+%
+% Original author:
+% Frits Wenneker (http://www.howtotex.com) with extensive modifications by
+% Vel (vel@LaTeXTemplates.com)
+%
+% License:
+% CC BY-NC-SA 3.0 (http://creativecommons.org/licenses/by-nc-sa/3.0/)
+%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%----------------------------------------------------------------------------------------
+%	PACKAGES AND OTHER DOCUMENT CONFIGURATIONS
+%----------------------------------------------------------------------------------------
+
+\documentclass{article}
+
+\usepackage{xeCJK}
+\usepackage{CJK}         % CJK 中文支持
+\usepackage{fancyhdr}
+\usepackage{ctex}
+\usepackage{amsmath,amsfonts,amssymb,graphicx}    % EPS 图片支持
+\usepackage{subfigure}   % 使用子图形
+\usepackage{indentfirst} % 中文段落首行缩进
+\usepackage{bm}          % 公式中的粗体字符（用命令\boldsymbol）
+\usepackage{multicol}    % 正文双栏
+\usepackage[sc]{mathpazo} % Use the Palatino font
+\usepackage[T1]{fontenc} % Use 8-bit encoding that has 256 glyphs
+\linespread{1.05} % Line spacing - Palatino needs more space between lines
+\usepackage{microtype} % Slightly tweak font spacing for aesthetics
+
+\usepackage[english]{babel} % Language hyphenation and typographical rules
+
+\usepackage[hmarginratio=1:1,top=32mm,columnsep=20pt]{geometry} % Document margins
+\usepackage[hang, small,labelfont=bf,up,textfont=it,up]{caption} % Custom captions under/above floats in tables or figures
+\usepackage{booktabs} % Horizontal rules in tables
+
+
+
+\usepackage{enumitem} % Customized lists
+\setlist[itemize]{noitemsep} % Make itemize lists more compact
+
+
+
+\usepackage{fancyhdr} % Headers and footers
+\pagestyle{fancy} % All pages have headers and footers
+\fancyhead{} % Blank out the default header
+\fancyfoot{} % Blank out the default footer
+\fancyhead[C]{Cache-based Recurrent Attention Network} % Custom header text
+\fancyfoot[RO,LE]{\thepage} % Custom footer text
+
+\usepackage{titling} % Customizing the title section
+
+\usepackage{hyperref} % For hyperlinks in the PDF
+
+%----------------------------------------------------------------------------------------
+%	TITLE SECTION
+%----------------------------------------------------------------------------------------
+
+\setlength{\droptitle}{-4\baselineskip} % Move the title up
+
+\pretitle{\begin{center}\Huge\bfseries} % Article title formatting
+\posttitle{\end{center}} % Article title closing formatting
+\title{Cache-based Recurrent Attention Network} % Article title
+\author{%
+% Your institution address
+%\and % Uncomment if 2 authors are required, duplicate these 4 lines if more
+%\textsc{Jane Smith}\thanks{Corresponding author} \\[1ex] % Second author's name
+%\normalsize University of Utah \\ % Second author's institution
+%\normalsize \href{mailto:jane@smith.com}{jane@smith.com} % Second author's email address
+}
+\date{} % Leave empty to omit a date
+
+%----------------------------------------------------------------------------------------
+
+\begin{document}
+
+% Print the title
+\maketitle
+
+%----------------------------------------------------------------------------------------
+%	ARTICLE CONTENTS
+\section*{概览}
+	对于时间步t，输入词（向量）为$X^{(t)}$，网络的更新步骤大致分为
+	\subsection*{查询}
+		\begin{equation}
+			\{\alpha_i, Z_i\}_k = Query(X^{(t)}, \mathcal{M})
+		\end{equation}
+		其中$Z_i$为需要进行Attention的k个区域，$\alpha_i$为其对应的权重\\
+		$\mathcal{M}$是Memory，存储N个Key-Value对，Value即为区域，对应的Key为该区域的一个意义向量。
+	\subsection*{Attention}
+		\begin{equation}
+			Attention_i = Attn(X^{(t)}, Z_i)
+		\end{equation}
+		或
+		\begin{equation}
+			Attention_i = Attn(h^{(t-1)},X^{(t)}, Z_i)
+		\end{equation}
+		
+		\begin{equation}
+			y^{(t)} = \sum_{i=1}^k \alpha_i Attention_i
+		\end{equation}
+	\subsection*{更新hidden state}
+		\begin{equation}
+			h^{(t)} = update(X^{(t)}, y^{(t)})
+		\end{equation}
+	\subsection*{更新Memory}
+		\begin{equation}
+			\mathcal{M} = renew(h^{(t)}, \mathcal{M})
+		\end{equation}
+\section{查询}
+		\begin{itemize}
+			\item \textbf{1.1} standard
+			$$\{\alpha_i, Z_i\}_k = topk(softmax(X^{(t)}\cdot Keys^T))$$
+
+		\item \textbf{1.2} 可能的变化：$\{\alpha_i, Z_i\}_k = Query(h^{(t-1)}, X^{(t)}, \mathcal{M})$
+			$$\{\alpha_i, Z_i\}_k = topk(softmax((W_l\cdot concat(X^{(t)}, h^{(t-1)}) + b_l)\cdot Keys^T))$$
+	\end{itemize}
+\section{Attention}
+	\begin{itemize}
+		\item \textbf{2.1} $Attention_i = Attn(X^{(t)}, Z_i)$
+			$$Q = ReLU(W_QX^{(t)} + b_Q)$$
+			$$K = ReLU(W_KX^{(t)} + b_K)$$
+			$$Attn(X^{(t)}, Z_i) = Attn(Q, K, Z_i)  = \sum_j softmax(Q\cdot K^T)_jZ_{ij}$$
+			$$y^{(t)} = \sum_{i=1}^k \alpha_i Attention_i$$
+		\item \textbf{2.2} $Attention_i = Attn(h^{(t-1)},X^{(t)}, Z_i)$
+			$$Q = ReLU(W_Q\cdot concat(X^{(t)}, h^{(t-1)}) + b_Q)$$
+			$$K = ReLU(W_KX^{(t)} + b_K)$$
+			$$Attn(X^{(t)}, Z_i) = Attn(Q, K, Z_i)  = \sum_j softmax(Q\cdot K^T)_jZ_{ij}$$
+			$$y^{(t)} = \sum_{i=1}^k \alpha_i Attention_i$$
+	\end{itemize}
+\section{更新hidden state}
+	\begin{itemize}
+		\item \textbf{3.1} standard
+			$$h^{(t)} = ReLU(W_H\cdot concat(X^{(t)}, y^{(t)}) + b_H)$$
+		\item \textbf{3.2} gated
+			$$ r^{(t)} = \sigma(W_r \cdot concat(X^{(t)}, y^{(t)}) + b_r) $$
+			$$ z^{(t)} = \sigma(W_z \cdot concat(X^{(t)}, y^{(t)}) + b_z) $$
+			$$ n^{(t)} = tanh(r^{(t)} \cdot (W_nX^{(t)} + b_n) + W_i \cdot y^{(t)} + b_i) $$
+			$$ h^{(t)} = (1 - z^{(t)})\cdot n^{(t)} + z^{(t)} \cdot y^{(t)}$$
+	\end{itemize}
+\section{更新Memory}
+	Memory的大小为N个Key-Value对，每个Value为L个$h$的序列。分成两种情况来将上一步生成的$h^{(t)}$存入Memory:
+	\begin{itemize}
+		\item[1] Memory不满，直接将$h^{(t)}$填入Memory中的第一个空位
+		\item[2] Memory满，将第一个Key-Value对删除，其余的向前递补，最后一个Key-Value对为空，成为第1种情况
+	\end{itemize}
+	对于填入$h^{(t)}$的Key-Value对，需要更新其Key：
+	\begin{itemize}
+		\item \textbf{4.1} $Key = ReLU(W_S\cdot Value + b_S)$
+		\item \textbf{4.2} $Key = MLP(Value)$
+			$$(N \times)\ \ \ \  x = ReLU(Wx + b)$$
+		\item \textbf{4.3} $Key = BiLSTM(Value)$
+		\item \textbf{4.3} $Key = Transformer(Value)$
+	\end{itemize}
+%----------------------------------------------------------------------------------------
+
+
+%----------------------------------------------------------------------------------------
+
+\end{document}
