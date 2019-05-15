@@ -80,6 +80,8 @@ def parse_args():
                         help='use adaptive embedding and softmax')
     parser.add_argument('--no_summary', action="store_true",
                         help='use the output of the transformer layer as key')
+    parser.add_argument('--wise_summary', action="store_true",
+                        help='use encoder function(transformer-xl) to summary the key')
     parser.add_argument('--div_val', type=int, default=1,
                         help='divident value for adaptive input and softmax')
     parser.add_argument('--seed', type=int, default=1111,

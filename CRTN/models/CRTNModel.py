@@ -42,11 +42,17 @@ class CRTNModel(nn.Module):
 
 
     def forward(self, inputs):
+
+        if self.args.wise_summary:
+            _, wise_inputs = self.encoder(inputs)
+            query = wise_inputs[-1]
+        else:
+            query = self.encoder.embedding(inputs)
         
         if self.demo:
-            weights, indices, zones, words = self.cache(self.encoder.embedding(inputs))
+            weights, indices, zones, words = self.cache(query)
         else:
-            weights, indices, zones = self.cache(self.encoder.embedding(inputs))
+            weights, indices, zones = self.cache(query)
             words=None
 
         output, mems = self.encoder(inputs, zones, weights, indices, words)

@@ -340,9 +340,6 @@ class TransformerLM(nn.Module):
             display = sorted(display, key=lambda x:x[0].item())
 
 
-        if zones is None:
-            zones = self.init_memory(batch_size)
-
         if zones is not None:
             zones = zones.transpose(1, 2).contiguous()
             if self.demo:
@@ -363,14 +360,17 @@ class TransformerLM(nn.Module):
         mask = mask.byte()[:,:,None]
 
         ### POSITION SCHEME ###
-        indices = torch.cat((indices, (torch.ones(self.batch_size, dtype=indices.dtype, device=indices.device)-2).view(1,-1)))
+        if indices is not None:
+            indices = torch.cat((indices, (torch.ones(self.batch_size, dtype=indices.dtype, device=indices.device)-2).view(1,-1)))
 
-        if self.demo:
-            batch = torch.einsum('k,b->kb',torch.ones(self.args.cache_N+1, dtype=torch.long), torch.arange(self.batch_size))
+            if self.demo:
+                batch = torch.einsum('k,b->kb',torch.ones(self.args.cache_N+1, dtype=torch.long), torch.arange(self.batch_size))
+            else:
+                batch = torch.einsum('k,b->kb',torch.ones(self.args.cache_k+1, dtype=torch.long), torch.arange(self.batch_size))
+
+            pos_seq = self.pos_emb_bank[batch, indices].transpose(0, 1).contiguous()
         else:
-            batch = torch.einsum('k,b->kb',torch.ones(self.args.cache_k+1, dtype=torch.long), torch.arange(self.batch_size))
-
-        pos_seq = self.pos_emb_bank[batch, indices].transpose(0, 1).contiguous()
+            pos_seq = torch.einsum("b,k->bk", torch.ones(self.batch_size, device=inputs.device), torch.arange(self.args.num_steps-1, -1, -1.0, device=inputs.device))
         pos_seq = pos_seq.view(self.batch_size, -1)
 
         pos_emb = self.pos_emb(pos_seq)
@@ -378,10 +378,9 @@ class TransformerLM(nn.Module):
         pos_emb = self.drop(pos_emb)
         core_out = self.drop(word_emb)
         
-        if zones is not None:
-            memory = word_emb.clone().detach()
-
+        memory = word_emb.clone().detach()
         memories = [memory]
+
         for i, layer in enumerate(self.layers):
             zone_i = None if zones is None else zones[i]
             if self.args.attn_type == 0:
@@ -389,10 +388,11 @@ class TransformerLM(nn.Module):
             elif self.args.attn_type == 1:
                 core_out = layer(core_out, pos_emb, self.pos_bias_u, self.pos_bias_v, mask=mask, memory=zone_i, weights=weights)
 
-            if zones is not None:
-                mem = core_out.detach()
-                memories.append(mem)
-        memories = torch.cat(memories, 0).view(self.args.nlayers+1, seq_len, -1, self.args.nhid)
+            mem = core_out.detach()
+            memories.append(mem)
+
+        memories = torch.cat(memories, 0)
+        memories = memories.view(self.args.nlayers+1, seq_len, -1, self.args.nhid)
 
         if self.demo:
             for ind, weight, words in display:
