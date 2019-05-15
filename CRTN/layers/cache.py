@@ -13,9 +13,13 @@ class Cache(nn.Module):
         self.args = deepcopy(args)
         self.corpus = corpus
         self.demo = self.args.demo
+        if self.args.no_summary:
+            self.dk = self.args.num_steps * self.args.nhid
+        else:
+            self.dk = self.args.cache_dk
 
         self.keys = nn.ParameterDict({
-            str(i): nn.Parameter(torch.zeros(args.batch_size, args.cache_dk), requires_grad=False) for i in range(args.cache_N)
+            str(i): nn.Parameter(torch.zeros(args.batch_size, self.dk), requires_grad=False) for i in range(args.cache_N)
             })
         self.values = nn.ParameterDict({
             str(i): nn.Parameter(torch.zeros(args.num_steps, args.batch_size, (args.nlayers+1) * args.nhid), requires_grad=False) for i in range(args.cache_N)
@@ -32,7 +36,6 @@ class Cache(nn.Module):
         self.batch_size = self.args.batch_size
         self.L = self.args.num_steps
         self.N = self.args.cache_N
-        self.dk = self.args.cache_dk
         self.dv = self.args.nhid
         self.topk = self.args.cache_k
 
@@ -83,8 +86,12 @@ class Cache(nn.Module):
 
 
     def forward(self, query):
-        
-        query = self.summary(query.view(-1, self.L * self.dv))
+
+        query = query.transpose(0, 1).contiguous()
+        if self.args.no_summary:
+            query = query.view(self.batch_size, -1)
+        else:
+            query = self.summary(query.view(-1, self.L * self.dv))
         keys = self._get_keys()
         values = self._get_values()
         
@@ -133,7 +140,11 @@ class Cache(nn.Module):
         if n >= self.N:
             self.eliminate_last()
 
-        new_key = self.summary(inputs[-1].view(-1, self.L * self.dv))
+        if self.args.no_summary:
+            new_key = inputs[-1].view(self.batch_size, -1)
+        else:
+            new_key = self.summary(inputs[-1].view(-1, self.L * self.dv))
+
         new_value = torch.einsum("mblh->lbmh", inputs).contiguous().view(self.L, -1, (self.args.nlayers+1) * self.dv)
         self.keys.update({
             str(n): nn.Parameter(new_key, requires_grad=False)

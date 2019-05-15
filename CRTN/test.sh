@@ -12,8 +12,8 @@ python main.py \
     --num_steps 40 \
     --tied \
     --attn_type 1 \
-    --cache_k 1 \
-    --cache_N 1 \
+    --cache_k 2 \
+    --cache_N 3 \
     --seed 1111 \
     --epochs 100 \
     --log-interval 100 \
