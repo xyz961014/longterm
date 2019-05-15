@@ -117,6 +117,7 @@ class Cache(nn.Module):
 
 
         if self.demo:
+            words = words.transpose(0, 1).contiguous()
             indices = torch.einsum("kb,i->kbi", topk_indices.to(torch.float), torch.ones_like(words[0][0]).to(torch.float)).to(torch.long)
             word_output = torch.gather(words, 0, indices)
             return topk_weights, topk_indices, outputs, word_output

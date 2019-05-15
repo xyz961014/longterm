@@ -13,8 +13,7 @@ python main.py \
     --tied \
     --attn_type 1 \
     --cache_k 1 \
-    --cache_N 2 \
-    --adaptive \
+    --cache_N 1 \
     --seed 1111 \
     --epochs 100 \
     --log-interval 100 \

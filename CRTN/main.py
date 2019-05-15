@@ -188,6 +188,13 @@ def main(args):
         model_args = checkpoint["model_args"]
         model_args.demo = args.demo
         model_args.load = args.load
+        model_args.adam = args.adam
+        model_args.lr = args.lr
+        model_args.scheduler = args.scheduler
+        model_args.clip = args.clip
+        model_args.epochs = args.clip
+        model_args.multi_gpu = args.multi_gpu
+        model_args.save = args.save
         if args.demo:
             model_args.batch_size = 1
             model_args.eval_batch_size = 1
@@ -276,16 +283,21 @@ def main(args):
                 torch.save({
                     "model_args": model.args,
                     "model_state_dict": model.state_dict(),
-                    }, "save/" + args.save + "_" + str(epoch) + ".pt")
-                with open("save/" + args.save + "_best.pt", "wb") as f:
+                    }, "save/" + args.save + "/" + args.save + "_" + str(epoch) + ".pt")
+                with open("save/" + args.save + "/" + args.save + "_best.pt", "wb") as f:
                     torch.save(model, f)
+                with open("save/" + args.save + "/" + args.save + "_crit.pt", "wb") as f:
+                    torch.save(criterion, f)
                 best_eval_loss = eval_loss
+
     except KeyboardInterrupt:
         print('-' * 89)
         print('Exiting from training early')
 
-    with open("save/" + args.save + "_best.pt", "rb") as f:
+    with open("save/" + args.save + "/" + args.save + "_best.pt", "rb") as f:
         model = torch.load(f)
+    with open("save/" + args.save + "/" + args.save + "_crit.pt", "rb") as f:
+        criterion = torch.load(f)
     test_loss = evaluate(model, test_loader, criterion, args)
     print('=' * 89)
     print('| best valid loss {:5.2f} | best valid ppl {:8.2f}'.format(
@@ -304,5 +316,7 @@ if __name__ == "__main__":
     
     if not os.path.exists("./log/" + args.save):
         os.mkdir("./log/" + args.save)
+    if not os.path.exists("./save/" + args.save):
+        os.mkdir("./save/" + args.save)
     writer = SummaryWriter("./log/" + args.save)
     main(args)
