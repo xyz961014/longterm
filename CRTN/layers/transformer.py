@@ -348,7 +348,7 @@ class TransformerLM(nn.Module):
             if self.demo:
                 zones = zones.view(self.args.cache_N * self.args.num_steps, -1, self.args.nlayers+1, self.args.nhid)
             else:
-                zones = zones.view(self.args.mem_len, -1, self.args.nlayers+1, self.args.nhid)
+                zones = zones.view(self.args.cache_k * self.args.num_steps, -1, self.args.nlayers+1, self.args.nhid)
             zones = torch.einsum("mblh->lmbh", zones)
             mem_len = zones[0].size(0)
         else:

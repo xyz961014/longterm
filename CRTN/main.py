@@ -178,10 +178,6 @@ def main(args):
     args.tie_projs = tie_projs
 
 
-    ### Load Data ###
-    
-    print("Loading data from %s" % args.data)
-    datatime_begin = time.time()
 
     if args.load:
         checkpoint = torch.load(args.load)
@@ -192,7 +188,7 @@ def main(args):
         model_args.lr = args.lr
         model_args.scheduler = args.scheduler
         model_args.clip = args.clip
-        model_args.epochs = args.clip
+        model_args.epochs = args.epochs
         model_args.multi_gpu = args.multi_gpu
         model_args.save = args.save
         if args.demo:
@@ -200,6 +196,10 @@ def main(args):
             model_args.eval_batch_size = 1
         args = model_args
         
+    ### Load Data ###
+    
+    print("Loading data from %s" % args.data)
+    datatime_begin = time.time()
 
     corpus = dataloader.Corpus(args.data)
     args.vocab_size = corpus.vocabulary.num_words
@@ -222,7 +222,12 @@ def main(args):
 
         if args.demo:
             model = CRTNModel(model_args, corpus=corpus)
-        else:
+        else:keys = checkpoint["model_state_dict"].copy().keys()
+        for key in keys:
+            if re.match(r"cache.keys", key) or re.match(r"cache.values", key) or re.match(r"cache.words", key) or re.match(r"encoder.pos_emb_bank", key):
+                popitem = checkpoint["model_state_dict"].pop(key)
+
+
             model = CRTNModel(model_args)
         model.load_state_dict(checkpoint["model_state_dict"], strict=False)
     else:
@@ -246,9 +251,12 @@ def main(args):
                     criterion.out_projs[i] = model.encoder.embedding.emb_projs[0]
                 elif tie_proj and args.div_val != 1:
                     criterion.out_projs[i] = model.encoder.embedding.emb_projs[i]
+        if args.load:
+            criterion.load_state_dict(checkpoint["criterion"])
 
     else:
         criterion = nn.CrossEntropyLoss()
+
         
     model.to(device)
     criterion.to(device)
@@ -283,21 +291,31 @@ def main(args):
                 torch.save({
                     "model_args": model.args,
                     "model_state_dict": model.state_dict(),
-                    }, "save/" + args.save + "/" + args.save + "_" + str(epoch) + ".pt")
-                with open("save/" + args.save + "/" + args.save + "_best.pt", "wb") as f:
-                    torch.save(model, f)
-                with open("save/" + args.save + "/" + args.save + "_crit.pt", "wb") as f:
-                    torch.save(criterion, f)
+                    "criterion": criterion.state_dict()
+                    }, "save/" + args.save + "/" + args.save + "_best" + ".pt")
+                #with open("save/" + args.save + "/" + args.save + "_best.pt", "wb") as f:
+                #    torch.save(model, f)
+                #with open("save/" + args.save + "/" + args.save + "_crit.pt", "wb") as f:
+                #    torch.save(criterion, f)
                 best_eval_loss = eval_loss
 
     except KeyboardInterrupt:
         print('-' * 89)
         print('Exiting from training early')
 
-    with open("save/" + args.save + "/" + args.save + "_best.pt", "rb") as f:
-        model = torch.load(f)
-    with open("save/" + args.save + "/" + args.save + "_crit.pt", "rb") as f:
-        criterion = torch.load(f)
+    #with open("save/" + args.save + "/" + args.save + "_best.pt", "rb") as f:
+    #    model = torch.load(f)
+    #with open("save/" + args.save + "/" + args.save + "_crit.pt", "rb") as f:
+    #    criterion = torch.load(f)
+    eval_checkpoint = torch.load("save/" + args.save + "/" + args.save + "_best.pt")
+    model_state_dict = eval_checkpoint["model_state_dict"]
+    keys = model_state_dict.copy().keys()
+    for key in keys:
+        if re.match(r"cache.keys", key) or re.match(r"cache.values", key) or re.match(r"cache.words", key) or re.match(r"encoder.pos_emb_bank", key):
+            model_state_dict.pop(key)
+    model.load_state_dict(model_state_dict, strict=False)
+    if args.adaptive:
+        criterion.load_state_dict(eval_checkpoint["criterion"])
     test_loss = evaluate(model, test_loader, criterion, args)
     print('=' * 89)
     print('| best valid loss {:5.2f} | best valid ppl {:8.2f}'.format(
