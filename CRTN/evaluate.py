@@ -34,6 +34,7 @@ def parse_args(args=None):
 def evaluate(model, eval_data, criterion, args):
     model.set_batch_size(model.args.eval_batch_size)
     model.to(device)
+    criterion.to(device)
     model.eval() 
     total_loss = 0.
 
