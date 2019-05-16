@@ -351,6 +351,9 @@ class TransformerLM(nn.Module):
         else:
             mem_len = 0
 
+        if self.args.not_weighted:
+            weights = None
+
         total_len = seq_len + mem_len
 
         word_emb = self.embedding(inputs)
