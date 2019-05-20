@@ -189,7 +189,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         attn_score = AC + BD
         attn_score.mul_(self.scale)
 
-        if mask is not None and mask.any().item():
+        if mask is not None:
             attn_score.masked_fill_(mask[:,:,:,None], -float('inf'))
 
         attn_prob = F.softmax(attn_score, 1)
@@ -311,9 +311,9 @@ class TransformerLM(nn.Module):
         if self.args.attn_type == 1:
             nn.init.normal_(self.pos_bias_u, 0.0, init_std)
             nn.init.normal_(self.pos_bias_v, 0.0, init_std)
-        #if not self.adaptive:
-        #    nn.init.normal_(self.embedding.weight, 0.0, init_std)
-        #    nn.init.normal_(self.decoder.weight, 0.0, init_std)
+        if not self.args.adaptive:
+            nn.init.normal_(self.embedding.weight, 0.0, init_std)
+            nn.init.normal_(self.decoder.weight, 0.0, init_std)
 
     def init_hidden(self, batch_size):
         return self.init_memory(batch_size)

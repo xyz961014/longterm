@@ -18,6 +18,6 @@ python main.py \
     --epochs 100 \
     --log-interval 100 \
     --save testmodel2 \
-    --adaptive \
+    --adaptive
     ${@:1}
 
