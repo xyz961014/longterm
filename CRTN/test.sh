@@ -18,6 +18,9 @@ python main.py \
     --epochs 100 \
     --log-interval 100 \
     --save testmodel2 \
-    --adaptive
+    --adaptive \
+    --no_summary \
+    --wise_summary \
+    --max_pooling \
     ${@:1}
 

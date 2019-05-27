@@ -101,8 +101,15 @@ class Cache(nn.Module):
         keys = keys.transpose(0, 1).contiguous()
         values = torch.einsum("klbh->bklh", values).contiguous()
         
-
-        attention, _ = self.attn(query, keys, values)
+        if self.args.max_pooling:
+            ipdb.set_trace()
+            query = query.view(-1, self.args.num_steps, self.args.nhid)
+            pooling_keys = keys.view(-1, self.N, self.args.num_steps, self.args.nhid)
+            attention = torch.einsum("bih,bnjh->bijn", query, pooling_keys)
+            attention = attention.view(-1, self.args.num_steps ** 2, 1, self.N)
+            attention = attention.max(1)[0]
+        else:
+            attention, _ = self.attn(query, keys, values)
 
         
         if self.demo:

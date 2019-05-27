@@ -82,6 +82,8 @@ def parse_args():
                         help='use the output of the transformer layer as key')
     parser.add_argument('--wise_summary', action="store_true",
                         help='use encoder function(transformer-xl) to summary the key')
+    parser.add_argument('--max_pooling', action="store_true",
+                        help='use max pooling to justice importance of segments in the cache')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
     parser.add_argument('--div_val', type=int, default=1,
