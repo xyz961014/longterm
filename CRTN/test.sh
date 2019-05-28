@@ -17,7 +17,7 @@ python main.py \
     --seed 1111 \
     --epochs 100 \
     --log-interval 100 \
-    --save testmodel2 \
+    --save crtn \
     --adaptive \
     --no_summary \
     --wise_summary \
