@@ -165,12 +165,12 @@ def main(args):
             cp = cp + delta
             losses = []
             for model_in, criterion_in in models:
-                l = loss(model_in, criterion_in, corpus, args.initc)
+                l = loss(model_in, criterion_in, corpus, c)
                 losses.append(l)
-            lossc = torch.cat(losses).view(-1, args.initc).t().contiguous()
+            lossc = torch.cat(losses).view(-1, c).t().contiguous()
             base = lossc.min(1)[0]
-            basec, tau = base.topk(round(args.initc * args.initr))
-            tau = tau - args.initc
+            basec, tau = base.topk(round(c * args.initr))
+            tau = tau - c
             gain = relative_gain(model, criterion, corpus, base, c, cp, tau)
         print("%s RECL: %s" % (model.name, c))
 
