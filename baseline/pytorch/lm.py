@@ -17,6 +17,7 @@ from CRAN.data import dataloader
 from CRAN.layers.attention import Transformer
 from CRAN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from transformer import TransformerLM
+from rnn import RNNModel
 
 from tensorboardX import SummaryWriter
 
@@ -140,56 +141,6 @@ def repackage_hidden(h):
 
 
 
-class RNNModel(nn.Module):
-    def __init__(self, args):
-        super().__init__()
-        self.args = args
-        self.drop = nn.Dropout(args.dropout)
-        self.embedding = nn.Embedding(args.vocab_size, args.emsize)
-        self.rnn_type = args.model
-        if args.model in ["LSTM", "GRU"]:
-            self.rnn = getattr(nn, args.model)(
-                    input_size=args.emsize,
-                    hidden_size=args.nhid,
-                    num_layers=args.nlayers,
-                    dropout=args.dropout)
-        else:
-            try:
-                nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[args.model]
-            except KeyError:
-                raise ValueError( """An invalid option for `--model` was supplied,
-                                 options are ['LSTM', 'GRU', 'RNN_TANH' or 'RNN_RELU']""")
-            self.rnn = nn.RNN(args.emsize, args.nhid, args.nlayers, nonlinearity=nonlinearity, dropout=args.dropout)
-
-        self.hidden2tag = nn.Linear(args.nhid, args.vocab_size)
-
-        self.init_weights()
-        self.nhid = args.nhid
-        self.nlayers = args.nlayers
-
-    def init_weights(self):
-        initrange = 0.1
-        self.embedding.weight.data.uniform_(-initrange, initrange)
-        self.hidden2tag.bias.data.zero_()
-        self.hidden2tag.weight.data.uniform_(-initrange, initrange)
-
-    def forward(self, x, hidden):
-        emb = self.drop(self.embedding(x))
-        output, hidden = self.rnn(emb, hidden)
-        output = self.drop(output)
-        
-        tag = self.hidden2tag(output)
-        
-        return tag, hidden
-
-    def init_hidden(self, batch_size):
-        weight = next(self.parameters())
-        if self.rnn_type == "LSTM":
-            return (weight.new_zeros(self.nlayers, batch_size, self.nhid),
-                    weight.new_zeros(self.nlayers, batch_size, self.nhid))
-        else:
-            return weight.new_zeros(self.nlayers, batch_size, self.nhid)
-
 def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     model.train()
     start_time = time.time()
@@ -275,6 +226,9 @@ def main(args):
             cutoffs = [20000, 40000, 80000]
             tie_projs += [True] * 3
 
+    args.cutoffs = cutoffs
+    args.tie_projs = tie_projs
+
     ### Load Data ###
     
     print("Loading data from %s" % args.data)
@@ -309,6 +263,7 @@ def main(args):
                     d_ff=model_args.d_ff,
                     d_embedding=model_args.emsize,
                     tied_weights=model_args.tied,
+                    num_steps=args.num_steps,
                     mem_len=model_args.mem_len,
                     attn_type=model_args.attn_type,
                     init_std=model_args.init_std,
@@ -330,6 +285,7 @@ def main(args):
                     d_ff=args.d_ff,
                     d_embedding=args.emsize,
                     tied_weights=args.tied,
+                    num_steps=args.num_steps,
                     mem_len=args.mem_len,
                     attn_type=args.attn_type,
                     init_std=args.init_std,
@@ -387,16 +343,22 @@ def main(args):
                 torch.save({
                     "model_args": args,
                     "model_state_dict": model.state_dict(),
-                    }, "save/" + args.save + "_" + str(epoch) + ".pt")
-                with open("save/" + args.save + "_best.pt", "wb") as f:
-                    torch.save(model, f)
+                    "criterion": criterion.state_dict()
+                    }, "save/" + args.save + "_best.pt")
+                #with open("save/" + args.save + "_best.pt", "wb") as f:
+                #    torch.save(model, f)
                 best_eval_loss = eval_loss
     except KeyboardInterrupt:
         print('-' * 89)
         print('Exiting from training early')
 
-    with open("save/" + args.save + "_best.pt", "rb") as f:
-        model = torch.load(f)
+    #with open("save/" + args.save + "_best.pt", "rb") as f:
+    #    model = torch.load(f)
+    eval_checkpoint = torch.load("save/" + args.save + "_best.pt")
+    model_state_dict = eval_checkpoint["model_state_dict"]
+    model.load_state_dict(model_state_dict)
+    if args.adaptive:
+        criterion.load_state_dict(eval_checkpoint["criterion"])
     test_loss = evaluate(model, test_loader, criterion, args)
     print('=' * 89)
     print('| best valid loss {:5.2f} | best valid ppl {:8.2f}'.format(

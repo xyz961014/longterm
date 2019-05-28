@@ -132,10 +132,9 @@ $$\mathbf{h}_{t}^{n}=\text { Positionwise-Feed-Forward }\left(\mathbf{o}_{t}^{n}
 
 	\end{itemize}
 \section{更新Memory}
-	Memory的大小为N个Key-Value对，每个Value为一个片段$X_i$的所有层的表示。分成两种情况来将上一步生成的$h_t^{1:m}$存入Memory:
+	Memory的大小为N个Key-Value对，每个Value为一个片段$X_i$的所有层的表示。将上一步生成的$h_t^{1:m}$存入Memory:
 	\begin{itemize}
-		\item[1] Memory不满，直接将$h_t^{1:m}$填入Memory中的第一个空位
-		\item[2] Memory满，将第一个Key-Value对删除，其余的向前递补，最后一个Key-Value对为空，成为第1种情况
+		\item 将第一个Key-Value对删除，其余的向前递补，最后一个Key-Value对为空，将$h_t^{1:m}$填入Memory中的第一个空位
 	\end{itemize}
 	对于填入$h^{(t)}$的Key-Value对，需要更新其Key，用最顶层表示更新Key：
 	$$Key = summary(h_t^n)$$
