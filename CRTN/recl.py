@@ -2,6 +2,7 @@ import argparse
 import math
 import time
 import re
+from copy import deepcopy
 
 import numpy as np
 import torch
@@ -26,7 +27,6 @@ from baseline.pytorch.transformer import TransformerLM
 
 from baseline.pytorch.rnn import RNNModel
 
-
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 def parse_args():
@@ -37,17 +37,17 @@ def parse_args():
     parser.add_argument("--initc", type=int, default=10, help="initial c")
     parser.add_argument("--initr", type=float, default=1.0, help="initial r")
     parser.add_argument("--delta", type=int, default=10, help="step of increasing c")
+    parser.add_argument("--seed", type=int, default=1111, help="random seed")
     return parser.parse_args()
 
 def loss(model, criterion, corpus, c):
     raw_data = corpus.valid_data.data.view(-1)[-c-1:]
-    data, target = raw_data[:c].view(-1, 1), raw_data[1:c+1].view(-1, 1)
-    #dataset = textDataset(raw_data)
-    #dataset.batchify(1)
+    data, target = raw_data[-c-1:-1].view(-1, 1), raw_data[-c:].view(-1, 1)
     seg_len = c
-    model.eval()
     losses = []
     with torch.no_grad():
+        model.eval()
+        criterion.eval()
         if model.name == "LSTM":
             datas = [data[i*seg_len:(i+1)*seg_len] for i in range(c // seg_len)]
             targets = [target[i*seg_len:(i+1)*seg_len] for i in range(c // seg_len)]
@@ -57,6 +57,7 @@ def loss(model, criterion, corpus, c):
 
             hidden = model.init_hidden(1)
             for data, target in list(zip(datas, targets)):
+                data, target = data.to(device), target.to(device)
                 output, hidden = model(data, hidden)
                 loss = criterion(output.view(seg_len, -1), target.view(-1))
                 losses.append(loss)
@@ -66,11 +67,12 @@ def loss(model, criterion, corpus, c):
             datas = [data[i*seg_len:(i+1)*seg_len] for i in range(c // seg_len)]
             targets = [target[i*seg_len:(i+1)*seg_len] for i in range(c // seg_len)]
             if c % seg_len:
-                datas.append(data[(c // seg_len)*seg_len:])
-                targets.append(target[(c // seg_len)*seg_len:])
+                datas.append(data[(c // seg_len) * seg_len:])
+                targets.append(target[(c // seg_len) * seg_len:])
 
             memory = None
             for data, target in list(zip(datas, targets)):
+                data, target = data.to(device), target.to(device)
                 cur_len = data.size(0)
                 output, memory = model(data, memory)
                 loss = criterion(output.view(cur_len, -1), target.view(-1))
@@ -83,6 +85,7 @@ def loss(model, criterion, corpus, c):
 
             model.set_batch_size(1)
             for data, target in list(zip(datas, targets)):
+                data, target = data.to(device), target.to(device)
                 cur_len = data.size(0)
                 output = model(data)
                 loss = criterion(output.view(cur_len, -1), target.view(-1))
@@ -99,15 +102,16 @@ def relative_loss(model, criterion, corpus, base, c, cp, tau):
     func = torch.cat((base[tau], losscp[tau])).view(-1, tau.size(0))
     func = func.t().contiguous()
     func = func.min(1)[0]
+    return func.mean().item()
 
-    return func.sum().item() / tau.size(0)
-
-def relative_gain(model, criterion,corpus, base, c, cp, tau):
+def relative_gain(model, criterion, corpus, base, c, cp, tau):
     fbase = relative_loss(model, criterion, corpus, base, c, c, tau)
     fp = relative_loss(model, criterion, corpus, base, c, cp, tau)
-    return (fbase - fp) / fp
+    return (fbase - fp) / fbase
 
 def main(args):
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
     corpus = dataloader.Corpus(args.data)
     models = []
 
@@ -152,6 +156,9 @@ def main(args):
         criterion.load_state_dict(checkpoint["criterion"])
         model.name = name
 
+        model.to(device)
+        criterion.to(device)
+
         models.append((model, criterion))
 
     
@@ -164,8 +171,8 @@ def main(args):
             c = cp
             cp = cp + delta
             losses = []
-            for model_in, criterion_in in models:
-                l = loss(model_in, criterion_in, corpus, c)
+            for mod, crit in models:
+                l = loss(mod, crit, corpus, c)
                 losses.append(l)
             lossc = torch.cat(losses).view(-1, c).t().contiguous()
             base = lossc.min(1)[0]
