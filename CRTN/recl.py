@@ -154,11 +154,11 @@ def main(args):
 
         models.append((model, criterion))
 
-    c = args.initc
-    delta = args.delta
-    cp = c
     
     for model, criterion in models:
+        c = args.initc
+        delta = args.delta
+        cp = c
         gain = 1.0
         while gain >= 0.01:
             c = cp
