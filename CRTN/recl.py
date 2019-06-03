@@ -181,7 +181,7 @@ def main(args):
         cp = c
         gain = 1.0
         ite = 0
-        while ite < 20:
+        while gain >= 0.01:
             c = cp
             cp = cp + delta
             losses = []
