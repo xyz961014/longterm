@@ -334,7 +334,7 @@ class TransformerLM(nn.Module):
 
         #inputs = pack_padded_sequence(inputs, length)
 
-        if self.demo:
+        if self.demo and indices is not None:
             print("-" * 89)
             display = tuple(zip(indices.view(-1), weights.view(-1), words))
             display = sorted(display, key=lambda x:x[0].item())
@@ -342,7 +342,7 @@ class TransformerLM(nn.Module):
 
         if zones is not None:
             zones = zones.transpose(1, 2).contiguous()
-            if self.demo:
+            if self.demo and indices is not None:
                 zones = zones.view(self.args.cache_N * self.args.num_steps, -1, self.args.nlayers+1, self.args.nhid)
             else:
                 zones = zones.view(self.args.cache_k * self.args.num_steps, -1, self.args.nlayers+1, self.args.nhid)
@@ -397,7 +397,7 @@ class TransformerLM(nn.Module):
         memories = torch.cat(memories, 0)
         memories = memories.view(self.args.nlayers+1, seq_len, -1, self.args.nhid)
 
-        if self.demo:
+        if self.demo and indices is not None:
             for ind, weight, words in display:
                 print("SEGMENT %s | weight: %.3f" % (ind.item(), weight.item()))
                 for word in words.view(-1):

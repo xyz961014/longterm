@@ -9,12 +9,17 @@ import torch
 import torch.nn as nn
 
 import ipdb
+import visdom
+viz = visdom.Visdom()
+assert viz.check_connection()
+
 
 import os
 import sys
 sys.path.append("..")
 sys.path.append("../..")
 
+                    
 from data import dataloader
 from data.dataloader import textDataset
 
@@ -38,11 +43,16 @@ def parse_args():
     parser.add_argument("--initr", type=float, default=1.0, help="initial r")
     parser.add_argument("--delta", type=int, default=10, help="step of increasing c")
     parser.add_argument("--seed", type=int, default=1111, help="random seed")
+    parser.add_argument("--batch_size", type=int, default=1, help="batch size")
+    parser.add_argument("--bias", type=int, default=0, help="bias")
     return parser.parse_args()
 
-def loss(model, criterion, corpus, c):
-    raw_data = corpus.valid_data.data.view(-1)[-c-1:]
-    data, target = raw_data[-c-1:-1].view(-1, 1), raw_data[-c:].view(-1, 1)
+def loss(model, criterion, corpus, c, batch_size=5, bias=0):
+    txt_len = corpus.valid_data.data.view(-1).size(0)
+    raw_data = corpus.valid_data.data.view(-1).narrow(0, 0, (txt_len // batch_size) * batch_size)
+    raw_data = raw_data.view(batch_size, -1)
+    data, target = raw_data[:,-c-2-bias:-2-bias], raw_data[:,-c-1-bias:-1-bias]
+    data, target = data.t().contiguous(), target.t().contiguous()
     seg_len = c
     losses = []
     with torch.no_grad():
@@ -55,13 +65,14 @@ def loss(model, criterion, corpus, c):
                 datas.append(data[(c // seg_len):])
                 targets.append(target[(c // seg_len):])
 
-            hidden = model.init_hidden(1)
+            hidden = model.init_hidden(batch_size)
             for data, target in list(zip(datas, targets)):
                 data, target = data.to(device), target.to(device)
                 output, hidden = model(data, hidden)
-                loss = criterion(output.view(seg_len, -1), target.view(-1))
+                loss = criterion(output.view(seg_len * batch_size, -1), target.view(-1))
+                loss = loss.view(seg_len, batch_size)
                 losses.append(loss)
-            return torch.cat(losses, 0)
+            return torch.cat(losses, 0).mean(1)
         elif model.name == "XL":
             seg_len = model.num_steps
             datas = [data[i*seg_len:(i+1)*seg_len] for i in range(c // seg_len)]
@@ -75,22 +86,24 @@ def loss(model, criterion, corpus, c):
                 data, target = data.to(device), target.to(device)
                 cur_len = data.size(0)
                 output, memory = model(data, memory)
-                loss = criterion(output.view(cur_len, -1), target.view(-1))
+                loss = criterion(output.view(cur_len * batch_size, -1), target.view(-1))
+                loss = loss.view(cur_len, batch_size)
                 losses.append(loss)
-            return torch.cat(losses, 0)
+            return torch.cat(losses, 0).mean(1)
         elif model.name == "CRTN":
             seg_len = model.args.num_steps
             datas = [data[i*seg_len:(i+1)*seg_len] for i in range(c // seg_len)]
             targets = [target[i*seg_len:(i+1)*seg_len] for i in range(c // seg_len)]
 
-            model.set_batch_size(1)
+            model.set_batch_size(batch_size)
             for data, target in list(zip(datas, targets)):
                 data, target = data.to(device), target.to(device)
                 cur_len = data.size(0)
                 output = model(data)
-                loss = criterion(output.view(cur_len, -1), target.view(-1))
+                loss = criterion(output.view(cur_len * batch_size, -1), target.view(-1))
+                loss = loss.view(cur_len, batch_size)
                 losses.append(loss)
-            return torch.cat(losses, 0)
+            return torch.cat(losses, 0).mean(1)
         
         
 
@@ -162,23 +175,35 @@ def main(args):
         models.append((model, criterion))
 
     
-    for model, criterion in models:
+    for i, (model, criterion) in enumerate(models):
         c = args.initc
         delta = args.delta
         cp = c
         gain = 1.0
-        while gain >= 0.01:
+        ite = 0
+        while ite < 20:
             c = cp
             cp = cp + delta
             losses = []
-            for mod, crit in models:
+            for j, (mod, crit) in enumerate(models):
                 l = loss(mod, crit, corpus, c)
                 losses.append(l)
+
+            #l = loss(model, criterion, corpus, c)
+            #losses.append(l)
+
             lossc = torch.cat(losses).view(-1, c).t().contiguous()
             base = lossc.min(1)[0]
+
             basec, tau = base.topk(round(c * args.initr))
             tau = tau - c
             gain = relative_gain(model, criterion, corpus, base, c, cp, tau)
+            print(gain)
+            ite += 1
+            viz.line(np.array([[np.NaN] * i + [gain] + [np.NaN] * (len(args.model_names) - i - 1)]), np.array([c]), opts={
+                'legend': args.model_names,
+                'showlegend': True
+                }, win="gain", update="append")
         print("%s RECL: %s" % (model.name, c))
 
 

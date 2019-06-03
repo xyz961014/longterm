@@ -24,7 +24,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 def parse_args(args=None):
     #Arguments here
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, help="data path")
+    parser.add_argument("--data", type=str, default="/home/xyz/Documents/Dataset/ptb_sample", help="data path")
     parser.add_argument("--demo", action="store_true", help="demo mode")
     parser.add_argument("--load", type=str, default="",  help="load model from saved models")
     parser.add_argument("--cache_N", type=int, default=5,  help="cache size N")
@@ -65,14 +65,34 @@ def main(args):
     model_args = checkpoint["model_args"]
     model_args.cache_N = args.cache_N
     model_args.cache_k = args.cache_k
+    model_args.demo = args.demo
+    if args.demo:
+        model_args.eval_batch_size = 1
 
     model_state_dict = checkpoint["model_state_dict"]
     keys = model_state_dict.copy().keys()
     for key in keys:
         if re.match(r"cache.keys", key) or re.match(r"cache.values", key) or re.match(r"cache.words", key) or re.match(r"encoder.pos_emb_bank", key):
             model_state_dict.pop(key)
+
+
+
+    print("Loading data from %s" % args.data)
+    datatime_begin = time.time()
+
+    corpus = dataloader.Corpus(args.data)
+    args.vocab_size = corpus.vocabulary.num_words
+    eval_batch_size = model_args.eval_batch_size
+
+    valid_loader = corpus.get_valid_loader(batch_size=eval_batch_size, num_steps=model_args.num_steps)
+    test_loader = corpus.get_test_loader(batch_size=eval_batch_size, num_steps=model_args.num_steps)
+
+    print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
    
-    model = CRTNModel(model_args)
+    if args.demo:
+        model = CRTNModel(model_args, corpus)
+    else:
+        model = CRTNModel(model_args)
     model.load_state_dict(model_state_dict, strict=False)
 
     cutoffs, tie_projs = [], [False]
@@ -101,17 +121,6 @@ def main(args):
     else:
         criterion = nn.CrossEntropyLoss()
 
-    print("Loading data from %s" % args.data)
-    datatime_begin = time.time()
-
-    corpus = dataloader.Corpus(args.data)
-    args.vocab_size = corpus.vocabulary.num_words
-    eval_batch_size = model.args.eval_batch_size
-
-    valid_loader = corpus.get_valid_loader(batch_size=eval_batch_size, num_steps=model.args.num_steps)
-    test_loader = corpus.get_test_loader(batch_size=eval_batch_size, num_steps=model.args.num_steps)
-
-    print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
 
     valid_loss = evaluate(model, valid_loader, criterion, args)
     print('=' * 89)

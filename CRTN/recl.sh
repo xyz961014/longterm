@@ -3,11 +3,12 @@
 python recl.py \
     --data /home/xyz/Documents/Dataset/ptb_sample \
     --model_names LSTM XL CRTN \
-    --model_paths ../baseline/pytorch/save/lstm_best.pt \
-    ../baseline/pytorch/save/xl_best.pt \
-    ./save/crtn/crtn_best.pt \
-    --initc 80 \
-    --initr 1.0 \
-    --delta 40 \
+    --model_paths \
+    ./save/lstm_best.pt \
+    ./save/xl_best.pt \
+    ./save/base_best.pt \
+    --initc 70 \
+    --initr 0.5 \
+    --delta 70 \
     ${@:1}
 
