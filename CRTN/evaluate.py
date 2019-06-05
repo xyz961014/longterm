@@ -214,7 +214,12 @@ def main(args):
     if args.func == "attention_map":
         attention_map(model, criterion, corpus, valid_loader)
     elif args.func == "demo_words":
-        demo_words(model, criterion, corpus, init_word=args.init_word, length=args.length)
+        init_word = args.init_word
+        length = args.length
+        while True:
+            demo_words(model, criterion, corpus, init_word=init_word, length=length)
+            init_word = input("Input initial word:")
+            length = int(input("Input text length:"))
     else:
         valid_loss = evaluate(model, valid_loader, criterion, args)
         print('=' * 89)
