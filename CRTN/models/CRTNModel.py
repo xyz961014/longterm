@@ -41,10 +41,10 @@ class CRTNModel(nn.Module):
         self.encoder.set_batch_size(batch_size)
 
 
-    def forward(self, inputs):
+    def forward(self, inputs, draw=False, renew=True):
 
         if self.args.wise_summary:
-            _, wise_inputs = self.encoder(inputs)
+            _, wise_inputs, _ = self.encoder(inputs)
             query = wise_inputs[-1]
         else:
             query = self.encoder.embedding(inputs)
@@ -53,13 +53,13 @@ class CRTNModel(nn.Module):
             weights, indices, zones, words = self.cache(query)
         else:
             weights, indices, zones = self.cache(query)
-            words=None
+            words = None
 
-        output, mems = self.encoder(inputs, zones, weights, indices, words)
+        output, mems, attn_map = self.encoder(inputs, zones, weights, indices, words, draw)
+        if renew:
+            self.cache.renew(mems, inputs)
 
-        self.cache.renew(mems, inputs)
-
-        return output 
+        return output, attn_map 
 
 
 

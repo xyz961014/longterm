@@ -155,7 +155,7 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
 
         return logit
 
-    def forward(self, hidden, target, keep_order=False):
+    def forward(self, hidden, target, keep_order=False, output=False):
         '''
             hidden :: [len*bsz x d_proj]
             target :: [len*bsz]
@@ -200,6 +200,7 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
 
             offset = 0
             cutoff_values = [0] + self.cutoffs
+            tail_probs = []
             for i in range(len(cutoff_values) - 1):
                 l_idx, r_idx = cutoff_values[i], cutoff_values[i + 1]
 
@@ -221,6 +222,7 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
 
                     tail_logit_i = self._compute_logit(hidden_i, weight_i, bias_i, proj_i)
                     tail_logprob_i = F.log_softmax(tail_logit_i, dim=1)
+                    tail_probs.append(tail_logprob_i)
 
                     logprob_i = head_logprob_i[:, -i] \
                               + tail_logprob_i.gather(1, target_i[:,None]).squeeze(1)
@@ -231,5 +233,8 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                     nll[offset:offset+logprob_i.size(0)].copy_(-logprob_i)
 
                 offset += logprob_i.size(0)
-
-        return nll
+        
+        if not output:
+            return nll
+        else:
+            return (head_logprob_i, tail_probs)

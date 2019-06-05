@@ -110,7 +110,7 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         data, targets = data.t().contiguous(), targets.t().contiguous()
         model.zero_grad()
 
-        output = model(data)
+        output, _ = model(data)
 
         if args.adaptive:
             loss = criterion(output.view(-1, args.nhid), targets.view(-1))
@@ -147,7 +147,7 @@ def evaluate(model, eval_loader, criterion, args):
             data, targets = data.to(device), targets.to(device)
             data, targets = data.t().contiguous(), targets.t().contiguous()
                 
-            output = model(data)
+            output, _ = model(data)
 
             if args.adaptive:
                 loss = criterion(output.view(-1, args.nhid), targets.view(-1))

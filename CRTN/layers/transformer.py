@@ -194,6 +194,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         attn_prob = F.softmax(attn_score, 1)
         attn_prob = self.drop(attn_prob)
+        attn_matrix = attn_prob.mean((2, 3))
 
         attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
         attn_vec = attn_vec.contiguous().view(seq_len, batch_size, self.num_head * self.d_head)
@@ -203,7 +204,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         output = self.layer_norm(x + attn_out)
 
-        return output
+        return output, attn_matrix
 
 
 
@@ -229,11 +230,11 @@ class TransformerUnit(nn.Module):
         if self.attn_type == 0:
             output = self.attn(inputs, pos_emb, mask=mask, memory=memory, weights=weights)
         elif self.attn_type == 1:
-            output = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, mask=mask, memory=memory, weights=weights)
+            output, attn_matrix = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, mask=mask, memory=memory, weights=weights)
 
         output = self.pos_ff(output)
 
-        return output
+        return output, attn_matrix
 
 
 class TransformerLM(nn.Module):
@@ -328,7 +329,7 @@ class TransformerLM(nn.Module):
         else:
             return None
 
-    def forward(self, inputs, zones=None, weights=None, indices=None, words=None):
+    def forward(self, inputs, zones=None, weights=None, indices=None, words=None, draw=False):
         seq_len, batch_size = inputs.size()
         length = torch.tensor([seq_len] * batch_size, dtype=torch.int64)
 
@@ -383,13 +384,15 @@ class TransformerLM(nn.Module):
         
         memory = word_emb.clone().detach()
         memories = [memory]
+        attn_map = None
 
         for i, layer in enumerate(self.layers):
             zone_i = None if zones is None else zones[i]
             if self.args.attn_type == 0:
                 core_out = layer(core_out, pos_emb, mask=mask, memory=zone_i, weights=weights)
             elif self.args.attn_type == 1:
-                core_out = layer(core_out, pos_emb, self.pos_bias_u, self.pos_bias_v, mask=mask, memory=zone_i, weights=weights)
+                core_out, attn_matrix = layer(core_out, pos_emb, self.pos_bias_u, self.pos_bias_v, mask=mask, memory=zone_i, weights=weights)
+
 
             mem = core_out.detach()
             memories.append(mem)
@@ -397,16 +400,9 @@ class TransformerLM(nn.Module):
         memories = torch.cat(memories, 0)
         memories = memories.view(self.args.nlayers+1, seq_len, -1, self.args.nhid)
 
-        if self.demo and indices is not None:
-            for ind, weight, words in display:
-                print("SEGMENT %s | weight: %.3f" % (ind.item(), weight.item()))
-                for word in words.view(-1):
-                    print(self.corpus.vocabulary.index2word[word.item()], end=" ")
-                print("\n")
-            print("当前输入序列：")
-            for word in inputs[:,0]:
-                print(self.corpus.vocabulary.index2word[word.item()], end=" ")
-            print("")
+        if draw:
+            attn_map = attn_matrix
+
 
 
         core_out = self.drop(core_out)
@@ -419,5 +415,17 @@ class TransformerLM(nn.Module):
 
         #output = pad_packed_sequence(output)
 
+        if self.demo and indices is not None:
+            for ind, weight, words in display:
+                print("SEGMENT %s | weight: %.3f" % (ind.item(), weight.item()))
+                for word in words.view(-1):
+                    print(self.corpus.vocabulary.index2word[word.item()], end=" ")
+                print("\n")
+            print("当前输入序列：")
+            for word in inputs[:,0]:
+                print(self.corpus.vocabulary.index2word[word.item()], end=" ")
+            print("")
+            return output, memories, (attn_map, display)
 
-        return output, memories
+
+        return output, memories, attn_map
