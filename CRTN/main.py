@@ -172,7 +172,7 @@ def main(args):
     cutoffs, tie_projs = [], [False]
     if args.adaptive:
         if args.dataset == "ptb":
-            cutoffs = [20000, 40000, 80000]
+            cutoffs = [2000, 4000, 8000]
             tie_projs += [True] * 3
         elif args.dataset == "wt103":
             cutoffs = [20000, 40000, 80000]

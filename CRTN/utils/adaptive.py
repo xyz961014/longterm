@@ -207,8 +207,9 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                 mask_i = (target >= l_idx) & (target < r_idx)
                 indices_i = mask_i.nonzero().squeeze()
 
-                if indices_i.numel() == 0:
-                    continue
+                if not output:
+                    if indices_i.numel() == 0:
+                        continue
 
                 target_i = target.index_select(0, indices_i) - l_idx
                 head_logprob_i = head_logprob.index_select(0, indices_i)
@@ -222,7 +223,10 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
 
                     tail_logit_i = self._compute_logit(hidden_i, weight_i, bias_i, proj_i)
                     tail_logprob_i = F.log_softmax(tail_logit_i, dim=1)
-                    tail_probs.append(tail_logprob_i)
+
+                    tail_logit_output = self._compute_logit(hidden, weight_i, bias_i, proj_i)
+                    tail_logprob_output = F.log_softmax(tail_logit_output, dim=1)
+                    tail_probs.append(tail_logprob_output)
 
                     logprob_i = head_logprob_i[:, -i] \
                               + tail_logprob_i.gather(1, target_i[:,None]).squeeze(1)
@@ -237,4 +241,4 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
         if not output:
             return nll
         else:
-            return (head_logprob_i, tail_probs)
+            return (head_logprob, tail_probs)

@@ -17,10 +17,9 @@ python main.py \
     --seed 1111 \
     --epochs 100 \
     --log-interval 100 \
-    --save crtn \
+    --save demo \
     --adaptive \
     --no_summary \
     --wise_summary \
-    --max_pooling \
     ${@:1}
 

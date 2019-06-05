@@ -128,8 +128,8 @@ def demo_words(model, criterion, corpus, init_word, length=100):
         head_prob, tails = criterion(output.view(-1, model.args.nhid), sequence.view(-1), output=True)
         word_ind = head_prob.max(1)[1][(i+1) % num_steps - 1]
         if word_ind >= cutoffs[0]:
-            cluster = word_ind - vocab_size
-            word_ind = tails[cluster].max(1) + cutoffs[cluster]
+            cluster = word_ind - cutoffs[0]
+            word_ind = tails[cluster].max(1)[1][(i+1) % num_steps - 1] + cutoffs[cluster]
         
         word = corpus.vocabulary.index2word[word_ind.item()]
         if word == "<eos>":
@@ -143,6 +143,7 @@ def demo_words(model, criterion, corpus, init_word, length=100):
         else:
             sequence = [word_ind.item()] + [0 for _ in range(num_steps-1)]
             sequence = torch.tensor(sequence).view(-1, 1).to(device)
+    print("")
 
 
 def main(args):
@@ -182,14 +183,15 @@ def main(args):
         model = CRTNModel(model_args)
     model.load_state_dict(model_state_dict, strict=False)
 
-    cutoffs, tie_projs = [], [False]
-    if model.args.adaptive:
-        if model.args.dataset == "ptb":
-            cutoffs = [20000, 40000, 80000]
-            tie_projs += [True] * 3
-        elif model.args.dataset == "wt103":
-            cutoffs = [20000, 40000, 80000]
-            tie_projs += [True] * 3
+    cutoffs = model.args.cutoffs
+    tie_projs = model.args.tie_projs
+    #if model.args.adaptive:
+    #    if model.args.dataset == "ptb":
+    #        cutoffs = [20000, 40000, 80000]
+    #        tie_projs += [True] * 3
+    #    elif model.args.dataset == "wt103":
+    #        cutoffs = [20000, 40000, 80000]
+    #        tie_projs += [True] * 3
 
     if model.args.adaptive:
         criterion = ProjectedAdaptiveLogSoftmax(model.args.vocab_size, model.args.emsize, model.args.nhid, cutoffs, div_val=model.args.div_val, init_std=model.args.init_std) 
