@@ -1,4 +1,5 @@
 import time
+from datetime import datetime
 import re
 import argparse
 
@@ -18,8 +19,7 @@ from data import dataloader
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
 from models.CRTNModel import CRTNModel
 
-from tensorboardX import SummaryWriter
-
+from torch.utils.tensorboard import SummaryWriter
 import ipdb
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -137,6 +137,8 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
                     'loss {:5.2f} | ppl {:8.2f}'.format(
                 epoch, batch, len(train_loader), optimizer.state_dict()["param_groups"][0]["lr"],
                 elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
+            writer.add_scalar("train/ppl", math.exp(cur_loss), batch + (epoch - 1) * len(train_loader))
+            writer.flush()
             total_loss = 0.
             start_time = time.time()
 
@@ -286,7 +288,6 @@ def main(args):
     elif args.scheduler == "constant":
         scheduler = None
 
-    #writer.add_embedding(model.encoder.embedding.emb_layers[0], corpus.vocabulary.index2word)
 
     try:
         best_eval_loss = float('inf')
@@ -299,13 +300,14 @@ def main(args):
                     'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
                                                eval_loss, math.exp(eval_loss)))
             print('-' * 89)
-            writer.add_scalar("valid/ppl", math.exp(eval_loss), epoch)
+            writer.add_scalar("valid/ppl", math.exp(eval_loss), epoch * len(train_loader))
+            writer.flush()
             if eval_loss < best_eval_loss:
                 torch.save({
                     "model_args": model.args,
                     "model_state_dict": model.state_dict(),
                     "criterion": criterion.state_dict()
-                    }, savepath + args.save + "/" + args.save + "_best" + ".pt")
+                    }, savepath + args.save + args.timestr + "/" + args.save + "_best" + ".pt")
                 #with open("save/" + args.save + "/" + args.save + "_best.pt", "wb") as f:
                 #    torch.save(model, f)
                 #with open("save/" + args.save + "/" + args.save + "_crit.pt", "wb") as f:
@@ -320,7 +322,7 @@ def main(args):
     #    model = torch.load(f)
     #with open("save/" + args.save + "/" + args.save + "_crit.pt", "rb") as f:
     #    criterion = torch.load(f)
-    eval_checkpoint = torch.load(savepath + args.save + "/" + args.save + "_best.pt")
+    eval_checkpoint = torch.load(savepath + args.save + args.timestr + "/" + args.save + "_best.pt")
     model_state_dict = eval_checkpoint["model_state_dict"]
     keys = model_state_dict.copy().keys()
     for key in keys:
@@ -330,6 +332,7 @@ def main(args):
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
     test_loss = evaluate(model, test_loader, criterion, args)
+    writer.add_embedding(model.encoder.embedding.emb_layers[0].weight, corpus.vocabulary.index2word.values())
     print('=' * 89)
     print('| best valid loss {:5.2f} | best valid ppl {:8.2f}'.format(
         best_eval_loss, math.exp(best_eval_loss)))
@@ -345,10 +348,11 @@ def main(args):
 if __name__ == "__main__":
     args = parse_args()
     savepath = "../../../experiment/crtn/save/"
+    args.timestr = datetime.now().__format__("%Y%m%d%H%M%S")
     
-    if not os.path.exists("./log/" + args.save):
-        os.mkdir("./log/" + args.save)
-    if not os.path.exists(savepath + args.save):
-        os.mkdir(savepath + args.save)
-    writer = SummaryWriter("./log/" + args.save)
+    if not os.path.exists("./log/" + args.save + args.timestr):
+        os.mkdir("./log/" + args.save + args.timestr)
+    if not os.path.exists(savepath + args.save + args.timestr):
+        os.mkdir(savepath + args.save + args.timestr)
+    writer = SummaryWriter("./log/" + args.save + args.timestr)
     main(args)
