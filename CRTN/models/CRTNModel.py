@@ -31,6 +31,9 @@ class CRTNModel(nn.Module):
 
         self.encoder = TransformerLM(args, corpus)
 
+        if args.query_method == "linear":
+            self.shorten = nn.Linear(2 * self.args.num_steps, self.args.num_steps)
+
     def to(self, device):
         super().to(device)
         self.cache.to(device)
@@ -39,13 +42,105 @@ class CRTNModel(nn.Module):
     def set_batch_size(self, batch_size):
         self.cache.set_batch_size(batch_size)
         self.encoder.set_batch_size(batch_size)
+        self.args.batch_size = batch_size
 
 
     def forward(self, inputs, draw=False, renew=True):
-
+        seq_len = self.args.num_steps
         if self.args.wise_summary:
-            _, wise_inputs, _ = self.encoder(inputs)
-            query = wise_inputs[-1]
+            if self.args.query_method == "vanilla":
+                _, wise_inputs, _ = self.encoder(inputs)
+                query = wise_inputs[-1]
+                query = torch.einsum("lbd,k->klbd",query, torch.ones_like(query[:,0,0]))
+                mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
+                mask = mask.bool()[:,:,None,None]
+                query.masked_fill_(mask, 0)
+            elif self.args.query_method == "fixed_length_1":
+                prev = self.cache._get_values()[-1]
+                prev = prev.view(seq_len, self.args.batch_size, self.args.nlayers+1, self.args.nhid)
+                prev = prev[:,:,0,:]
+                inputs = self.encoder.embedding(inputs)
+                new_input = torch.cat((prev, inputs), 0)
+                index_matrix = torch.arange(seq_len, device=new_input.device).unsqueeze(0)
+                index_matrix = index_matrix.expand(seq_len, -1)
+                index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) 
+                index_matrix = index_matrix.view(-1, 1, 1)
+                index_matrix = index_matrix.expand(-1, self.args.batch_size, self.args.nhid)
+                query = torch.gather(new_input, 0, index_matrix)
+                query = query.view(seq_len, seq_len, self.args.batch_size, self.args.nhid)
+                query = query.transpose(0, 1).contiguous()
+                query = query.view(seq_len, seq_len * self.args.batch_size, self.args.nhid)
+                _, query, _ = self.encoder(query)
+                query = query[-1].view(seq_len, seq_len, self.args.batch_size, self.args.nhid)
+            elif self.args.query_method == "fixed_length_2":
+                new_inputs = inputs.expand(seq_len, -1, -1)
+                prev = self.cache._get_values()[-1]
+                prev = prev.expand(seq_len, -1, -1, -1)
+                input_mask = torch.triu(new_inputs.new_ones(seq_len, seq_len), diagonal=1)
+                memory_mask = torch.tril(prev.new_ones(seq_len, seq_len), diagonal=0)
+                input_mask = input_mask.bool()[:,:,None]
+                memory_mask = memory_mask.bool()[:,:,None,None]
+                new_inputs.masked_fill_(input_mask, 0)
+                prev.masked_fill_(memory_mask, 0)
+                new_inputs = new_inputs.transpose(0, 2).contiguous()
+                new_inputs = new_inputs.view(seq_len, seq_len * self.args.batch_size)
+                prev = prev.transpose(1, 2).contiguous()
+                prev = prev.view(1, seq_len * self.args.batch_size, seq_len, (self.args.nlayers+1)*self.args.nhid)
+                prev_indice = torch.ones_like(new_inputs[0]) * (self.args.cache_N - 1)
+                prev_indice.unsqueeze_(0)
+                _, wise_inputs, _ = self.encoder(new_inputs, zones=prev, indices=prev_indice)
+                wise_inputs = wise_inputs[-1]
+                prev = prev.view(-1, seq_len, self.args.nlayers+1, self.args.nhid)
+                prev = prev[:,:,-1,:]
+                prev.transpose_(0, 1)
+                query_base = torch.cat((prev, wise_inputs), 0)
+                query_base = query_base.view(query_base.size(0), seq_len, self.args.batch_size, self.args.nhid)
+                query_base = query_base.transpose(0, 1).contiguous()
+                query_base = query_base.view(-1, self.args.batch_size, self.args.nhid)
+                index_range = torch.arange(seq_len, device=new_inputs.device).unsqueeze(0)
+                index_matrix = index_range.expand(seq_len, -1)
+                index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) + index_range.t().expand(-1, seq_len) * 2 * seq_len 
+                index_matrix = index_matrix.view(-1, 1, 1)
+                index_matrix = index_matrix.expand(-1, query_base.size(1), query_base.size(2))
+                query = torch.gather(query_base, 0, index_matrix)
+                
+                query = query.view(seq_len, seq_len, self.args.batch_size, self.args.nhid)
+            else:
+                prev = self.cache._get_values()[-1]
+                prev.transpose_(0, 1).contiguous()
+                prev.unsqueeze_(0)
+                prev_indice = torch.ones_like(inputs[0]) * (self.args.cache_N - 1)
+                prev_indice.unsqueeze_(0)
+                _, wise_inputs, _ = self.encoder(inputs, zones=prev, indices=prev_indice)
+                if self.args.query_method == "last_l":
+                    query = wise_inputs[-1]
+                    query = torch.einsum("lbd,k->klbd",query, torch.ones_like(query[:,0,0]))
+                    mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
+                    mask = mask.bool()[:,:,None,None]
+                    query.masked_fill_(mask, 0)
+                elif self.args.query_method == "middle_l":
+                    wise_inputs = wise_inputs[-1]
+                    prev = prev.view(-1, seq_len, self.args.nlayers+1, self.args.nhid)
+                    prev = prev[:,:,-1,:]
+                    prev.transpose_(0, 1)
+                    query_base = torch.cat((prev, wise_inputs), 0)
+                    index_range = torch.arange(seq_len, device=inputs.device).unsqueeze(0)
+                    index_matrix = index_range.expand(seq_len, -1)
+                    index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) 
+                    index_matrix = index_matrix.view(-1, 1, 1)
+                    index_matrix = index_matrix.expand(-1, query_base.size(1), query_base.size(2))
+                    query = torch.gather(query_base, 0, index_matrix)
+                    query = query.view(seq_len, seq_len, self.args.batch_size, self.args.nhid)
+                elif self.args.query_method == "linear":
+                    wise_inputs = wise_inputs[-1]
+                    prev = prev.view(-1, seq_len, self.args.nlayers+1, self.args.nhid)
+                    prev = prev[:,:,-1,:]
+                    prev.transpose_(0, 1)
+                    query_base = torch.cat((prev, wise_inputs), 0)
+                    query_base.transpose_(0, 2)
+                    query_base = query_base.expand(seq_len, -1, -1, -1)
+                    query = self.shorten(query_base)
+                    query = torch.einsum("khbl->klbh", query)
         else:
             query = self.encoder.embedding(inputs)
         

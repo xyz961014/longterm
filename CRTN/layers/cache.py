@@ -87,11 +87,12 @@ class Cache(nn.Module):
 
     def forward(self, query):
 
-        query = query.transpose(0, 1).contiguous()
+        query = query.transpose(1, 2).contiguous()
+        query_len = query.size(0)
         if self.args.no_summary:
-            query = query.view(self.batch_size, -1)
+            query = query.view(query_len, self.batch_size, -1)
         else:
-            query = self.summary(query.view(-1, self.L * self.dv))
+            query = self.summary(query.view(query_len, -1, self.L * self.dv))
         keys = self._get_keys()
         values = self._get_values()
         
@@ -100,6 +101,14 @@ class Cache(nn.Module):
             
         keys = keys.transpose(0, 1).contiguous()
         values = torch.einsum("klbh->bklh", values).contiguous()
+
+        keys = keys.expand(query_len, -1, -1, -1).contiguous()
+        values = values.expand(query_len, -1, -1, -1, -1).contiguous()
+
+        query = query.view(-1, self.L * self.dv)
+        keys = keys.view(-1, self.N, self.L * self.dv)
+        values = values.view(-1, self.N, self.L, self.dv * (self.args.nlayers + 1))
+
         
         if self.args.max_pooling:
             query = query.view(-1, self.args.num_steps, self.args.nhid)

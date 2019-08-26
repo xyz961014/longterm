@@ -8,20 +8,20 @@ fi
 python lm.py \
     --data "${data}" \
     --adam \
-    --lr 0.00025 \
+    --lr 27e-5 \
     --tied \
-    --emsize 200 \
-    --nhid 200 \
-    --nhead 4 \
-    --nlayers 2 \
-    --d_ff 1000 \
+    --emsize 240 \
+    --nhid 240 \
+    --nhead 8 \
+    --nlayers 15 \
+    --d_ff 1300 \
     --num_steps 70 \
     --mem_len 210 \
-    --epochs 100 \
-    --batch_size 60 \
-    --dropout 0.2 \
+    --epochs 300 \
+    --batch_size 50 \
+    --dropout 0.45 \
     --attn_type 1 \
     --adaptive \
-    --div_val 2 \
     --seed 1111 \
+    --multi_gpu \
     ${@:2}

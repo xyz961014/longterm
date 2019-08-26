@@ -84,6 +84,9 @@ def parse_args():
                         help='use encoder function(transformer-xl) to summary the key')
     parser.add_argument('--max_pooling', action="store_true",
                         help='use max pooling to justice importance of segments in the cache')
+    parser.add_argument('--query_method', type=str, default='vanilla', 
+                        choices=['fixed_length_1', 'fixed_length_2', 'last_l', 'middle_l', 'linear', 'vanilla'],
+                        help='query method to use. vanilla indicates just use current segment to query, other methods link previous segment. last_l and middle_l only work in wise_summary mode')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
     parser.add_argument('--div_val', type=int, default=1,
@@ -166,6 +169,8 @@ def evaluate(model, eval_loader, criterion, args):
 def main(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
+    savepath = "../../../experiment/crtn/save/"
+
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
 
@@ -300,7 +305,7 @@ def main(args):
                     "model_args": model.args,
                     "model_state_dict": model.state_dict(),
                     "criterion": criterion.state_dict()
-                    }, "save/" + args.save + "/" + args.save + "_best" + ".pt")
+                    }, savepath + args.save + "/" + args.save + "_best" + ".pt")
                 #with open("save/" + args.save + "/" + args.save + "_best.pt", "wb") as f:
                 #    torch.save(model, f)
                 #with open("save/" + args.save + "/" + args.save + "_crit.pt", "wb") as f:
@@ -315,7 +320,7 @@ def main(args):
     #    model = torch.load(f)
     #with open("save/" + args.save + "/" + args.save + "_crit.pt", "rb") as f:
     #    criterion = torch.load(f)
-    eval_checkpoint = torch.load("save/" + args.save + "/" + args.save + "_best.pt")
+    eval_checkpoint = torch.load(savepath + args.save + "/" + args.save + "_best.pt")
     model_state_dict = eval_checkpoint["model_state_dict"]
     keys = model_state_dict.copy().keys()
     for key in keys:
@@ -339,10 +344,11 @@ def main(args):
 
 if __name__ == "__main__":
     args = parse_args()
+    savepath = "../../../experiment/crtn/save/"
     
     if not os.path.exists("./log/" + args.save):
         os.mkdir("./log/" + args.save)
-    if not os.path.exists("./save/" + args.save):
-        os.mkdir("./save/" + args.save)
+    if not os.path.exists(savepath + args.save):
+        os.mkdir(savepath + args.save)
     writer = SummaryWriter("./log/" + args.save)
     main(args)
