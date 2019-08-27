@@ -99,8 +99,9 @@ class Cache(nn.Module):
         if self.demo:
             words = self._get_words()
             
-        keys = keys.transpose(0, 1).contiguous()
-        values = torch.einsum("klbh->bklh", values).contiguous()
+        #keys = keys.transpose(0, 1).contiguous()
+        keys.transpose_(0, 1)
+        values = torch.einsum("klbh->bklh", values)
 
         keys = keys.expand(query_len, -1, -1, -1).contiguous()
         values = values.expand(query_len, -1, -1, -1, -1).contiguous()
@@ -119,6 +120,7 @@ class Cache(nn.Module):
         else:
             attention, _ = self.attn(query, keys, values)
 
+
         
         if self.demo:
             #demo mode
@@ -133,14 +135,18 @@ class Cache(nn.Module):
             topk_weights = F.softmax(topk_weights, 2)
         #outputs = values[batch, topk_indices]
 
-        values = values.transpose(0, 1).contiguous()
-        indices = torch.einsum("kb,ij->kbij", topk_indices.to(torch.float), torch.ones_like(values[0][0]).to(torch.float)).to(torch.long)
+        #values = values.transpose(0, 1).contiguous()
+        values.transpose_(0, 1)
+        #indices = torch.einsum("kb,ij->kbij", topk_indices.to(torch.float), torch.ones_like(values[0][0]).to(torch.float)).to(torch.long)
+        indices = topk_indices[:,:,None,None]
+        indices = indices.expand(-1, -1, values.size(-2), values.size(-1))
         outputs = torch.gather(values, 0, indices)
-
 
         if self.demo:
             words = words.transpose(0, 1).contiguous()
-            indices = torch.einsum("kb,i->kbi", topk_indices.to(torch.float), torch.ones_like(words[0][0]).to(torch.float)).to(torch.long)
+            #indices = torch.einsum("kb,i->kbi", topk_indices.to(torch.float), torch.ones_like(words[0][0]).to(torch.float)).to(torch.long)
+            indices = topk_indices[:,:,None]
+            indices = indices.expand(-1, -1, values.size(-1))
             word_output = torch.gather(words, 0, indices)
             return topk_weights, topk_indices, outputs, word_output
         else:
@@ -148,7 +154,7 @@ class Cache(nn.Module):
 
 
     def renew(self, inputs, words=None):
-        inputs = inputs.detach()
+        #inputs = inputs.detach()
         inputs = inputs.transpose(1, 2).contiguous()
         n = self.renew_place
         

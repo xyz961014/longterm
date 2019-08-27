@@ -348,7 +348,7 @@ def main(args):
 if __name__ == "__main__":
     args = parse_args()
     savepath = "../../../experiment/crtn/save/"
-    args.timestr = datetime.now().__format__("%Y%m%d%H%M%S")
+    args.timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
     
     if not os.path.exists("./log/" + args.save + args.timestr):
         os.mkdir("./log/" + args.save + args.timestr)

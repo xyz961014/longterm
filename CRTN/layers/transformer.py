@@ -358,6 +358,7 @@ class TransformerLM(nn.Module):
             return None
 
     def forward(self, inputs, zones=None, weights=None, indices=None, words=None, draw=False):
+        #input shape should be seq_len * bsz or seq_len * bsz * emsize
         if inputs.dim() == 2:
             word_emb = self.embedding(inputs)
             seq_len, batch_size = inputs.size()
@@ -411,7 +412,7 @@ class TransformerLM(nn.Module):
         pos_emb = self.drop(pos_emb)
         core_out = self.drop(word_emb)
         
-        memory = word_emb.clone().detach()
+        memory = word_emb.clone()
         memories = [memory]
         attn_map = None
 
@@ -423,7 +424,7 @@ class TransformerLM(nn.Module):
                 core_out, attn_matrix = layer(core_out, pos_emb, self.pos_bias_u, self.pos_bias_v, mask=mask, memory=zone_i, weights=weights)
 
 
-            mem = core_out.detach()
+            mem = core_out
             memories.append(mem)
 
         memories = torch.cat(memories, 0)
