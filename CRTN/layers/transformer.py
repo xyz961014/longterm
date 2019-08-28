@@ -79,7 +79,7 @@ class MultiheadSelfAttention(nn.Module):
 
         self.scale = 1 / (d_head ** 0.5)
 
-    def forward(self, x, pos_emb, mask=None, memory=None, weights=None):
+    def forward(self, x, pos_emb, mask=None, memory=None, indices=None, weights=None):
 
         seq_len = x.size(0)
         
@@ -151,26 +151,35 @@ class LearnableMultiheadSelfAttention(nn.Module):
         return x
 
 
-    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, weights=None):
+    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, indices=None, weights=None):
         x_len, batch_size = x.size(0), x.size(1)
-        seq_len = x_len
+        #seq_len = x_len
 
-        x_seq = x.unsqueeze(1)
-        x_seq = x_seq.expand(-1, seq_len, -1, -1).contiguous()
-        x_seq = x_seq.view(seq_len, -1, self.d_model)
+        #x_seq = x.unsqueeze(1)
+        #x_seq = x_seq.expand(-1, seq_len, -1, -1).contiguous()
+        #x_seq = x_seq.view(seq_len, -1, self.d_model)
+
+        #if memory is not None:
+        #    if batch_size == memory.size(1):
+        #        c = torch.cat((memory, x), 0)
+        #        seq_len = 1
+        #        vanilla = True
+        #    else:
+        #        c = torch.cat((memory, x_seq), 0)
+        #        vanilla = False
+        #else:
+        #    c = x
+        #    seq_len = 1
+        #    vanilla = True
 
         if memory is not None:
-            if batch_size == memory.size(1):
-                c = torch.cat((memory, x), 0)
-                seq_len = 1
-                vanilla = True
-            else:
-                c = torch.cat((memory, x_seq), 0)
-                vanilla = False
+            mem_num = memory.size(0)
+            memory = memory.view(-1, batch_size, self.num_head * self.d_head)
+            c = torch.cat((memory, x), 0)
         else:
             c = x
-            seq_len = 1
             vanilla = True
+        seq_len = x_len
 
         total_len = c.size(0)
 
@@ -182,50 +191,66 @@ class LearnableMultiheadSelfAttention(nn.Module):
         heads_q = self.lin_q(x)
 
         heads_q = heads_q.view(x_len, batch_size, self.num_head, self.d_head)
-        heads_k = heads_k.view(total_len, seq_len, batch_size, self.num_head, self.d_head)
-        heads_v = heads_v.view(total_len, batch_size * seq_len, self.num_head, self.d_head)
+        heads_k = heads_k.view(total_len, batch_size, self.num_head, self.d_head)
+        heads_v = heads_v.view(total_len, batch_size, self.num_head, self.d_head)
 
-        if weights is not None:
-            weights = torch.cat((weights, torch.ones_like(weights[:,:,0]).view(batch_size * seq_len, 1, -1)),2)
-            weights = torch.einsum("bik,l->bkl", weights, torch.ones(seq_len, device=weights.device))
-            weights = weights.view(batch_size * seq_len, -1)
-            heads_v = torch.einsum("bl,lbnd->lbnd", weights, heads_v)
+        #if weights is not None:
+        #    weights = torch.cat((weights, torch.ones_like(weights[:,:,0]).view(weights.size(0), 1, -1)), 2)
+        #    weights = torch.einsum("bik,l->bkl", weights, torch.ones(x_len, device=weights.device))
+        #    weights = weights.view(weights.size(0), -1)
+        #    heads_v = torch.einsum("bl,lbnd->lbnd", weights, heads_v)
 
-        heads_v = heads_v.view(total_len, seq_len, batch_size, self.num_head, self.d_head)
+        #heads_v = heads_v.view(total_len, batch_size, self.num_head, self.d_head)
 
-        rel_emb_matrix = rel_emb_matrix.view(total_len, seq_len, batch_size, self.num_head, self.d_head)
+        rel_emb_matrix = rel_emb_matrix.view(total_len, batch_size, self.num_head, self.d_head)
 
         heads_qu = heads_q + pos_bias_u
         heads_qv = heads_q + pos_bias_v
 
-        if vanilla:
-            heads_k.squeeze_()
-            heads_v.squeeze_()
-            rel_emb_matrix.squeeze_()
-            AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
-            BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
-        else:
-            AC = torch.einsum("jbnd,ijbnd->jibn", (heads_qu, heads_k))
-            BD = torch.einsum("jbnd,ijbnd->jibn", (heads_qv, rel_emb_matrix))
+        AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
+        BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
         
         BD = self._rel_shift(BD)
 
 
         attn_score = AC + BD
-        ipdb.set_trace()
         attn_score.mul_(self.scale)
 
         if mask is not None:
             attn_score.masked_fill_(mask[:,:,:,None], -float('inf'))
 
-        attn_prob = F.softmax(attn_score, 1)
+        if memory is not None:
+            attn_score = attn_score.view(x_len, mem_num + 1, x_len, batch_size, self.num_head)
+            indices = indices.view(-1, batch_size)
+            score_indices = indices[None,:,None,:,None]
+            score_indices = score_indices.expand(attn_score.size(0), -1, attn_score.size(2), -1, attn_score.size(4))
+            sel_attn_score = torch.gather(attn_score, 1, score_indices)
+            sel_attn_score = sel_attn_score.view(x_len, -1, x_len, x_len, batch_size, self.num_head)
+            sel_attn_score = sel_attn_score.transpose(2, 3).contiguous()
+            sel_attn_score = sel_attn_score.view(x_len, -1, x_len, batch_size, self.num_head)
+            heads_v = heads_v.view(-1, x_len, batch_size, self.num_head, self.d_head)
+            v_indices = indices[:,None,:,None,None]
+            v_indices = v_indices.expand(-1, heads_v.size(1), -1, heads_v.size(3), heads_v.size(4))
+            sel_heads_v = torch.gather(heads_v, 0, v_indices)
+            sel_heads_v = sel_heads_v.view(-1, x_len, x_len, batch_size, self.num_head, self.d_head)
+            sel_heads_v = sel_heads_v.transpose(1, 2).contiguous()
+            sel_heads_v = sel_heads_v.view(-1, x_len, batch_size, self.num_head, self.d_head)
+            if weights is not None:
+                weights = torch.cat((weights, torch.ones_like(weights[:,:,0]).view(weights.size(0), 1, -1)), 2)
+                weights = weights.view(x_len, batch_size, -1)
+                sel_heads_v = torch.einsum("jibnh,ibn->jibnh", sel_heads_v, weights)
+        else:
+            sel_attn_score = attn_score
+            sel_heads_v = heads_v
+
+        attn_prob = F.softmax(sel_attn_score, 1)
         attn_prob = self.drop(attn_prob)
         attn_matrix = attn_prob.mean((2, 3))
 
-        if vanilla:
+        if memory is None:
             attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
         else:
-            attn_vec = torch.einsum("jibn,ijbnd->jbnd", attn_prob, heads_v)
+            attn_vec = torch.einsum("ijibn,jibnd->ibnd", attn_prob, sel_heads_v)
         attn_vec = attn_vec.contiguous().view(x_len, batch_size, self.num_head * self.d_head)
 
         attn_out = self.lin_o(attn_vec)
@@ -254,12 +279,12 @@ class TransformerUnit(nn.Module):
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, dropout)
 
-    def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, weights=None):
+    def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, indices=None, weights=None):
         
         if self.attn_type == 0:
-            output = self.attn(inputs, pos_emb, mask=mask, memory=memory, weights=weights)
+            output = self.attn(inputs, pos_emb, mask=mask, memory=memory, indices=indices, weights=weights)
         elif self.attn_type == 1:
-            output, attn_matrix = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, mask=mask, memory=memory, weights=weights)
+            output, attn_matrix = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, mask=mask, memory=memory, indices=indices, weights=weights)
 
         output = self.pos_ff(output)
 
@@ -386,9 +411,9 @@ class TransformerLM(nn.Module):
         #    mem_len = 0
         #    zone_bsz = batch_size
         if indices is not None:
-            mem_len = indices.size(0)
-            mem_len *= values.size(1)
+            mem_len = values.size(1) * self.args.cache_N
             zone_bsz = indices.size(1)
+            values = values.view(values.size(0), seq_len, batch_size, self.args.nlayers+1, self.args.nhid)
         else:
             mem_len = 0
             zone_bsz = batch_size
@@ -401,30 +426,32 @@ class TransformerLM(nn.Module):
 
 
         mask = torch.triu(word_emb.new_ones(seq_len, total_len), diagonal=1+mem_len)
-        #mask = torch.cat((word_emb.new_ones(mem_len, total_len), mask), 0)
         mask = mask.bool()[:,:,None]
 
         ### POSITION SCHEME ###
         if indices is not None:
             #pos_seq
-            pos_indices = torch.cat((indices, (torch.ones_like(indices[0])-2).view(1,-1)))
+            pos_indices = torch.cat((indices, (torch.ones_like(indices[0]) * self.args.cache_N).view(1,-1)))
 
-            batch = torch.einsum('k,b->kb',torch.ones(pos_indices.size(0), dtype=torch.long), torch.arange(pos_indices.size(1)))
+            #batch = torch.einsum('k,b->kb',torch.ones(pos_indices.size(0), dtype=torch.long), torch.arange(pos_indices.size(1)))
 
-            pos_seq = self.pos_emb_bank[batch, pos_indices].transpose(0, 1).contiguous()
+            #pos_seq = self.pos_emb_bank[batch, pos_indices].transpose(0, 1).contiguous()
+            pos_seq = torch.einsum("b,k->bk", torch.ones(batch_size, device=inputs.device), torch.arange((self.args.cache_N + 1) * self.args.num_steps-1, -1, -1.0, device=inputs.device))
+            
             #zones
-            values.unsqueeze_(2)
-            values = values.expand(-1, -1, seq_len, -1, -1)
-            values = values.reshape(values.size(0), seq_len, -1, self.args.nlayers+1, self.args.nhid)
-            values.transpose_(1, 2)
-            indices = indices[:,:,None,None,None]
-            indices = indices.expand(-1, -1, values.size(-3), values.size(-2), values.size(-1))
-            zones = torch.gather(values, 0, indices)
-            zones = torch.einsum("kblyh->yklbh", zones)
-            zones = zones.reshape(zones.size(0), -1, zone_bsz, zones.size(-1))
+            #values.unsqueeze_(2)
+            #values = values.expand(-1, -1, seq_len, -1, -1)
+            #values = values.reshape(values.size(0), seq_len, -1, self.args.nlayers+1, self.args.nhid)
+            #values.transpose_(1, 2)
+            #indices = indices[:,:,None,None,None]
+            #indices = indices.expand(-1, -1, values.size(-3), values.size(-2), values.size(-1))
+            #zones = torch.gather(values, 0, indices)
+            #zones = torch.einsum("kblyh->yklbh", zones)
+            #zones = zones.reshape(zones.size(0), -1, zone_bsz, zones.size(-1))
         else:
-            pos_seq = torch.einsum("b,k->bk", torch.ones(zone_bsz, device=inputs.device), torch.arange(self.args.num_steps-1, -1, -1.0, device=inputs.device))
-        pos_seq = pos_seq.view(zone_bsz, -1)
+            pos_seq = torch.einsum("b,k->bk", torch.ones(batch_size, device=inputs.device), torch.arange(self.args.num_steps-1, -1, -1.0, device=inputs.device))
+            pos_indices = indices
+        pos_seq = pos_seq.view(batch_size, -1)
 
         pos_emb = self.pos_emb(pos_seq)
 
@@ -435,18 +462,17 @@ class TransformerLM(nn.Module):
         memories = [memory]
         attn_map = None
 
-
         for i, layer in enumerate(self.layers):
             #zone_i = None if zones is None else zones[i]
             if indices is None:
-                zone_i = None
+                value_i = None
             else:
-                zone_i = zones[i]
+                value_i = values[:,:,:,i,:]
 
             if self.args.attn_type == 0:
-                core_out = layer(core_out, pos_emb, mask=mask, memory=zone_i, weights=weights)
+                core_out = layer(core_out, pos_emb, mask=mask, memory=value_i, indices=pos_indices, weights=weights)
             elif self.args.attn_type == 1:
-                core_out, attn_matrix = layer(core_out, pos_emb, self.pos_bias_u, self.pos_bias_v, mask=mask, memory=zone_i, weights=weights)
+                core_out, attn_matrix = layer(core_out, pos_emb, self.pos_bias_u, self.pos_bias_v, mask=mask, memory=value_i, indices=pos_indices, weights=weights)
 
 
             mem = core_out
