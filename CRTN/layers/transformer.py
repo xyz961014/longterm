@@ -212,6 +212,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
         attn_score = AC + BD
+        ipdb.set_trace()
         attn_score.mul_(self.scale)
 
         if mask is not None:
@@ -357,7 +358,7 @@ class TransformerLM(nn.Module):
         else:
             return None
 
-    def forward(self, inputs, zones=None, weights=None, indices=None, words=None, draw=False):
+    def forward(self, inputs, values=None, weights=None, indices=None, words=None, draw=False):
         #input shape should be seq_len * bsz or seq_len * bsz * emsize
         if inputs.dim() == 2:
             word_emb = self.embedding(inputs)
@@ -375,12 +376,19 @@ class TransformerLM(nn.Module):
             display = sorted(display, key=lambda x:x[0].item())
 
 
-        if zones is not None:
-            zone_bsz = zones.size(1)
-            zones = zones.transpose(1, 2).contiguous()
-            zones = zones.view(-1, zone_bsz, self.args.nlayers+1, self.args.nhid)
-            zones = torch.einsum("mblh->lmbh", zones)
-            mem_len = zones[0].size(0)
+        #if zones is not None:
+        #    zone_bsz = zones.size(1)
+        #    zones = zones.transpose(1, 2).contiguous()
+        #    zones = zones.view(-1, zone_bsz, self.args.nlayers+1, self.args.nhid)
+        #    zones = torch.einsum("mblh->lmbh", zones)
+        #    mem_len = zones[0].size(0)
+        #else:
+        #    mem_len = 0
+        #    zone_bsz = batch_size
+        if indices is not None:
+            mem_len = indices.size(0)
+            mem_len *= values.size(1)
+            zone_bsz = indices.size(1)
         else:
             mem_len = 0
             zone_bsz = batch_size
@@ -398,11 +406,22 @@ class TransformerLM(nn.Module):
 
         ### POSITION SCHEME ###
         if indices is not None:
-            indices = torch.cat((indices, (torch.ones_like(indices[0])-2).view(1,-1)))
+            #pos_seq
+            pos_indices = torch.cat((indices, (torch.ones_like(indices[0])-2).view(1,-1)))
 
-            batch = torch.einsum('k,b->kb',torch.ones(indices.size(0), dtype=torch.long), torch.arange(indices.size(1)))
+            batch = torch.einsum('k,b->kb',torch.ones(pos_indices.size(0), dtype=torch.long), torch.arange(pos_indices.size(1)))
 
-            pos_seq = self.pos_emb_bank[batch, indices].transpose(0, 1).contiguous()
+            pos_seq = self.pos_emb_bank[batch, pos_indices].transpose(0, 1).contiguous()
+            #zones
+            values.unsqueeze_(2)
+            values = values.expand(-1, -1, seq_len, -1, -1)
+            values = values.reshape(values.size(0), seq_len, -1, self.args.nlayers+1, self.args.nhid)
+            values.transpose_(1, 2)
+            indices = indices[:,:,None,None,None]
+            indices = indices.expand(-1, -1, values.size(-3), values.size(-2), values.size(-1))
+            zones = torch.gather(values, 0, indices)
+            zones = torch.einsum("kblyh->yklbh", zones)
+            zones = zones.reshape(zones.size(0), -1, zone_bsz, zones.size(-1))
         else:
             pos_seq = torch.einsum("b,k->bk", torch.ones(zone_bsz, device=inputs.device), torch.arange(self.args.num_steps-1, -1, -1.0, device=inputs.device))
         pos_seq = pos_seq.view(zone_bsz, -1)
@@ -416,8 +435,14 @@ class TransformerLM(nn.Module):
         memories = [memory]
         attn_map = None
 
+
         for i, layer in enumerate(self.layers):
-            zone_i = None if zones is None else zones[i]
+            #zone_i = None if zones is None else zones[i]
+            if indices is None:
+                zone_i = None
+            else:
+                zone_i = zones[i]
+
             if self.args.attn_type == 0:
                 core_out = layer(core_out, pos_emb, mask=mask, memory=zone_i, weights=weights)
             elif self.args.attn_type == 1:

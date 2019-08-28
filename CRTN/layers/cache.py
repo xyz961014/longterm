@@ -87,12 +87,13 @@ class Cache(nn.Module):
 
     def forward(self, query):
 
-        query = query.transpose(1, 2).contiguous()
+        #query = query.transpose(1, 2).contiguous()
+        query.transpose_(1, 2)
         query_len = query.size(0)
         if self.args.no_summary:
-            query = query.view(query_len, self.batch_size, -1)
+            query = query.reshape(query_len, self.batch_size, -1)
         else:
-            query = self.summary(query.view(query_len, -1, self.L * self.dv))
+            query = self.summary(query.reshape(query_len, -1, self.L * self.dv))
         keys = self._get_keys()
         values = self._get_values()
         
@@ -103,12 +104,12 @@ class Cache(nn.Module):
         keys.transpose_(0, 1)
         values = torch.einsum("klbh->bklh", values)
 
-        keys = keys.expand(query_len, -1, -1, -1).contiguous()
-        values = values.expand(query_len, -1, -1, -1, -1).contiguous()
+        keys = keys.expand(query_len, -1, -1, -1)
+        values = values.expand(query_len, -1, -1, -1, -1)
 
-        query = query.view(-1, self.L * self.dv)
-        keys = keys.view(-1, self.N, self.L * self.dv)
-        values = values.view(-1, self.N, self.L, self.dv * (self.args.nlayers + 1))
+        query = query.reshape(-1, self.L * self.dv)
+        keys = keys.reshape(-1, self.N, self.L * self.dv)
+        values = values.reshape(-1, self.N, self.L, self.dv * (self.args.nlayers + 1))
 
         
         if self.args.max_pooling:
@@ -135,12 +136,10 @@ class Cache(nn.Module):
             topk_weights = F.softmax(topk_weights, 2)
         #outputs = values[batch, topk_indices]
 
-        #values = values.transpose(0, 1).contiguous()
         values.transpose_(0, 1)
-        #indices = torch.einsum("kb,ij->kbij", topk_indices.to(torch.float), torch.ones_like(values[0][0]).to(torch.float)).to(torch.long)
-        indices = topk_indices[:,:,None,None]
-        indices = indices.expand(-1, -1, values.size(-2), values.size(-1))
-        outputs = torch.gather(values, 0, indices)
+        #indices = topk_indices[:,:,None,None]
+        #indices = indices.expand(-1, -1, values.size(-2), values.size(-1))
+        #outputs = torch.gather(values, 0, indices)
 
         if self.demo:
             words = words.transpose(0, 1).contiguous()
@@ -150,23 +149,23 @@ class Cache(nn.Module):
             word_output = torch.gather(words, 0, indices)
             return topk_weights, topk_indices, outputs, word_output
         else:
-            return topk_weights, topk_indices, outputs
+            return topk_weights, topk_indices
 
 
     def renew(self, inputs, words=None):
         #inputs = inputs.detach()
-        inputs = inputs.transpose(1, 2).contiguous()
+        inputs.transpose_(1, 2)
         n = self.renew_place
         
         if n >= self.N:
             self.eliminate_last()
 
         if self.args.no_summary:
-            new_key = inputs[-1].view(self.batch_size, -1)
+            new_key = inputs[-1].reshape(self.batch_size, -1)
         else:
-            new_key = self.summary(inputs[-1].view(-1, self.L * self.dv))
+            new_key = self.summary(inputs[-1].reshape(-1, self.L * self.dv))
 
-        new_value = torch.einsum("mblh->lbmh", inputs).contiguous().view(self.L, -1, (self.args.nlayers+1) * self.dv)
+        new_value = torch.einsum("mblh->lbmh", inputs).reshape(self.L, -1, (self.args.nlayers+1) * self.dv)
         self.keys.update({
             str(n): nn.Parameter(new_key, requires_grad=False)
             })

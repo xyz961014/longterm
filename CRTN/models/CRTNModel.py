@@ -49,6 +49,8 @@ class CRTNModel(nn.Module):
         seq_len = self.args.num_steps
         bsz = self.args.batch_size
         nhid = self.args.nhid
+
+
         if self.args.wise_summary:
             if self.args.query_method == "vanilla":
                 _, wise_inputs, _ = self.encoder(inputs)
@@ -149,10 +151,12 @@ class CRTNModel(nn.Module):
         if self.demo:
             weights, indices, zones, words = self.cache(query)
         else:
-            weights, indices, zones = self.cache(query)
+            #weights, indices, zones = self.cache(query)
+            weights, indices = self.cache(query)
             words = None
 
-        output, mems, attn_map = self.encoder(inputs, zones, weights, indices, words, draw)
+        #output, mems, attn_map = self.encoder(inputs, zones, weights, indices, words, draw)
+        output, mems, attn_map = self.encoder(inputs, self.cache._get_values(), weights, indices, words, draw)
         if renew:
             self.cache.renew(mems, inputs)
 
