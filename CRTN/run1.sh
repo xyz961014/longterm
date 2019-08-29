@@ -1,7 +1,7 @@
 #!/bin/bash
 
 python main.py \
-    --data /data/disk4/private/xyz/datasets/ptb_sample \
+    --data /home/xyz/Documents/Dataset/ptb_sample \
     --adam \
     --lr 27e-5 \
     --nlayers 15 \
@@ -9,7 +9,7 @@ python main.py \
     --nhead 8 \
     --emsize 240 \
     --nhid 240 \
-    --batch_size 50 \
+    --batch_size 2 \
     --num_steps 70 \
     --d_ff 1300 \
     --tied \

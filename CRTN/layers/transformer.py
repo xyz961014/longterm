@@ -240,11 +240,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
             sel_heads_v = torch.gather(heads_v, 0, v_indices)
             sel_heads_v = sel_heads_v.view(indice_len, -1, x_len, batch_size, self.num_head, self.d_head)
             sel_heads_v = sel_heads_v.transpose(1, 2).contiguous()
-            sel_heads_v = sel_heads_v.view(-1, x_len, batch_size, self.num_head, self.d_head)
+            sel_heads_v = sel_heads_v.view(indice_len, x_len, -1, self.num_head, self.d_head)
             if weights is not None:
                 weights = torch.cat((weights, torch.ones_like(weights[:,:,0]).view(weights.size(0), 1, -1)), 2)
-                weights = weights.view(x_len, batch_size, -1)
-                sel_heads_v = torch.einsum("jibnh,ibn->jibnh", sel_heads_v, weights)
+                weights.squeeze_()
+                sel_heads_v = torch.einsum("jibnh,bj->jibnh", sel_heads_v, weights)
+                sel_heads_v = sel_heads_v.view(-1, x_len, batch_size, self.num_head, self.d_head)
         else:
             sel_attn_score = attn_score
             sel_heads_v = heads_v
