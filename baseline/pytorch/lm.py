@@ -13,9 +13,9 @@ from torch.utils.data import DataLoader
 import os
 import sys
 sys.path.append("../..")
-from CRAN.data import dataloader
-from CRAN.layers.attention import Transformer
-from CRAN.utils.adaptive import ProjectedAdaptiveLogSoftmax
+from CRTN.data import dataloader
+from CRTN.layers.attention import Transformer
+from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from transformer import TransformerLM
 from rnn import RNNModel
 

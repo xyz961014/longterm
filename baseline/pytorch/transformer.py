@@ -11,7 +11,7 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 import os
 sys.path.append("../..")
-from CRAN.utils.adaptive import AdaptiveEmbedding
+from CRTN.utils.adaptive import AdaptiveEmbedding
 
 
 class PostionalEmbedding(nn.Module):
@@ -315,7 +315,7 @@ class TransformerLM(nn.Module):
 
         mask = torch.triu(word_emb.new_ones(seq_len, total_len), diagonal=1+mem_len)
         #mask = torch.cat((word_emb.new_ones(mem_len, total_len), mask), 0)
-        mask = mask.byte()[:,:,None]
+        mask = mask.bool()[:,:,None]
 
         pos_seq = torch.arange(total_len-1, -1, -1.0, device=word_emb.device, dtype=word_emb.dtype)
         pos_emb = self.pos_emb(pos_seq)
