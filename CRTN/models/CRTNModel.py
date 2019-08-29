@@ -78,8 +78,9 @@ class CRTNModel(nn.Module):
                 query = query[-1].view(seq_len, seq_len, bsz, nhid)
             elif self.args.query_method == "fixed_length_2":
                 new_inputs = inputs.expand(seq_len, -1, -1)
-                prev = self.cache._get_values()[-1]
-                prev = prev.expand(seq_len, -1, -1, -1)
+                prev_value = self.cache._get_values()[-1]
+                prev_value.unsqueeze_(0)
+                prev = prev_value.expand(seq_len, -1, -1, -1)
                 input_mask = torch.triu(new_inputs.new_ones(seq_len, seq_len), diagonal=1)
                 memory_mask = torch.tril(prev.new_ones(seq_len, seq_len), diagonal=0)
                 input_mask = input_mask.bool()[:,:,None]
@@ -90,9 +91,9 @@ class CRTNModel(nn.Module):
                 new_inputs = new_inputs.view(seq_len, seq_len * bsz)
                 prev = prev.transpose(1, 2).contiguous()
                 prev = prev.view(1, seq_len * bsz, seq_len, (self.args.nlayers+1)*nhid)
-                prev_indice = torch.ones_like(new_inputs[0]) * (self.args.cache_N - 1)
+                prev_indice = torch.zeros_like(new_inputs[0])
                 prev_indice.unsqueeze_(0)
-                _, wise_inputs, _ = self.encoder(new_inputs, zones=prev, indices=prev_indice)
+                _, wise_inputs, _ = self.encoder(new_inputs, values=prev_value, indices=prev_indice)
                 wise_inputs = wise_inputs[-1]
                 prev = prev.view(-1, seq_len, self.args.nlayers+1, nhid)
                 prev = prev[:,:,-1,:]
@@ -110,12 +111,11 @@ class CRTNModel(nn.Module):
                 
                 query = query.view(seq_len, seq_len, bsz, nhid)
             else:
-                prev = self.cache._get_values()[-1]
-                prev.transpose_(0, 1).contiguous()
-                prev.unsqueeze_(0)
-                prev_indice = torch.ones_like(inputs[0]) * (self.args.cache_N - 1)
+                prev_value = self.cache._get_values()[-1]
+                prev_value.unsqueeze_(0)
+                prev_indice = torch.zeros_like(inputs[0])
                 prev_indice.unsqueeze_(0)
-                _, wise_inputs, _ = self.encoder(inputs, zones=prev, indices=prev_indice)
+                _, wise_inputs, _ = self.encoder(inputs, values=prev_value, indices=prev_indice)
                 if self.args.query_method == "last_l":
                     query = wise_inputs[-1]
                     query = torch.einsum("lbd,k->klbd",query, torch.ones_like(query[:,0,0]))
@@ -124,6 +124,7 @@ class CRTNModel(nn.Module):
                     query.masked_fill_(mask, 0)
                 elif self.args.query_method == "middle_l":
                     wise_inputs = wise_inputs[-1]
+                    prev = prev_value.transpose(1, 2).contiguous()
                     prev = prev.view(-1, seq_len, self.args.nlayers+1, nhid)
                     prev = prev[:,:,-1,:]
                     prev.transpose_(0, 1)
@@ -137,6 +138,7 @@ class CRTNModel(nn.Module):
                     query = query.view(seq_len, seq_len, bsz, nhid)
                 elif self.args.query_method == "linear":
                     wise_inputs = wise_inputs[-1]
+                    prev = prev_value.transpose(1, 2).contiguous()
                     prev = prev.view(-1, seq_len, self.args.nlayers+1, nhid)
                     prev = prev[:,:,-1,:]
                     prev.transpose_(0, 1)
@@ -147,6 +149,10 @@ class CRTNModel(nn.Module):
                     query = torch.einsum("khbl->klbh", query)
         else:
             query = self.encoder.embedding(inputs)
+            query = query.expand(query.size(0), -1, -1, -1)
+            mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
+            mask = mask.bool()[:,:,None,None]
+            query.masked_fill_(mask, 0)
         
         if self.demo:
             weights, indices, zones, words = self.cache(query)
