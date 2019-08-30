@@ -107,3 +107,4 @@ log/
 save/
 
 *.swp
+*.lprof
