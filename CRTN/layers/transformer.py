@@ -175,7 +175,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         if memory is not None:
             mem_num = memory.size(0)
             memory = memory.view(mem_num * memory.size(1), -1, self.num_head * self.d_head)
-            memory = memory.detach()
+            #memory = memory.detach()
             if not batch_size == memory.size(1):
                 memory.unsqueeze_(1)
                 memory = memory.expand(-1, batch_size // memory.size(2), -1, -1)

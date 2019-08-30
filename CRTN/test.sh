@@ -20,5 +20,6 @@ python main.py \
     --save demo \
     --adaptive \
     --no_summary \
+    --wise_summary \
     ${@:1}
 
