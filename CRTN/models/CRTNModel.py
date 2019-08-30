@@ -44,7 +44,6 @@ class CRTNModel(nn.Module):
         self.encoder.set_batch_size(batch_size)
         self.args.batch_size = batch_size
 
-
     def forward(self, inputs, draw=False, renew=True):
         seq_len = self.args.num_steps
         bsz = self.args.batch_size
@@ -153,7 +152,7 @@ class CRTNModel(nn.Module):
             mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
             mask = mask.bool()[:,:,None,None]
             query.masked_fill_(mask, 0)
-        
+
         if self.demo:
             weights, indices, zones, words = self.cache(query)
         else:
@@ -162,7 +161,8 @@ class CRTNModel(nn.Module):
             words = None
 
         #output, mems, attn_map = self.encoder(inputs, zones, weights, indices, words, draw)
-        output, mems, attn_map = self.encoder(inputs, self.cache._get_values(), weights, indices, words, draw)
+        values = self.cache._get_values()
+        output, mems, attn_map = self.encoder(inputs, values, weights, indices, words, draw)
         if renew:
             self.cache.renew(mems, inputs)
 

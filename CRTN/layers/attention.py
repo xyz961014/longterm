@@ -12,22 +12,26 @@ class DotProductAttention(nn.Module):
         super().__init__()
 
     def forward(self, query, keys, values, mask=None):
-        keys_T = keys.transpose(-2, -1)
-        keys_T = keys_T.view(-1, keys_T.size(-2), keys_T.size(-1))
-        values_attn = values.view(list(values.size())[:2]+[-1])
-        query_attn = query.view(values_attn.size(0), -1, query.size(-1))
-        try:
-            assert (query_attn.size(0) == keys_T.size(0) and query_attn.size(0) == values_attn.size(0) and keys_T.size(0) == values_attn.size(0)), "Batch size not justified, please check"
-        except:
-            print("Q:%s, K:%s, V:%s" % (query_attn.shape, keys_T.shape, values_attn.shape))
-        assert (query_attn.size(0) == keys_T.size(0) and query_attn.size(0) == values_attn.size(0) and keys_T.size(0) == values_attn.size(0)), "Batch size not justified, please check"
-        if mask is not None:
-            mask = torch.cat(tuple(mask.view([1]+list(mask.size())) for _ in range(keys_T.size(0))), 0)
-            keys_T = torch.matmul(keys_T, mask)
-        weights = F.softmax(torch.matmul(query_attn, keys_T) / np.sqrt(keys_T.size(-2)), 2)
-        #print(query_attn, keys_T, weights)
-        outputs = torch.matmul(weights, values_attn)
-        outputs = outputs.view([-1]+list(values.size())[2:])
+        weights = torch.einsum("...bh,bnh->...n", query, keys)
+        weights = F.softmax(weights / np.sqrt(keys.size(-1)), 1)
+        outputs = torch.einsum("...n,bnlh->blh", weights, values)
+        weights = weights.unsqueeze(-2)
+        #keys_T = keys.transpose(-2, -1)
+        #keys_T = keys_T.view(-1, keys_T.size(-2), keys_T.size(-1))
+        #values_attn = values.view(list(values.size())[:2]+[-1])
+        #query_attn = query.view(values_attn.size(0), -1, query.size(-1))
+        #try:
+        #    assert (query_attn.size(0) == keys_T.size(0) and query_attn.size(0) == values_attn.size(0) and keys_T.size(0) == values_attn.size(0)), "Batch size not justified, please check"
+        #except:
+        #    print("Q:%s, K:%s, V:%s" % (query_attn.shape, keys_T.shape, values_attn.shape))
+        #assert (query_attn.size(0) == keys_T.size(0) and query_attn.size(0) == values_attn.size(0) and keys_T.size(0) == values_attn.size(0)), "Batch size not justified, please check"
+        #if mask is not None:
+        #    mask = torch.cat(tuple(mask.view([1]+list(mask.size())) for _ in range(keys_T.size(0))), 0)
+        #    keys_T = torch.matmul(keys_T, mask)
+        #weights = F.softmax(torch.matmul(query_attn, keys_T) / np.sqrt(keys_T.size(-2)), 2)
+        ##print(query_attn, keys_T, weights)
+        #outputs = torch.matmul(weights, values_attn)
+        #outputs = outputs.view([-1]+list(values.size())[2:])
         return weights, outputs
 
 

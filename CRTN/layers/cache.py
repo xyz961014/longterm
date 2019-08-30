@@ -84,7 +84,6 @@ class Cache(nn.Module):
         self.renew_place = self.N - 1
         self.to(device)
 
-
     def forward(self, query):
 
         #query = query.transpose(1, 2).contiguous()
@@ -104,12 +103,12 @@ class Cache(nn.Module):
         keys.transpose_(0, 1)
         values = torch.einsum("klbh->bklh", values)
 
-        keys = keys.expand(query_len, -1, -1, -1)
-        values = values.expand(query_len, -1, -1, -1, -1)
+        #keys = keys.expand(query_len, -1, -1, -1)
+        #values = values.expand(query_len, -1, -1, -1, -1)
 
-        query = query.reshape(-1, self.L * self.dv)
-        keys = keys.reshape(-1, self.N, self.L * self.dv)
-        values = values.reshape(-1, self.N, self.L, self.dv * (self.args.nlayers + 1))
+        #query = query.reshape(-1, self.L * self.dv)
+        #keys = keys.reshape(-1, self.N, self.L * self.dv)
+        #values = values.reshape(-1, self.N, self.L, self.dv * (self.args.nlayers + 1))
 
         
         if self.args.max_pooling:
@@ -121,7 +120,7 @@ class Cache(nn.Module):
         else:
             attention, _ = self.attn(query, keys, values)
 
-
+        attention = attention.view(-1, 1, attention.size(-1))
         
         if self.demo:
             #demo mode
@@ -154,7 +153,7 @@ class Cache(nn.Module):
 
     def renew(self, inputs, words=None):
         #inputs = inputs.detach()
-        inputs.transpose_(1, 2)
+        inputs = inputs.transpose(1, 2)
         n = self.renew_place
         
         if n >= self.N:

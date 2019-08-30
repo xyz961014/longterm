@@ -1,6 +1,6 @@
 #!/bin/bash
 
-python main.py \
+kernprof -lv main.py \
     --adam \
     --lr 0.00025 \
     --nlayers 3 \
@@ -20,5 +20,6 @@ python main.py \
     --save demo \
     --adaptive \
     --no_summary \
+    --wise_summary \
     ${@:1}
 

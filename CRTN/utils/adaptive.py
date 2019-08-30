@@ -205,7 +205,8 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                 l_idx, r_idx = cutoff_values[i], cutoff_values[i + 1]
 
                 mask_i = (target >= l_idx) & (target < r_idx)
-                indices_i = mask_i.nonzero().squeeze()
+                indices_i = mask_i.nonzero()
+                indices_i.squeeze_()
 
                 if not output:
                     if indices_i.numel() == 0:
