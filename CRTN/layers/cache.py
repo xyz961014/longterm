@@ -135,7 +135,7 @@ class Cache(nn.Module):
             topk_weights = F.softmax(topk_weights, 2)
         #outputs = values[batch, topk_indices]
 
-        values.transpose_(0, 1)
+        #values.transpose_(0, 1)
         #indices = topk_indices[:,:,None,None]
         #indices = indices.expand(-1, -1, values.size(-2), values.size(-1))
         #outputs = torch.gather(values, 0, indices)
