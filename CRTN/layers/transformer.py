@@ -152,7 +152,9 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
     def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, indices=None, weights=None):
-        x_len, batch_size = x.size(0), x.size(1)
+        x_len, batch_size, nhid = x.size(0), x.size(1), x.size(2)
+        #if indices is not None:
+        #    ipdb.set_trace()
         #seq_len = x_len
 
         #x_seq = x.unsqueeze(1)
@@ -187,7 +189,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         seq_len = x_len
 
 
-        total_len = c.size(0)
+
 
         heads_matrix = self.lin_kv(c)
         rel_emb_matrix = self.lin_relemb(pos_emb)
@@ -196,9 +198,39 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         heads_q = self.lin_q(x)
 
+        if indices is not None:
+            indice_len = indices.size(0)
+            total_len = indice_len * x_len 
+
+            indice_g = indices.view(-1, batch_size)
+            indice_g = indice_g[:,None,:,None]
+            indice_g = indice_g.expand(-1, x_len, -1, nhid)
+
+            heads_k = heads_k.view(-1, x_len, batch_size, nhid)
+            heads_k = torch.gather(heads_k, 0, indice_g)
+            heads_k = heads_k.view(indice_len, -1, x_len, batch_size, nhid)
+            heads_k = heads_k.transpose(0, 1).contiguous()
+            heads_k = heads_k.view(-1, indice_len * x_len, batch_size, nhid)
+
+            heads_v = heads_v.view(-1, x_len, batch_size, nhid)
+            heads_v = torch.gather(heads_v, 0, indice_g)
+            heads_v = heads_v.view(indice_len, -1, x_len, batch_size, nhid)
+            heads_v = heads_v.transpose(0, 1).contiguous()
+            heads_v = heads_v.view(-1, indice_len * x_len, batch_size, nhid)
+
+            rel_emb_matrix = rel_emb_matrix.view(-1, x_len, batch_size, nhid)
+            rel_emb_matrix = torch.gather(rel_emb_matrix, 0, indice_g)
+            rel_emb_matrix = rel_emb_matrix.view(indice_len, -1, x_len, batch_size, nhid)
+            rel_emb_matrix = rel_emb_matrix.transpose(0, 1).contiguous()
+            rel_emb_matrix = rel_emb_matrix.view(-1, indice_len * x_len, batch_size, nhid)
+        else:
+            total_len = c.size(0)
+
+        rel_emb_matrix = rel_emb_matrix.view(-1, total_len, batch_size, self.num_head, self.d_head)
+
         heads_q = heads_q.view(x_len, batch_size, self.num_head, self.d_head)
-        heads_k = heads_k.view(total_len, batch_size, self.num_head, self.d_head)
-        heads_v = heads_v.view(total_len, batch_size, self.num_head, self.d_head)
+        heads_k = heads_k.view(-1, total_len, batch_size, self.num_head, self.d_head)
+        heads_v = heads_v.view(-1, total_len, batch_size, self.num_head, self.d_head)
 
         #if weights is not None:
         #    weights = torch.cat((weights, torch.ones_like(weights[:,:,0]).view(weights.size(0), 1, -1)), 2)
@@ -208,13 +240,19 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         #heads_v = heads_v.view(total_len, batch_size, self.num_head, self.d_head)
 
-        rel_emb_matrix = rel_emb_matrix.view(total_len, batch_size, self.num_head, self.d_head)
 
         heads_qu = heads_q + pos_bias_u
         heads_qv = heads_q + pos_bias_v
 
-        AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
-        BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
+        if memory is None:
+            heads_k.squeeze_()
+            heads_v.squeeze_()
+            rel_emb_matrix.squeeze_()
+            AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
+            BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
+        else:
+            AC = torch.einsum("ibnd,ijbnd->ijbn", (heads_qu, heads_k))
+            BD = torch.einsum("ibnd,ijbnd->ijbn", (heads_qv, rel_emb_matrix))
         
         BD = self._rel_shift(BD)
 
@@ -225,40 +263,40 @@ class LearnableMultiheadSelfAttention(nn.Module):
         if mask is not None:
             attn_score.masked_fill_(mask[:,:,:,None], -float('inf'))
 
-        if memory is not None:
-            attn_score = attn_score.view(x_len, mem_num + 1, x_len, batch_size, self.num_head)
-            indice_len = indices.size(0)
-            indices = indices.view(-1, batch_size)
-            score_indices = indices[None,:,None,:,None]
-            score_indices = score_indices.expand(attn_score.size(0), -1, attn_score.size(2), -1, attn_score.size(4))
-            sel_attn_score = torch.gather(attn_score, 1, score_indices)
-            sel_attn_score = sel_attn_score.view(x_len, indice_len, -1, x_len, batch_size, self.num_head)
-            sel_attn_score = sel_attn_score.transpose(2, 3).contiguous()
-            sel_attn_score = sel_attn_score.view(x_len, -1, x_len, batch_size, self.num_head)
-            heads_v = heads_v.view(-1, x_len, batch_size, self.num_head, self.d_head)
-            v_indices = indices[:,None,:,None,None]
-            v_indices = v_indices.expand(-1, heads_v.size(1), -1, heads_v.size(3), heads_v.size(4))
-            sel_heads_v = torch.gather(heads_v, 0, v_indices)
-            sel_heads_v = sel_heads_v.view(indice_len, -1, x_len, batch_size, self.num_head, self.d_head)
-            sel_heads_v = sel_heads_v.transpose(1, 2).contiguous()
-            sel_heads_v = sel_heads_v.view(indice_len, x_len, -1, self.num_head, self.d_head)
-            if weights is not None:
-                weights = torch.cat((weights, torch.ones_like(weights[:,:,0]).view(weights.size(0), 1, -1)), 2)
-                weights.squeeze_()
-                sel_heads_v = torch.einsum("jibnh,bj->jibnh", sel_heads_v, weights)
-                sel_heads_v = sel_heads_v.view(-1, x_len, batch_size, self.num_head, self.d_head)
-        else:
-            sel_attn_score = attn_score
-            sel_heads_v = heads_v
+        #if memory is not None:
+        #    attn_score = attn_score.view(x_len, mem_num + 1, x_len, batch_size, self.num_head)
+        #    indice_len = indices.size(0)
+        #    indices = indices.view(-1, batch_size)
+        #    score_indices = indices[None,:,None,:,None]
+        #    score_indices = score_indices.expand(attn_score.size(0), -1, attn_score.size(2), -1, attn_score.size(4))
+        #    sel_attn_score = torch.gather(attn_score, 1, score_indices)
+        #    sel_attn_score = sel_attn_score.view(x_len, indice_len, -1, x_len, batch_size, self.num_head)
+        #    sel_attn_score = sel_attn_score.transpose(2, 3).contiguous()
+        #    sel_attn_score = sel_attn_score.view(x_len, -1, x_len, batch_size, self.num_head)
+        #    heads_v = heads_v.view(-1, x_len, batch_size, self.num_head, self.d_head)
+        #    v_indices = indices[:,None,:,None,None]
+        #    v_indices = v_indices.expand(-1, heads_v.size(1), -1, heads_v.size(3), heads_v.size(4))
+        #    sel_heads_v = torch.gather(heads_v, 0, v_indices)
+        #    sel_heads_v = sel_heads_v.view(indice_len, -1, x_len, batch_size, self.num_head, self.d_head)
+        #    sel_heads_v = sel_heads_v.transpose(1, 2).contiguous()
+        #    sel_heads_v = sel_heads_v.view(indice_len, x_len, -1, self.num_head, self.d_head)
+        #    if weights is not None:
+        #        weights = torch.cat((weights, torch.ones_like(weights[:,:,0]).view(weights.size(0), 1, -1)), 2)
+        #        weights.squeeze_()
+        #        sel_heads_v = torch.einsum("jibnh,bj->jibnh", sel_heads_v, weights)
+        #        sel_heads_v = sel_heads_v.view(-1, x_len, batch_size, self.num_head, self.d_head)
+        #else:
+        #    sel_attn_score = attn_score
+        #    sel_heads_v = heads_v
 
-        attn_prob = F.softmax(sel_attn_score, 1)
+        attn_prob = F.softmax(attn_score, 1)
         attn_prob = self.drop(attn_prob)
         attn_matrix = attn_prob.mean((2, 3))
 
         if memory is None:
             attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
         else:
-            attn_vec = torch.einsum("ijibn,jibnd->ibnd", attn_prob, sel_heads_v)
+            attn_vec = torch.einsum("ijbn,ijbnd->ibnd", attn_prob, heads_v)
         attn_vec = attn_vec.contiguous().view(x_len, batch_size, self.num_head * self.d_head)
 
         attn_out = self.lin_o(attn_vec)
@@ -419,7 +457,7 @@ class TransformerLM(nn.Module):
         #    mem_len = 0
         #    zone_bsz = batch_size
         if indices is not None:
-            mem_len = values.size(0) * values.size(1)
+            mem_len = seq_len * indices.size(0)
             zone_bsz = indices.size(1)
             values = values.view(values.size(0), seq_len, -1, self.args.nlayers+1, self.args.nhid)
         else:
