@@ -90,7 +90,7 @@ class CRTNModel(nn.Module):
                 new_inputs = new_inputs.view(seq_len, seq_len * bsz)
                 prev = prev.transpose(1, 2).contiguous()
                 prev = prev.view(1, seq_len * bsz, seq_len, (self.args.nlayers+1)*nhid)
-                prev_indice = torch.zeros_like(new_inputs[0])
+                prev_indice = torch.zeros_like(new_inputs).view(-1)
                 prev_indice.unsqueeze_(0)
                 _, wise_inputs, _ = self.encoder(new_inputs, values=prev_value, indices=prev_indice)
                 wise_inputs = wise_inputs[-1]
@@ -112,7 +112,7 @@ class CRTNModel(nn.Module):
             else:
                 prev_value = self.cache._get_values()[-1]
                 prev_value.unsqueeze_(0)
-                prev_indice = torch.zeros_like(inputs[0])
+                prev_indice = torch.zeros_like(inputs).view(-1)
                 prev_indice.unsqueeze_(0)
                 _, wise_inputs, _ = self.encoder(inputs, values=prev_value, indices=prev_indice)
                 if self.args.query_method == "last_l":

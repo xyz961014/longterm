@@ -216,6 +216,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
             heads_v = torch.gather(heads_v, 0, indice_g)
             heads_v = heads_v.view(indice_len, -1, x_len, batch_size, nhid)
             heads_v = heads_v.transpose(0, 1).contiguous()
+            if weights is not None:
+                weights = torch.cat((weights, torch.ones_like(weights[:,:,0]).view(weights.size(0), 1, -1)), 2)
+                weights.squeeze_()
+                weights = weights.view(-1, batch_size, indice_len)
+                heads_v = torch.einsum("jkibh,jbk->jkibh", heads_v, weights)
+                heads_v = heads_v.view(-1, x_len, batch_size, self.num_head, self.d_head)
             heads_v = heads_v.view(-1, indice_len * x_len, batch_size, nhid)
 
             rel_emb_matrix = rel_emb_matrix.view(-1, x_len, batch_size, nhid)
@@ -244,13 +250,22 @@ class LearnableMultiheadSelfAttention(nn.Module):
         heads_qu = heads_q + pos_bias_u
         heads_qv = heads_q + pos_bias_v
 
-        if memory is None:
+        if indices is None:
             heads_k.squeeze_()
             heads_v.squeeze_()
             rel_emb_matrix.squeeze_()
             AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
             BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
         else:
+            #indices = indices.view(indice_len, -1, batch_size)
+            #tfbase = torch.eye(mem_num + 1, device=indices.device)
+            #indice_bool = torch.index_select(tfbase, 0, indices.view(-1))
+            #indice_bool = indice_bool.view(indice_len, -1, batch_size, mem_num + 1)
+            #indice_bool = indice_bool.sum(0)
+            #pre_AC = torch.einsum("ibnd,ibk->kibnd", heads_qu, indice_bool)
+            #pre_k = c.view(mem_num + 1, x_len, batch_size, self.num_head, self.d_head)
+            #AC = torch.einsum("kibnd,kjbnd->ijbn", pre_AC, pre_k)
+            #ipdb.set_trace()
             AC = torch.einsum("ibnd,ijbnd->ijbn", (heads_qu, heads_k))
             BD = torch.einsum("ibnd,ijbnd->ijbn", (heads_qv, rel_emb_matrix))
         
