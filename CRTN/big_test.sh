@@ -1,7 +1,17 @@
 #!/bin/bash
 
+if [[ $1 == "234" ]]; then
+    data="/data/disk4/private/xyz/datasets/ptb_sample"
+elif [[ $1 == "242" ]]; then
+    data="/data/disk5/private/xyz/datasets/ptb_sample"
+elif [[ $1 == "245" ]]; then
+    data="/data/private/xyz/datasets/ptb_sample"
+elif [[ $1 == "local" ]]; then
+    data="/home/xyz/Documents/Dataset/ptb_sample"
+fi
+
 python main.py \
-    --data /data/disk5/private/xyz/datasets/ptb_sample \
+    --data "${data}" \
     --adam \
     --lr 0.00025 \
     --nlayers 6 \
@@ -22,5 +32,5 @@ python main.py \
     --adaptive \
     --no_summary \
     --wise_summary \
-    ${@:1}
+    ${@:2}
 
