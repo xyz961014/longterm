@@ -1,6 +1,5 @@
 import sys
 import math
-import ipdb
 from copy import deepcopy
 
 import numpy as np
@@ -13,6 +12,8 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import os
 from CRTN.utils.adaptive import AdaptiveEmbedding
 
+import ipdb
+import torchsnooper
 
 class PostionalEmbedding(nn.Module):
     def __init__(self, d_model):
@@ -176,7 +177,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         if memory is not None:
             mem_num = memory.size(0)
-            memory = memory.view(mem_num * memory.size(1), -1, self.num_head * self.d_head)
+            memory = memory.view(mem_num * memory.size(1), -1, nhid)
             #memory = memory.detach()
             if not batch_size == memory.size(1):
                 memory.unsqueeze_(1)
@@ -186,8 +187,6 @@ class LearnableMultiheadSelfAttention(nn.Module):
         else:
             c = x
             vanilla = True
-        seq_len = x_len
-
 
 
 
@@ -221,7 +220,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
                 weights.squeeze_()
                 weights = weights.view(-1, batch_size, indice_len)
                 heads_v = torch.einsum("jkibh,jbk->jkibh", heads_v, weights)
-                heads_v = heads_v.view(-1, x_len, batch_size, self.num_head, self.d_head)
+                #heads_v = heads_v.view(-1, indice_len, x_len, batch_size, self.num_head, self.d_head)
             heads_v = heads_v.view(-1, indice_len * x_len, batch_size, nhid)
 
             rel_emb_matrix = rel_emb_matrix.view(-1, x_len, batch_size, nhid)

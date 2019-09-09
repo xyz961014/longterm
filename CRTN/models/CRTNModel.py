@@ -162,6 +162,8 @@ class CRTNModel(nn.Module):
 
         #output, mems, attn_map = self.encoder(inputs, zones, weights, indices, words, draw)
         values = self.cache._get_values()
+        if self.args.not_weighted:
+            weights = None
         output, mems, attn_map = self.encoder(inputs, values, weights, indices, words, draw)
         if renew:
             self.cache.renew(mems, inputs)
