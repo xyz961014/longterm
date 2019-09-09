@@ -130,9 +130,9 @@ class Cache(nn.Module):
             if self.N > self.topk:
                 topk_weights = torch.cat((topk_weights, torch.zeros(self.N - self.topk, device=topk_weights.device).view(-1, 1, self.N - self.topk)), 2)
         else:
-            topk_weights, topk_indices = attention.topk(self.topk)
+            _, topk_indices = attention.topk(self.topk)
             topk_indices = topk_indices.transpose(0, 2).contiguous().view(self.topk, -1)
-            topk_weights = F.softmax(topk_weights, 2)
+            topk_weights = attention
         #outputs = values[batch, topk_indices]
 
         #values.transpose_(0, 1)
