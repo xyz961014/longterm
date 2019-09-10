@@ -146,7 +146,7 @@ class CRTNModel(nn.Module):
                     query_base = torch.cat((prev, wise_inputs), 0)
                     query_base = query_base.transpose(0, 2)
                     query_base = query_base.expand(seq_len, -1, -1, -1)
-                    query = torch.relu(self.shorten(query_base))
+                    query = torch.sigmoid(self.shorten(query_base))
                     query = torch.einsum("khbl->klbh", query)
         else:
             query = self.encoder.embedding(inputs)

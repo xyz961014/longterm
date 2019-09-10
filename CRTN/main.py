@@ -3,6 +3,10 @@ from datetime import datetime
 import re
 import argparse
 
+#ignore future warning from tensorboard
+import warnings
+warnings.filterwarnings("ignore")
+
 import numpy as np
 import math
 import torch
@@ -24,6 +28,7 @@ import ipdb
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str,
@@ -35,43 +40,43 @@ def parse_args():
                         help='demo mode')
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
-    parser.add_argument('--emsize', type=int, default=200,
+    parser.add_argument('--emsize', type=int, default=240,
                         help='size of word embeddings')
-    parser.add_argument('--nhid', type=int, default=200,
+    parser.add_argument('--nhid', type=int, default=240,
                         help='number of hidden units per layer')
-    parser.add_argument('--nlayers', type=int, default=3,
+    parser.add_argument('--nlayers', type=int, default=15,
                         help='number of layers')
-    parser.add_argument('--nhead', type=int, default=4,
+    parser.add_argument('--nhead', type=int, default=8,
                         help='number of heads')
-    parser.add_argument('--d_ff', type=int, default=1000,
+    parser.add_argument('--d_ff', type=int, default=1300,
                         help='dimension of feed-forward')
-    parser.add_argument('--lr', type=float, default=1.0,
+    parser.add_argument('--lr', type=float, default=27e-5,
                         help='initial learning rate')
     parser.add_argument('--scheduler', type=str, default='cosine', 
                         choices=['cosine', 'constant'],
                         help='lr scheduler to use')
     parser.add_argument('--clip', type=float, default=0.25,
                         help='gradient clipping')
-    parser.add_argument('--epochs', type=int, default=100,
+    parser.add_argument('--epochs', type=int, default=200,
                         help='upper epoch limit')
-    parser.add_argument('--batch_size', type=int, default=60, metavar='N',
+    parser.add_argument('--batch_size', type=int, default=50, metavar='N',
                         help='batch size')
     parser.add_argument('--eval_batch_size', type=int, default=10, 
                         help='eval batch size')
     parser.add_argument('--num_steps', type=int, default=70,
                         help='sequence length')
-    parser.add_argument('--dropout', type=float, default=0.0,
+    parser.add_argument('--dropout', type=float, default=0.45,
                         help='dropout applied to layers (0 = no dropout)')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--tied', action="store_true",
                         help='tied embedding weights')
-    parser.add_argument('--attn_type', type=int, default=0, choices=[0, 1],
+    parser.add_argument('--attn_type', type=int, default=1, choices=[0, 1],
                         help='attention type, 0 for vaswani;1 for transformer-xl')
     parser.add_argument("--cache_N", type=int, default=5, 
                         help="size of Cache, default: 5")
-    parser.add_argument("--cache_dk", type=int, default=200, 
-                        help="dimension of key, default: 200")
+    parser.add_argument("--cache_dk", type=int, default=240, 
+                        help="dimension of key, default: 240")
     parser.add_argument("--cache_k", type=int, default=3, 
                         help="select top k values, default: 3")
     parser.add_argument('--multi_gpu', action="store_true",
@@ -132,7 +137,7 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
-            print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.3f} | ms/batch {:5.2f} | '
+            print('| epoch {:2d} | {:3d}/{:3d} batches | lr {:02.2e} | ms/batch {:5.2f} | '
                     'loss {:5.2f} | ppl {:8.2f}'.format(
                 epoch, batch, len(train_loader), optimizer.state_dict()["param_groups"][0]["lr"],
                 elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
@@ -227,6 +232,7 @@ def main(args):
 
 
     print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
+    print("# VOCABULARY: {} \n# train data words: {:.2e} \n# valid data words: {:.2e} \n# test data words: {:.2e} \nTRAINING......".format(corpus.vocabulary.num_words, len(corpus.train_data.raw_data), len(corpus.valid_data.raw_data), len(corpus.test_data.raw_data)))
     if args.load:
         # clear cache
         keys = checkpoint["model_state_dict"].copy().keys()
