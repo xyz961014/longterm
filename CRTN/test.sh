@@ -16,7 +16,7 @@ python main.py \
     --cache_N 5 \
     --seed 1111 \
     --epochs 100 \
-    --log-interval 200 \
+    --log-interval 20 \
     --save demo \
     --adaptive \
     --no_summary \

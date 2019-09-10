@@ -86,8 +86,7 @@ class Cache(nn.Module):
 
     def forward(self, query):
 
-        #query = query.transpose(1, 2).contiguous()
-        query.transpose_(1, 2)
+        query = query.transpose(1, 2).contiguous()
         query_len = query.size(0)
         if self.args.no_summary:
             query = query.reshape(query_len, self.batch_size, -1)

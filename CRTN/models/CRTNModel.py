@@ -17,6 +17,8 @@ from CRTN.layers.attention import DotProductAttention
 from CRTN.layers.transformer import TransformerLM
 from CRTN.layers.cache import Cache
 
+import torchsnooper
+
 class CRTNModel(nn.Module):
     def __init__(self, args, corpus=None):
         super().__init__()
@@ -140,11 +142,11 @@ class CRTNModel(nn.Module):
                     prev = prev_value.transpose(1, 2).contiguous()
                     prev = prev.view(-1, seq_len, self.args.nlayers+1, nhid)
                     prev = prev[:,:,-1,:]
-                    prev.transpose_(0, 1)
+                    prev = prev.transpose(0, 1)
                     query_base = torch.cat((prev, wise_inputs), 0)
-                    query_base.transpose_(0, 2)
+                    query_base = query_base.transpose(0, 2)
                     query_base = query_base.expand(seq_len, -1, -1, -1)
-                    query = F.sigmoid(self.shorten(query_base))
+                    query = torch.sigmoid(self.shorten(query_base))
                     query = torch.einsum("khbl->klbh", query)
         else:
             query = self.encoder.embedding(inputs)
