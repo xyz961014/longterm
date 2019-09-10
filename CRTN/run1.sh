@@ -27,7 +27,7 @@ python main.py \
     --cache_k 3 \
     --cache_N 5 \
     --seed 1111 \
-    --epochs 300 \
+    --epochs 200 \
     --log-interval 50 \
     --save run1 \
     --adaptive \
