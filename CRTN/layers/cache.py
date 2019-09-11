@@ -18,22 +18,24 @@ class Cache(nn.Module):
         else:
             self.dk = self.args.cache_dk
 
+        batch_size = self.args.batch_size // torch.cuda.device_count()
+
         self.keys = nn.ParameterDict({
-            str(i): nn.Parameter(torch.zeros(args.batch_size, self.dk), requires_grad=False) for i in range(args.cache_N)
+            str(i): nn.Parameter(torch.zeros(batch_size, self.dk), requires_grad=False) for i in range(args.cache_N)
             })
         self.values = nn.ParameterDict({
-            str(i): nn.Parameter(torch.zeros(args.num_steps, args.batch_size, (args.nlayers+1) * args.nhid), requires_grad=False) for i in range(args.cache_N)
+            str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, (args.nlayers+1) * args.nhid), requires_grad=False) for i in range(args.cache_N)
             })
         if corpus is not None:
             self.words = nn.ParameterDict({
-                str(i): nn.Parameter(torch.zeros(args.num_steps, args.batch_size, dtype=torch.long), requires_grad=False) for i in range(args.cache_N)
+                str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, dtype=torch.long), requires_grad=False) for i in range(args.cache_N)
                 })
 
         self.renew_place = args.cache_N - 1
         self.attn = DotProductAttention()
         self.summary = nn.Linear(args.nhid * args.num_steps, args.cache_dk)
 
-        self.batch_size = self.args.batch_size
+        self.batch_size = batch_size
         self.L = self.args.num_steps
         self.N = self.args.cache_N
         self.dv = self.args.nhid
@@ -87,9 +89,9 @@ class Cache(nn.Module):
     def forward(self, query):
 
         query = query.transpose(1, 2).contiguous()
-        query_len = query.size(0)
+        query_len, bsz = query.size(0), query.size(1)
         if self.args.no_summary:
-            query = query.reshape(query_len, self.batch_size, -1)
+            query = query.reshape(query_len, bsz, -1)
         else:
             query = self.summary(query.reshape(query_len, -1, self.L * self.dv))
         keys = self._get_keys()
