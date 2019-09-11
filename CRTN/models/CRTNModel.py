@@ -82,7 +82,8 @@ class CRTNModel(nn.Module):
                 prev_value = self.cache._get_values()[-1]
                 prev_value.unsqueeze_(0)
                 prev = prev_value.expand(seq_len, -1, -1, -1)
-                input_mask = torch.triu(new_inputs.new_ones(seq_len, seq_len), diagonal=1)
+                input_mask = torch.triu(new_inputs.new_ones(seq_len, seq_len), 
+                                                                diagonal=1)
                 memory_mask = torch.tril(prev.new_ones(seq_len, seq_len), diagonal=0)
                 input_mask = input_mask.bool()[:,:,None]
                 memory_mask = memory_mask.bool()[:,:,None,None]
@@ -94,7 +95,8 @@ class CRTNModel(nn.Module):
                 prev = prev.view(1, seq_len * bsz, seq_len, (self.args.nlayers+1)*nhid)
                 prev_indice = torch.zeros_like(new_inputs).view(-1)
                 prev_indice.unsqueeze_(0)
-                _, wise_inputs, _ = self.encoder(new_inputs, values=prev_value, indices=prev_indice)
+                _, wise_inputs, _ = self.encoder(new_inputs, values=prev_value, 
+                                                    indices=prev_indice)
                 wise_inputs = wise_inputs[-1]
                 prev = prev.view(-1, seq_len, self.args.nlayers+1, nhid)
                 prev = prev[:,:,-1,:]
@@ -107,7 +109,8 @@ class CRTNModel(nn.Module):
                 index_matrix = index_range.expand(seq_len, -1)
                 index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) + index_range.t().expand(-1, seq_len) * 2 * seq_len 
                 index_matrix = index_matrix.view(-1, 1, 1)
-                index_matrix = index_matrix.expand(-1, query_base.size(1), query_base.size(2))
+                index_matrix = index_matrix.expand(-1, query_base.size(1), 
+                                                    query_base.size(2))
                 query = torch.gather(query_base, 0, index_matrix)
                 
                 query = query.view(seq_len, seq_len, bsz, nhid)
@@ -116,10 +119,12 @@ class CRTNModel(nn.Module):
                 prev_value.unsqueeze_(0)
                 prev_indice = torch.zeros_like(inputs).view(-1)
                 prev_indice.unsqueeze_(0)
-                _, wise_inputs, _ = self.encoder(inputs, values=prev_value, indices=prev_indice)
+                _, wise_inputs, _ = self.encoder(inputs, values=prev_value, 
+                                                    indices=prev_indice)
                 if self.args.query_method == "last_l":
                     query = wise_inputs[-1]
-                    query = torch.einsum("lbd,k->klbd",query, torch.ones_like(query[:,0,0]))
+                    query = torch.einsum("lbd,k->klbd",query, 
+                                            torch.ones_like(query[:,0,0]))
                     mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
                     mask = mask.bool()[:,:,None,None]
                     query.masked_fill_(mask, 0)
@@ -134,7 +139,8 @@ class CRTNModel(nn.Module):
                     index_matrix = index_range.expand(seq_len, -1)
                     index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) 
                     index_matrix = index_matrix.view(-1, 1, 1)
-                    index_matrix = index_matrix.expand(-1, query_base.size(1), query_base.size(2))
+                    index_matrix = index_matrix.expand(-1, query_base.size(1), 
+                                                        query_base.size(2))
                     query = torch.gather(query_base, 0, index_matrix)
                     query = query.view(seq_len, seq_len, bsz, nhid)
                 elif self.args.query_method == "linear":
@@ -166,7 +172,8 @@ class CRTNModel(nn.Module):
         values = self.cache._get_values()
         if self.args.not_weighted:
             weights = None
-        output, mems, attn_map = self.encoder(inputs, values, weights, indices, words, draw)
+        output, mems, attn_map = self.encoder(inputs, values, weights, 
+                                                indices, words, draw)
         if renew:
             self.cache.renew(mems, inputs)
 

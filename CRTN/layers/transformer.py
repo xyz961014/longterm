@@ -111,7 +111,7 @@ class MultiheadSelfAttention(nn.Module):
         attn_prob = F.softmax(attn_score, 1)
 
         attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
-        attn_vec = attn_vec.contiguous().view(seq_len, batch_size, self.num_head * self.d_head)
+        attn_vec = attn_vec.reshape(seq_len, batch_size, self.num_head * self.d_head)
 
         attn_out = self.lin_o(attn_vec)
         attn_out = self.drop(attn_out)
@@ -261,8 +261,10 @@ class LearnableMultiheadSelfAttention(nn.Module):
             indice_bool = indice_bool.sum(0)
             pre_AC = torch.einsum("ibnd,ibk->kibnd", heads_qu, indice_bool)
             pre_BD = torch.einsum("ibnd,ibk->kibnd", heads_qv, indice_bool)
-            pre_k = heads_k.view(mem_num + 1, x_len, batch_size, self.num_head, self.d_head)
-            pre_v = heads_v.view(mem_num + 1, x_len, batch_size, self.num_head, self.d_head)
+            pre_k = heads_k.view(mem_num + 1, x_len, batch_size, 
+                                    self.num_head, self.d_head)
+            pre_v = heads_v.view(mem_num + 1, x_len, batch_size, 
+                                    self.num_head, self.d_head)
             if weights is not None:
                 weights = weights.view(x_len, batch_size, -1)
                 weights = torch.cat((weights, torch.ones_like(weights[:,:,0,None]) * -float("inf")), 2)
@@ -271,7 +273,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
                 weights = weights.index_fill(2, (weights.new_ones(1) * mem_num).long(), 1.0)
                 pre_v = torch.einsum("kjbnd,jbk->kjbnd", pre_v, weights)
 
-            pre_rel = rel_emb_matrix.view(mem_num + 1, x_len, batch_size, self.num_head, self.d_head)
+            pre_rel = rel_emb_matrix.view(mem_num + 1, x_len, 
+                                        batch_size, self.num_head, self.d_head)
             AC = torch.einsum("kibnd,kjbnd->ikjbn", pre_AC, pre_k)
             BD = torch.einsum("kibnd,kjbnd->ikjbn", pre_BD, pre_rel)
             #AC = torch.einsum("ibnd,ijbnd->ijbn", (heads_qu, heads_k))
@@ -327,7 +330,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
             attn_prob = attn_prob.reshape(x_len, -1, x_len, batch_size, self.num_head)
             attn_vec = torch.einsum("ikjbn,kjbnd->ibnd", attn_prob, pre_v)
 
-        attn_vec = attn_vec.contiguous().view(x_len, batch_size, self.num_head * self.d_head)
+        attn_vec = attn_vec.reshape(x_len, batch_size, self.num_head * self.d_head)
 
         attn_out = self.lin_o(attn_vec)
         attn_out = self.drop(attn_out)
@@ -350,7 +353,8 @@ class TransformerUnit(nn.Module):
         if attn_type == 0:
             self.attn = MultiheadSelfAttention(num_head, d_model, d_head, dropout)
         elif attn_type == 1:
-            self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropout)
+            self.attn = LearnableMultiheadSelfAttention(num_head, d_model, 
+                                                            d_head, dropout)
 
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, dropout)
@@ -358,9 +362,11 @@ class TransformerUnit(nn.Module):
     def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, indices=None, weights=None):
         
         if self.attn_type == 0:
-            output = self.attn(inputs, pos_emb, mask=mask, memory=memory, indices=indices, weights=weights)
+            output = self.attn(inputs, pos_emb, mask=mask, memory=memory, 
+                                indices=indices, weights=weights)
         elif self.attn_type == 1:
-            output, attn_matrix = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, mask=mask, memory=memory, indices=indices, weights=weights)
+            output, attn_matrix = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, 
+                        mask=mask, memory=memory, indices=indices, weights=weights)
 
         output = self.pos_ff(output)
 
@@ -398,10 +404,12 @@ class TransformerLM(nn.Module):
         self.decoder = nn.Linear(d_model, vocab_size, bias=False) 
 
         if adaptive:
-            self.embedding = AdaptiveEmbedding(vocab_size, d_embedding, d_model, cutoffs, div_val=div_val, init_std=init_std)
+            self.embedding = AdaptiveEmbedding(vocab_size, d_embedding, d_model, 
+                                        cutoffs, div_val=div_val, init_std=init_std)
         else:
             if args.tied:
-                self.embedding = nn.Embedding(vocab_size, d_embedding, padding_idx=0).from_pretrained(self.decoder.weight)
+                self.embedding = nn.Embedding(vocab_size, d_embedding, 
+                                padding_idx=0).from_pretrained(self.decoder.weight)
                 self.embedding.weight = self.decoder.weight
             else:
                 self.embedding = nn.Embedding(vocab_size, d_embedding, padding_idx=0)
@@ -411,11 +419,12 @@ class TransformerLM(nn.Module):
 
 
         #establish pos_emb_bank
-        pos_unit = torch.arange((self.args.cache_N+1)*num_steps-1, -1, -1.0) 
-        pos_unit = pos_unit.view(self.args.cache_N+1, -1)
-        batch = torch.ones(self.batch_size * num_steps)
-        pos_emb_bank = torch.einsum('nl,b->bnl', pos_unit, batch)
-        self.register_buffer("pos_emb_bank", pos_emb_bank)
+
+        #pos_unit = torch.arange((self.args.cache_N+1)*num_steps-1, -1, -1.0) 
+        #pos_unit = pos_unit.view(self.args.cache_N+1, -1)
+        #batch = torch.ones(self.batch_size * num_steps)
+        #pos_emb_bank = torch.einsum('nl,b->bnl', pos_unit, batch)
+        #self.register_buffer("pos_emb_bank", pos_emb_bank)
 
         if attn_type == 1:
             self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
@@ -455,7 +464,9 @@ class TransformerLM(nn.Module):
     def init_memory(self, batch_size):
         if self.args.mem_len > 0:
             param = next(self.parameters())
-            return torch.empty(self.args.nlayers+1, self.args.mem_len, batch_size, self.args.nhid, dtype=param.dtype, device=param.device)
+            return torch.empty(self.args.nlayers+1, self.args.mem_len, 
+                                batch_size, self.args.nhid, 
+                                dtype=param.dtype, device=param.device)
         else:
             return None
 
@@ -490,7 +501,8 @@ class TransformerLM(nn.Module):
             #mem_len = seq_len * indices.size(0)
             mem_len = seq_len * values.size(0)
             zone_bsz = indices.size(1)
-            values = values.view(values.size(0), seq_len, -1, self.args.nlayers+1, self.args.nhid)
+            values = values.view(values.size(0), seq_len, -1, 
+                                    self.args.nlayers+1, self.args.nhid)
         else:
             mem_len = 0
             zone_bsz = batch_size
@@ -513,7 +525,10 @@ class TransformerLM(nn.Module):
             #batch = torch.einsum('k,b->kb',torch.ones(pos_indices.size(0), dtype=torch.long), torch.arange(pos_indices.size(1)))
 
             #pos_seq = self.pos_emb_bank[batch, pos_indices].transpose(0, 1).contiguous()
-            pos_seq = torch.einsum("b,k->bk", torch.ones(batch_size, device=inputs.device), torch.arange((values.size(0) + 1) * self.args.num_steps-1, -1, -1.0, device=inputs.device))
+            pos_seq = torch.einsum("b,k->bk", 
+                            torch.ones(batch_size, device=inputs.device), 
+                            torch.arange((values.size(0) + 1) * self.args.num_steps-1,
+                                            -1, -1.0, device=inputs.device))
             
             #zones
             #values.unsqueeze_(2)
@@ -526,7 +541,10 @@ class TransformerLM(nn.Module):
             #zones = torch.einsum("kblyh->yklbh", zones)
             #zones = zones.reshape(zones.size(0), -1, zone_bsz, zones.size(-1))
         else:
-            pos_seq = torch.einsum("b,k->bk", torch.ones(batch_size, device=inputs.device), torch.arange(self.args.num_steps-1, -1, -1.0, device=inputs.device))
+            pos_seq = torch.einsum("b,k->bk", 
+                            torch.ones(batch_size, device=inputs.device), 
+                            torch.arange(self.args.num_steps-1, -1, -1.0, 
+                                            device=inputs.device))
             pos_indices = indices
         pos_seq = pos_seq.view(batch_size, -1)
 
@@ -547,9 +565,15 @@ class TransformerLM(nn.Module):
                 value_i = values[:,:,:,i,:]
 
             if self.args.attn_type == 0:
-                core_out = layer(core_out, pos_emb, mask=mask, memory=value_i, indices=pos_indices, weights=weights)
+                core_out = layer(core_out, pos_emb, mask=mask, memory=value_i, 
+                                    indices=pos_indices, weights=weights)
             elif self.args.attn_type == 1:
-                core_out, attn_matrix = layer(core_out, pos_emb, self.pos_bias_u, self.pos_bias_v, mask=mask, memory=value_i, indices=pos_indices, weights=weights)
+                core_out, attn_matrix = layer(core_out, pos_emb, self.pos_bias_u, 
+                                                self.pos_bias_v, 
+                                                mask=mask, 
+                                                memory=value_i, 
+                                                indices=pos_indices, 
+                                                weights=weights)
 
 
             mem = core_out

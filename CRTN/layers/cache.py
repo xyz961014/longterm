@@ -21,15 +21,19 @@ class Cache(nn.Module):
         batch_size = self.args.batch_size // torch.cuda.device_count()
 
         self.keys = nn.ParameterDict({
-            str(i): nn.Parameter(torch.zeros(batch_size, self.dk), requires_grad=False) for i in range(args.cache_N)
-            })
+            str(i): nn.Parameter(torch.zeros(batch_size, self.dk)) 
+                                    for i in range(args.cache_N)
+        })
         self.values = nn.ParameterDict({
-            str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, (args.nlayers+1) * args.nhid), requires_grad=False) for i in range(args.cache_N)
-            })
+            str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, 
+                                            (args.nlayers+1) * args.nhid)) 
+                                    for i in range(args.cache_N)
+        })
         if corpus is not None:
             self.words = nn.ParameterDict({
-                str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, dtype=torch.long), requires_grad=False) for i in range(args.cache_N)
-                })
+                str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, 
+                                                dtype=torch.long), requires_grad=False)                                     for i in range(args.cache_N)
+        })
 
         self.renew_place = args.cache_N - 1
         self.attn = DotProductAttention()
@@ -73,15 +77,20 @@ class Cache(nn.Module):
         self.keys.clear()
         self.values.clear()
         self.keys.update({
-            str(i): nn.Parameter(torch.zeros(batch_size, self.dk), requires_grad=False) for i in range(self.N)
-            })
+            str(i): nn.Parameter(torch.zeros(batch_size, self.dk)) 
+                        for i in range(self.N)
+        })
         self.values.update({
-            str(i): nn.Parameter(torch.zeros(self.L, batch_size, (self.args.nlayers+1) * self.dv), requires_grad=False) for i in range(self.N)
-            })
+            str(i): nn.Parameter(torch.zeros(self.L, batch_size, 
+                                    (self.args.nlayers+1) * self.dv)) 
+                        for i in range(self.N)
+        })
         if self.demo:
             self.words.update({
-                str(i): nn.Parameter(torch.zeros(self.L, batch_size, dtype=torch.long), requires_grad=False) for i in range(self.N)
-                })
+                str(i): nn.Parameter(torch.zeros(self.L, batch_size, 
+                                        dtype=torch.long), requires_grad=False) 
+                            for i in range(self.N)
+            })
 
         self.renew_place = self.N - 1
         self.to(device)
@@ -129,10 +138,10 @@ class Cache(nn.Module):
             topk_indices = topk_indices.transpose(0, 2).contiguous().view(self.N, -1)
             topk_weights = F.softmax(topk_weights[0][0][:self.topk], 0).view(-1, 1, self.topk)
             if self.N > self.topk:
-                topk_weights = torch.cat((topk_weights, torch.zeros(self.N - self.topk, device=topk_weights.device).view(-1, 1, self.N - self.topk)), 2)
+                topk_weights = torch.cat((topk_weights, torch.zeros(self.N - self.topk,                     device=topk_weights.device).view(-1, 1, self.N - self.topk)), 2)
         else:
             _, topk_indices = attention.topk(self.topk)
-            topk_indices = topk_indices.transpose(0, 2).contiguous().view(self.topk, -1)
+            topk_indices = topk_indices.transpose(0, 2).reshape(self.topk, -1)
             topk_weights = attention
         #outputs = values[batch, topk_indices]
 
@@ -165,12 +174,13 @@ class Cache(nn.Module):
         else:
             new_key = self.summary(inputs[-1].reshape(-1, self.L * self.dv))
 
-        new_value = torch.einsum("mblh->lbmh", inputs).reshape(self.L, -1, (self.args.nlayers+1) * self.dv)
+        new_value = torch.einsum("mblh->lbmh", inputs).reshape(self.L, -1, 
+                                            (self.args.nlayers+1) * self.dv)
         self.keys.update({
-            str(n): nn.Parameter(new_key, requires_grad=False)
+            str(n): nn.Parameter(new_key)
             })
         self.values.update({
-            str(n): nn.Parameter(new_value, requires_grad=False)
+            str(n): nn.Parameter(new_value)
             })
         if self.demo:
             self.words.update({
@@ -194,17 +204,20 @@ class Cache(nn.Module):
         device = eli_key.device
 
         self.keys.update({
-            str(keys_keys[-1]+1): nn.Parameter(torch.zeros(self.batch_size, self.dk, device=device), requires_grad=False)
+            str(keys_keys[-1]+1): nn.Parameter(torch.zeros(self.batch_size, self.dk, 
+                                                            device=device))
             })
         self.values.update({
-            str(keys_values[-1]+1): nn.Parameter(torch.zeros(self.L, self.batch_size, self.dv * (self.args.nlayers+1), device=device), requires_grad=False)
+            str(keys_values[-1]+1): nn.Parameter(torch.zeros(self.L, self.batch_size, 
+                                    self.dv * (self.args.nlayers+1), device=device))
             })
         if self.demo:
             keys_words = list(self.words.keys())
             keys_words = sorted(list(map(int, keys_words)))
             eli_word = self.words.pop(str(keys_words[0]))
             self.words.update({
-                str(keys_words[-1]+1): nn.Parameter(torch.zeros(self.L, self.batch_size, dtype=torch.long), requires_grad=False)
+                str(keys_words[-1]+1): nn.Parameter(torch.zeros(self.L, 
+                        self.batch_size, dtype=torch.long), requires_grad=False)
                 })
  
 

@@ -90,7 +90,8 @@ def parse_args():
     parser.add_argument('--max_pooling', action="store_true",
                         help='use max pooling to justice importance of segments in the cache')
     parser.add_argument('--query_method', type=str, default='vanilla', 
-                        choices=['fixed_length_1', 'fixed_length_2', 'last_l', 'middle_l', 'linear', 'vanilla'],
+                        choices=['fixed_length_1', 'fixed_length_2', 
+                                'last_l', 'middle_l', 'linear', 'vanilla'],
                         help='query method to use. vanilla indicates just use current segment to query, other methods link previous segment. last_l and middle_l only work in wise_summary mode')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
@@ -139,9 +140,11 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
             elapsed = time.time() - start_time
             print('| epoch {:2d} | {:3d}/{:3d} batches | lr {:02.2e} | ms/batch {:5.2f} | '
                     'loss {:5.2f} | ppl {:8.2f}'.format(
-                epoch, batch, len(train_loader), optimizer.state_dict()["param_groups"][0]["lr"],
+                epoch, batch, len(train_loader), 
+                optimizer.state_dict()["param_groups"][0]["lr"],
                 elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
-            writer.add_scalar("train/ppl", math.exp(cur_loss), batch + (epoch - 1) * len(train_loader))
+            writer.add_scalar("train/ppl", math.exp(cur_loss), 
+                                batch + (epoch - 1) * len(train_loader))
             writer.flush()
             total_loss = 0.
             start_time = time.time()
@@ -226,13 +229,21 @@ def main(args):
 
     args.mem_len = args.cache_k * args.num_steps
 
-    train_loader = corpus.get_train_loader(batch_size=args.batch_size, num_steps=args.num_steps)
-    valid_loader = corpus.get_valid_loader(batch_size=eval_batch_size, num_steps=args.num_steps)
-    test_loader = corpus.get_test_loader(batch_size=eval_batch_size, num_steps=args.num_steps)
+    train_loader = corpus.get_train_loader(batch_size=args.batch_size, 
+                                            num_steps=args.num_steps)
+    valid_loader = corpus.get_valid_loader(batch_size=eval_batch_size, 
+                                            num_steps=args.num_steps)
+    test_loader = corpus.get_test_loader(batch_size=eval_batch_size, 
+                                            num_steps=args.num_steps)
 
 
     print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
-    print("# VOCABULARY: {} \n# train data words: {:.2e} \n# valid data words: {:.2e} \n# test data words: {:.2e} \nTRAINING......".format(corpus.vocabulary.num_words, len(corpus.train_data.raw_data), len(corpus.valid_data.raw_data), len(corpus.test_data.raw_data)))
+    print("# VOCABULARY: {} \n# train data words: {:.2e} \n# valid data words: {:.2e} \n# test data words: {:.2e} \nTRAINING......".format(
+        corpus.vocabulary.num_words, 
+        len(corpus.train_data.raw_data), 
+        len(corpus.valid_data.raw_data), 
+        len(corpus.test_data.raw_data)))
+
     if args.load:
         # clear cache
         keys = checkpoint["model_state_dict"].copy().keys()
@@ -260,7 +271,12 @@ def main(args):
 
     
     if args.adaptive:
-        criterion = ProjectedAdaptiveLogSoftmax(args.vocab_size, args.emsize, args.nhid, cutoffs, div_val=args.div_val, init_std=args.init_std) 
+        criterion = ProjectedAdaptiveLogSoftmax(args.vocab_size, 
+                                                args.emsize, 
+                                                args.nhid, 
+                                                cutoffs, 
+                                                div_val=args.div_val, 
+                                                init_std=args.init_std) 
         if args.tied:
             for i in range(len(criterion.out_layers)):
                 criterion.out_layers[i].weight = model.encoder.embedding.emb_layers[i].weight
@@ -289,7 +305,8 @@ def main(args):
         optimizer = optim.SGD(model.parameters(), lr=args.lr)
     
     if args.scheduler == "cosine":
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, len(train_loader) * args.epochs)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 
+                                                    len(train_loader) * args.epochs)
     elif args.scheduler == "constant":
         scheduler = None
 
@@ -305,7 +322,8 @@ def main(args):
                     'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
                                                eval_loss, math.exp(eval_loss)))
             print('-' * 89)
-            writer.add_scalar("valid/ppl", math.exp(eval_loss), epoch * len(train_loader))
+            writer.add_scalar("valid/ppl", math.exp(eval_loss), 
+                                epoch * len(train_loader))
             writer.flush()
             if eval_loss < best_eval_loss:
                 torch.save({
@@ -337,7 +355,8 @@ def main(args):
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
     test_loss = evaluate(model, test_loader, criterion, args)
-    writer.add_embedding(model.encoder.embedding.emb_layers[0].weight, corpus.vocabulary.index2word.values())
+    writer.add_embedding(model.encoder.embedding.emb_layers[0].weight, 
+                            corpus.vocabulary.index2word.values())
     print('=' * 89)
     print('| best valid loss {:5.2f} | best valid ppl {:8.2f}'.format(
         best_eval_loss, math.exp(best_eval_loss)))
