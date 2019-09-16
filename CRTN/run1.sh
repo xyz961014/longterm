@@ -29,7 +29,6 @@ python main.py \
     --seed 1111 \
     --epochs 200 \
     --log-interval 50 \
-    --save run1 \
     --adaptive \
     --no_summary \
     --wise_summary \
