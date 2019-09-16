@@ -132,17 +132,9 @@ class Cache(nn.Module):
 
         attention = attention.view(-1, 1, attention.size(-1))
         
-        if self.demo:
-            #demo mode
-            topk_weights, topk_indices = attention.topk(self.N)
-            topk_indices = topk_indices.transpose(0, 2).contiguous().view(self.N, -1)
-            topk_weights = F.softmax(topk_weights[0][0][:self.topk], 0).view(-1, 1, self.topk)
-            if self.N > self.topk:
-                topk_weights = torch.cat((topk_weights, torch.zeros(self.N - self.topk,                     device=topk_weights.device).view(-1, 1, self.N - self.topk)), 2)
-        else:
-            _, topk_indices = attention.topk(self.topk)
-            topk_indices = topk_indices.transpose(0, 2).reshape(self.topk, -1)
-            topk_weights = attention
+        _, topk_indices = attention.topk(self.topk)
+        topk_indices = topk_indices.transpose(0, 2).reshape(self.topk, -1)
+        topk_weights = attention
         #outputs = values[batch, topk_indices]
 
         #values.transpose_(0, 1)
@@ -151,12 +143,11 @@ class Cache(nn.Module):
         #outputs = torch.gather(values, 0, indices)
 
         if self.demo:
-            words = words.transpose(0, 1).contiguous()
-            #indices = torch.einsum("kb,i->kbi", topk_indices.to(torch.float), torch.ones_like(words[0][0]).to(torch.float)).to(torch.long)
-            indices = topk_indices[:,:,None]
-            indices = indices.expand(-1, -1, values.size(-1))
-            word_output = torch.gather(words, 0, indices)
-            return topk_weights, topk_indices, outputs, word_output
+            #words = words.transpose(0, 1).contiguous()
+            #indices = topk_indices[:,:,None]
+            #indices = indices.expand(-1, -1, values.size(-1))
+            #word_output = torch.gather(words, 0, indices)
+            return topk_weights, topk_indices, words
         else:
             return topk_weights, topk_indices
 

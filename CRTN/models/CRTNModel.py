@@ -162,7 +162,7 @@ class CRTNModel(nn.Module):
             query.masked_fill_(mask, 0)
 
         if self.demo:
-            weights, indices, zones, words = self.cache(query)
+            weights, indices, words = self.cache(query)
         else:
             #weights, indices, zones = self.cache(query)
             weights, indices = self.cache(query)

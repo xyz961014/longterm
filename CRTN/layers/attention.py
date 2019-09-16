@@ -13,7 +13,7 @@ class DotProductAttention(nn.Module):
 
     def forward(self, query, keys, values, mask=None):
         weights = torch.einsum("...bh,bnh->...bn", query, keys)
-        weights = F.softmax(weights / np.sqrt(keys.size(-1)), 1)
+        weights = F.softmax(weights / np.sqrt(keys.size(-1)), 2)
         outputs = torch.einsum("...bn,bnlh->blh", weights, values)
         weights = weights.unsqueeze(-2)
         #keys_T = keys.transpose(-2, -1)

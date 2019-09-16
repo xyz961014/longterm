@@ -152,7 +152,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         return x
 
 
-    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, indices=None, weights=None):
+    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, indice_bool=None, weights=None):
         x_len, batch_size, nhid = x.size(0), x.size(1), x.size(2)
         #if indices is not None:
         #    ipdb.set_trace()
@@ -244,7 +244,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         heads_qu = heads_q + pos_bias_u
         heads_qv = heads_q + pos_bias_v
 
-        if indices is None:
+        if indice_bool is None:
             total_len = c.size(0)
             rel_emb_matrix = rel_emb_matrix.view(total_len, batch_size, self.num_head, self.d_head)
 
@@ -253,12 +253,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
             AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
             BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
         else:
-            indice_len = indices.size(0)
-            indices = indices.view(indice_len, -1, batch_size)
-            tfbase = torch.eye(mem_num + 1, device=indices.device)
-            indice_bool = torch.index_select(tfbase, 0, indices.view(-1))
-            indice_bool = indice_bool.view(indice_len, -1, batch_size, mem_num + 1)
-            indice_bool = indice_bool.sum(0)
+            #indice_len = indices.size(0)
+            #indices = indices.view(indice_len, -1, batch_size)
+            #tfbase = torch.eye(mem_num + 1, device=indices.device)
+            #indice_bool = torch.index_select(tfbase, 0, indices.view(-1))
+            #indice_bool = indice_bool.view(indice_len, -1, batch_size, mem_num + 1)
+            #indice_bool = indice_bool.sum(0)
             pre_AC = torch.einsum("ibnd,ibk->kibnd", heads_qu, indice_bool)
             pre_BD = torch.einsum("ibnd,ibk->kibnd", heads_qv, indice_bool)
             pre_k = heads_k.view(mem_num + 1, x_len, batch_size, 
@@ -266,11 +266,11 @@ class LearnableMultiheadSelfAttention(nn.Module):
             pre_v = heads_v.view(mem_num + 1, x_len, batch_size, 
                                     self.num_head, self.d_head)
             if weights is not None:
-                weights = weights.view(x_len, batch_size, -1)
-                weights = torch.cat((weights, torch.ones_like(weights[:,:,0,None]) * -float("inf")), 2)
-                weights.masked_fill_((1 - indice_bool).bool(), -float("inf"))
-                weights = F.softmax(weights, 2)
-                weights = weights.index_fill(2, (weights.new_ones(1) * mem_num).long(), 1.0)
+                #weights = weights.view(x_len, batch_size, -1)
+                #weights = torch.cat((weights, torch.ones_like(weights[:,:,0,None]) * -float("inf")), 2)
+                #weights.masked_fill_((1 - indice_bool).bool(), -float("inf"))
+                #weights = F.softmax(weights, 2)
+                #weights = weights.index_fill(2, (weights.new_ones(1) * mem_num).long(), 1.0)
                 pre_v = torch.einsum("kjbnd,jbk->kjbnd", pre_v, weights)
 
             pre_rel = rel_emb_matrix.view(mem_num + 1, x_len, 
@@ -363,10 +363,10 @@ class TransformerUnit(nn.Module):
         
         if self.attn_type == 0:
             output = self.attn(inputs, pos_emb, mask=mask, memory=memory, 
-                                indices=indices, weights=weights)
+                                indice_bool=indices, weights=weights)
         elif self.attn_type == 1:
             output, attn_matrix = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, 
-                        mask=mask, memory=memory, indices=indices, weights=weights)
+                        mask=mask, memory=memory, indice_bool=indices, weights=weights)
 
         output = self.pos_ff(output)
 
@@ -482,10 +482,6 @@ class TransformerLM(nn.Module):
         #length = torch.tensor([seq_len] * batch_size, dtype=torch.int64)
         #inputs = pack_padded_sequence(inputs, length)
 
-        if self.demo and indices is not None:
-            print("-" * 89)
-            display = tuple(zip(indices.view(-1), weights.view(-1), words))
-            display = sorted(display, key=lambda x:x[0].item())
 
 
         #if zones is not None:
@@ -502,7 +498,7 @@ class TransformerLM(nn.Module):
             mem_len = seq_len * values.size(0)
             zone_bsz = indices.size(1)
             values = values.view(values.size(0), seq_len, -1, 
-                                    self.args.nlayers+1, self.args.nhid)
+                                 self.args.nlayers+1, self.args.nhid)
         else:
             mem_len = 0
             zone_bsz = batch_size
@@ -522,13 +518,27 @@ class TransformerLM(nn.Module):
             #pos_seq
             pos_indices = torch.cat((indices, (torch.ones_like(indices[0]) * values.size(0)).view(1, -1)))
 
-            #batch = torch.einsum('k,b->kb',torch.ones(pos_indices.size(0), dtype=torch.long), torch.arange(pos_indices.size(1)))
-
-            #pos_seq = self.pos_emb_bank[batch, pos_indices].transpose(0, 1).contiguous()
             pos_seq = torch.einsum("b,k->bk", 
-                            torch.ones(batch_size, device=inputs.device), 
-                            torch.arange((values.size(0) + 1) * self.args.num_steps-1,
-                                            -1, -1.0, device=inputs.device))
+                                   torch.ones(batch_size, device=inputs.device), 
+                                   torch.arange((values.size(0) + 1) * 
+                                   self.args.num_steps-1, -1, -1.0, 
+                                   device=inputs.device))
+
+            #one-hot pos_indices
+            mem_num = values.size(0)
+            indice_len = pos_indices.size(0)
+            pos_indices = pos_indices.view(indice_len, -1, batch_size)
+            tfbase = torch.eye(mem_num + 1, device=pos_indices.device)
+            indice_bool = torch.index_select(tfbase, 0, pos_indices.view(-1))
+            indice_bool = indice_bool.view(indice_len, -1, batch_size, mem_num + 1)
+            indice_bool = indice_bool.sum(0)
+            if weights is not None:
+                x_len = inputs.size(0)
+                weights = weights.view(x_len, batch_size, -1)
+                weights = torch.cat((weights, torch.ones_like(weights[:,:,0,None]) * -float("inf")), 2)
+                weights.masked_fill_((1 - indice_bool).bool(), -float("inf"))
+                weights = F.softmax(weights, 2)
+                weights = weights.index_fill(2, (weights.new_ones(1) * mem_num).long(), 1.0)
             
             #zones
             #values.unsqueeze_(2)
@@ -546,6 +556,7 @@ class TransformerLM(nn.Module):
                             torch.arange(self.args.num_steps-1, -1, -1.0, 
                                             device=inputs.device))
             pos_indices = indices
+            indice_bool = None
         pos_seq = pos_seq.view(batch_size, -1)
 
         pos_emb = self.pos_emb(pos_seq)
@@ -557,6 +568,10 @@ class TransformerLM(nn.Module):
         memories = [memory]
         attn_map = None
 
+        if self.demo and indices is not None:
+            print("-" * 89)
+            demo_display = tuple(zip(indice_bool.squeeze(), weights.squeeze()))
+
         for i, layer in enumerate(self.layers):
             #zone_i = None if zones is None else zones[i]
             if indices is None:
@@ -566,14 +581,14 @@ class TransformerLM(nn.Module):
 
             if self.args.attn_type == 0:
                 core_out = layer(core_out, pos_emb, mask=mask, memory=value_i, 
-                                    indices=pos_indices, weights=weights)
+                                 indices=pos_indices, weights=weights)
             elif self.args.attn_type == 1:
                 core_out, attn_matrix = layer(core_out, pos_emb, self.pos_bias_u, 
-                                                self.pos_bias_v, 
-                                                mask=mask, 
-                                                memory=value_i, 
-                                                indices=pos_indices, 
-                                                weights=weights)
+                                              self.pos_bias_v, 
+                                              mask=mask, 
+                                              memory=value_i, 
+                                              indices=indice_bool, 
+                                              weights=weights)
 
 
             mem = core_out
@@ -597,17 +612,29 @@ class TransformerLM(nn.Module):
 
         #output = pad_packed_sequence(output)
 
-        if self.demo and indices is not None:
-            for ind, weight, words in display:
-                print("SEGMENT %s | weight: %.3f" % (ind.item(), weight.item()))
-                for word in words.view(-1):
-                    print(self.corpus.vocabulary.index2word[word.item()], end=" ")
+        if self.demo and weights is not None:
+            id2w = self.corpus.vocabulary.index2word
+            words = torch.cat((words.squeeze(), inputs.t()), 0)
+            for idis, (ind, weight) in enumerate(demo_display):
+                print("Current Segment: ", end="")
+                for iinp, wd in enumerate(inputs):
+                    if idis == iinp:
+                        print("\033[1;32m %s \033[0m" % id2w[wd.item()], end=" ")
+                    else:
+                        print(id2w[wd.item()], end=" ")
                 print("\n")
-            print("当前输入序列：")
-            for word in inputs[:,0]:
-                print(self.corpus.vocabulary.index2word[word.item()], end=" ")
-            print("")
-            return output, memories, (attn_map, display)
+                for i, wt in enumerate(ind * weight):
+                    if i + 1 == len(weight):
+                        continue
+                    print("SEGMENT %s | weight: %.3f" % (i, wt.item()))
+                    for wd in words[i].view(-1):
+                        print(id2w[wd.item()], end=" ")
+                    print("\n")
+            #print("Current input: ")
+            #for word in inputs[:,0]:
+            #    print(self.corpus.vocabulary.index2word[word.item()], end=" ")
+            #print("")
+            return output, memories, (attn_map, demo_display)
 
 
         return output, memories, attn_map

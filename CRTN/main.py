@@ -88,11 +88,15 @@ def parse_args():
     parser.add_argument('--wise_summary', action="store_true",
                         help='use encoder function(transformer-xl) to summary the key')
     parser.add_argument('--max_pooling', action="store_true",
-                        help='use max pooling to justice importance of segments in the cache')
+                        help='use max pooling to justice importance' 
+                        'of segments in the cache')
     parser.add_argument('--query_method', type=str, default='vanilla', 
                         choices=['fixed_length_1', 'fixed_length_2', 
                                 'last_l', 'middle_l', 'linear', 'vanilla'],
-                        help='query method to use. vanilla indicates just use current segment to query, other methods link previous segment. last_l and middle_l only work in wise_summary mode')
+                        help='query method to use. vanilla indicates just use '
+                        'current segment to query, other methods link previous '
+                        'segment. last_l and middle_l only work in wise_summary '
+                        'mode')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
     parser.add_argument('--div_val', type=int, default=1,
@@ -138,8 +142,8 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
-            print('| epoch {:2d} | {:3d}/{:3d} batches | lr {:02.2e} | ms/batch {:5.2f} | '
-                    'loss {:5.2f} | ppl {:8.2f}'.format(
+            print('| epoch {:2d} | {:3d}/{:3d} batches | lr {:02.2e} | '
+                  'ms/batch {:5.2f} | loss {:5.2f} | ppl {:8.2f}'.format(
                 epoch, batch, len(train_loader), 
                 optimizer.state_dict()["param_groups"][0]["lr"],
                 elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
@@ -230,11 +234,11 @@ def main(args):
     args.mem_len = args.cache_k * args.num_steps
 
     train_loader = corpus.get_train_loader(batch_size=args.batch_size, 
-                                            num_steps=args.num_steps)
+                                           num_steps=args.num_steps)
     valid_loader = corpus.get_valid_loader(batch_size=eval_batch_size, 
-                                            num_steps=args.num_steps)
+                                           num_steps=args.num_steps)
     test_loader = corpus.get_test_loader(batch_size=eval_batch_size, 
-                                            num_steps=args.num_steps)
+                                         num_steps=args.num_steps)
 
 
     print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
@@ -253,13 +257,9 @@ def main(args):
 
         if args.demo:
             model = CRTNModel(model_args, corpus=corpus)
-        else:keys = checkpoint["model_state_dict"].copy().keys()
-        for key in keys:
-            if re.match(r"cache.keys", key) or re.match(r"cache.values", key) or re.match(r"cache.words", key) or re.match(r"encoder.pos_emb_bank", key):
-                popitem = checkpoint["model_state_dict"].pop(key)
-
-
+        else:
             model = CRTNModel(model_args)
+
         model.load_state_dict(checkpoint["model_state_dict"], strict=False)
     else:
         #create model
@@ -306,7 +306,8 @@ def main(args):
     
     if args.scheduler == "cosine":
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 
-                                                    len(train_loader) * args.epochs)
+                                                         len(train_loader) 
+                                                         * args.epochs)
     elif args.scheduler == "constant":
         scheduler = None
 
@@ -323,14 +324,16 @@ def main(args):
                                                eval_loss, math.exp(eval_loss)))
             print('-' * 89)
             writer.add_scalar("valid/ppl", math.exp(eval_loss), 
-                                epoch * len(train_loader))
+                              epoch * len(train_loader))
             writer.flush()
             if eval_loss < best_eval_loss:
                 torch.save({
                     "model_args": model.args,
                     "model_state_dict": model.state_dict(),
                     "criterion": criterion.state_dict()
-                    }, savepath + args.save + args.timestr + "/" + args.save + "_best" + ".pt")
+                    }, 
+                    savepath + args.save + args.timestr + 
+                    "/" + args.save + "_best" + ".pt")
                 #with open("save/" + args.save + "/" + args.save + "_best.pt", "wb") as f:
                 #    torch.save(model, f)
                 #with open("save/" + args.save + "/" + args.save + "_crit.pt", "wb") as f:
@@ -341,28 +344,31 @@ def main(args):
         print('-' * 89)
         print('Exiting from training early')
 
-    #with open("save/" + args.save + "/" + args.save + "_best.pt", "rb") as f:
-    #    model = torch.load(f)
-    #with open("save/" + args.save + "/" + args.save + "_crit.pt", "rb") as f:
-    #    criterion = torch.load(f)
-    eval_checkpoint = torch.load(savepath + args.save + args.timestr + "/" + args.save + "_best.pt")
+    ### Reload the best model
+
+    eval_checkpoint = torch.load(savepath + args.save + 
+                                 args.timestr + "/" + args.save + "_best.pt")
     model_state_dict = eval_checkpoint["model_state_dict"]
     keys = model_state_dict.copy().keys()
+
     for key in keys:
-        if re.match(r"cache.keys", key) or re.match(r"cache.values", key) or re.match(r"cache.words", key) or re.match(r"encoder.pos_emb_bank", key):
+        if re.match(r"cache.keys", key) or re.match(r"cache.values", key) or re.match(r"cache.words", key):
             model_state_dict.pop(key)
+
     model.load_state_dict(model_state_dict, strict=False)
+
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
+
     test_loss = evaluate(model, test_loader, criterion, args)
     writer.add_embedding(model.encoder.embedding.emb_layers[0].weight, 
-                            corpus.vocabulary.index2word.values())
+                         corpus.vocabulary.index2word.values())
     print('=' * 89)
     print('| best valid loss {:5.2f} | best valid ppl {:8.2f}'.format(
-        best_eval_loss, math.exp(best_eval_loss)))
+          best_eval_loss, math.exp(best_eval_loss)))
     print('=' * 89)
     print('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
-        test_loss, math.exp(test_loss)))
+          test_loss, math.exp(test_loss)))
     print('=' * 89)
 
 
