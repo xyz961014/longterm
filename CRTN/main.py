@@ -112,6 +112,13 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+class DataParallel(nn.DataParallel):
+    def __init__(self, module, device_ids=None, output_device=None, dim=0):
+        super().__init__(module, device_ids, output_device, dim)
+
+    def set_batch_size(self, batch_size):
+        self.module.set_batch_size(batch_size)
+
 def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     model.train()
     start_time = time.time()
@@ -297,7 +304,7 @@ def main(args):
     model.to(device)
     criterion.to(device)
     if args.multi_gpu:
-        model = nn.DataParallel(model, dim=1)
+        model = DataParallel(model, dim=1)
 
     if args.adam:
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
@@ -327,9 +334,10 @@ def main(args):
                               epoch * len(train_loader))
             writer.flush()
             if eval_loss < best_eval_loss:
+                module = model.module if args.multi_gpu else model
                 torch.save({
-                    "model_args": model.args,
-                    "model_state_dict": model.state_dict(),
+                    "model_args": module.args,
+                    "model_state_dict": module.state_dict(),
                     "criterion": criterion.state_dict()
                     }, 
                     savepath + args.save + args.timestr + 
