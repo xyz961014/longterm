@@ -48,7 +48,7 @@ class CRTNModel(nn.Module):
 
     def forward(self, inputs, draw=False, renew=True):
         seq_len = self.args.num_steps
-        bsz = self.args.batch_size
+        bsz = inputs.size(1)
         nhid = self.args.nhid
 
 
@@ -62,7 +62,7 @@ class CRTNModel(nn.Module):
                 query.masked_fill_(mask, 0)
             elif self.args.query_method == "fixed_length_1":
                 prev = self.cache._get_values()[-1]
-                prev = prev.view(seq_len, bsz, self.args.nlayers+1, nhid)
+                prev = prev.view(seq_len, -1, self.args.nlayers+1, nhid)
                 prev = prev[:,:,0,:]
                 inputs = self.encoder.embedding(inputs)
                 new_input = torch.cat((prev, inputs), 0)
@@ -102,9 +102,9 @@ class CRTNModel(nn.Module):
                 prev = prev[:,:,-1,:]
                 prev.transpose_(0, 1)
                 query_base = torch.cat((prev, wise_inputs), 0)
-                query_base = query_base.view(query_base.size(0), seq_len, bsz, nhid)
+                query_base = query_base.view(query_base.size(0), seq_len, -1, nhid)
                 query_base = query_base.transpose(0, 1).contiguous()
-                query_base = query_base.view(-1, bsz, nhid)
+                query_base = query_base.view(query_base.size(0) * seq_len, -1, nhid)
                 index_range = torch.arange(seq_len, device=new_inputs.device).unsqueeze(0)
                 index_matrix = index_range.expand(seq_len, -1)
                 index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) + index_range.t().expand(-1, seq_len) * 2 * seq_len 
@@ -113,7 +113,7 @@ class CRTNModel(nn.Module):
                                                     query_base.size(2))
                 query = torch.gather(query_base, 0, index_matrix)
                 
-                query = query.view(seq_len, seq_len, bsz, nhid)
+                query = query.view(seq_len, seq_len, -1, nhid)
             else:
                 prev_value = self.cache._get_values()[-1]
                 prev_value.unsqueeze_(0)
@@ -142,7 +142,7 @@ class CRTNModel(nn.Module):
                     index_matrix = index_matrix.expand(-1, query_base.size(1), 
                                                         query_base.size(2))
                     query = torch.gather(query_base, 0, index_matrix)
-                    query = query.view(seq_len, seq_len, bsz, nhid)
+                    query = query.view(seq_len, seq_len, -1, nhid)
                 elif self.args.query_method == "linear":
                     wise_inputs = wise_inputs[-1]
                     prev = prev_value.transpose(1, 2).contiguous()
