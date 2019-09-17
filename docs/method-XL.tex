@@ -148,18 +148,18 @@
 	\begin{itemize}
 		\item \textbf{2.1} standard：采用Transformer-XL的方法
 			$$h_{t,j}^{1:m} = Transformer(\alpha_{1:k}^{(j)},Z_{1:k}^{(j)}, X_t)$$ 
-			对于n=1，...，m
+			以下省去当前时间步$t$。对于n=1，...，m
 			
-	$$\textbf{m}_{t,j}^{n-1} = concat(\{{Z^{(j)}}_i^{n-1}\}_{i=1}^k)$$
-	$$\tilde{\textbf{m}}_{t,j}^{n-1} = concat(\{\alpha_i^{(j)}{Z^{(j)}}_i^{n-1}\}_{i=1}^k) $$
+	$$\textbf{m}_{j}^{n-1} = concat(\{{Z^{(j)}}_i^{n-1}\}_{i=1}^k)$$
+	$$\tilde{\textbf{m}}_{j}^{n-1} = concat(\{\alpha_i^{(j)}{Z^{(j)}}_i^{n-1}\}_{i=1}^k) $$
 			
-$$\tilde{\mathbf{h}}_{t,j}^{n-1}=\left[\operatorname{SG}\left(\mathbf{m}_{t,j}^{n-1}\right) \circ \mathbf{h}_{t}^{n-1}\right]$$
-$$\hat{\mathbf{h}}_{t,j}^{n-1}=\left[\operatorname{SG}\left(\tilde{\mathbf{m}}_{t,j}^{n-1}\right) \circ \mathbf{h}_{t}^{n-1}\right]$$
-$$\mathbf{q}_{t,j}^{n}, \mathbf{k}_{t,j}^{n}, \mathbf{v}_{t,j}^{n}=\mathbf{h}_{t,j}^{n-1} \mathbf{W}_{q}^{n \top}, \tilde{\mathbf{h}}_{t,j}^{n-1} {\mathbf{W}_{k, E}^{n}}^{\top}, \hat{\mathbf{h}}_{t,j}^{n-1} \mathbf{W}_{v}^{n \top}$$
-$$\mathbf{A}_{t, j, i}^{n}={\mathbf{q}_{t, j}^{n}}^{\top} \mathbf{k}_{t, i, j}^{n}+{\mathbf{q}_{t, j}^{n}}^{\top} \mathbf{W}_{k, R}^{n} \mathbf{R}_{i-j}+u^{\top} \mathbf{k}_{t, i, j}+v^{\top} \mathbf{W}_{k, R}^{n} \mathbf{R}_{i-j}$$
-$$\mathbf{a}_{t,j}^{n}=\operatorname{Masked-Softmax}\left(\mathbf{A}_{t,j}^{n}\right) \mathbf{v}_{t,j}^{n}$$
-$$\mathbf{o}_{t}^{n}=\text { LayerNorm (Linear }\left(\mathbf{a}_{t}^{n}\right)+\mathbf{h}_{t}^{n-1} )$$
-$$\mathbf{h}_{t}^{n}=\text { Positionwise-Feed-Forward }\left(\mathbf{o}_{t}^{n}\right)$$
+$$\tilde{\mathbf{h}}_{j}^{n-1}=\left[\mathbf{m}_{j}^{n-1}\circ \mathbf{h}_{t}^{n-1}\right]$$
+$$\hat{\mathbf{h}}_{j}^{n-1}=\left[\tilde{\mathbf{m}}_{j}^{n-1} \circ \mathbf{h}_{t}^{n-1}\right]$$
+$$\mathbf{q}_{j}^{n}, \mathbf{k}_{j}^{n}, \mathbf{v}_{j}^{n}=\mathbf{h}_{j}^{n-1} \mathbf{W}_{q}^{n \top}, \tilde{\mathbf{h}}_{j}^{n-1} {\mathbf{W}_{k, E}^{n}}^{\top}, \hat{\mathbf{h}}_{j}^{n-1} \mathbf{W}_{v}^{n \top}$$
+$$\mathbf{A}_{j, i}^{n}={\mathbf{q}_{j}^{n}}^{\top} \mathbf{k}_{i, j}^{n}+{\mathbf{q}_{j}^{n}}^{\top} \mathbf{W}_{k, R}^{n} \mathbf{R}_{i-j}+u^{\top} \mathbf{k}_{i, j}+v^{\top} \mathbf{W}_{k, R}^{n} \mathbf{R}_{i-j}$$
+$$\mathbf{a}_{j}^{n}=\operatorname{Masked-Softmax}\left(\mathbf{A}_{j}^{n}\right) \mathbf{v}_{j}^{n}$$
+$$\mathbf{o}^{n}=\text { LayerNorm (Linear }\left(\mathbf{a}^{n}\right)+\mathbf{h}^{n-1} )$$
+$$\mathbf{h}^{n}=\text { Positionwise-Feed-Forward }\left(\mathbf{o}^{n}\right)$$
 
 
 	\end{itemize}

@@ -32,12 +32,14 @@ class Cache(nn.Module):
         if corpus is not None:
             self.words = nn.ParameterDict({
                 str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, 
-                                                dtype=torch.long), requires_grad=False)                                     for i in range(args.cache_N)
+                                                 dtype=torch.long), 
+                                                 requires_grad=False)                                     for i in range(args.cache_N)
         })
 
         self.renew_place = args.cache_N - 1
         self.attn = DotProductAttention()
-        self.summary = nn.Linear(args.nhid * args.num_steps, args.cache_dk)
+        if not args.no_summary:
+            self.summary = nn.Linear(args.nhid * args.num_steps, args.cache_dk)
 
         self.batch_size = batch_size
         self.L = self.args.num_steps
@@ -97,7 +99,7 @@ class Cache(nn.Module):
 
     def forward(self, query):
 
-        query = query.transpose(1, 2).contiguous()
+        query = query.transpose(1, 2)
         query_len, bsz = query.size(0), query.size(1)
         if self.args.no_summary:
             query = query.reshape(query_len, bsz, -1)
@@ -134,7 +136,6 @@ class Cache(nn.Module):
         
         _, topk_indices = attention.topk(self.topk)
         topk_indices = topk_indices.transpose(0, 2).reshape(self.topk, -1)
-        topk_weights = attention
         #outputs = values[batch, topk_indices]
 
         #values.transpose_(0, 1)
@@ -147,9 +148,9 @@ class Cache(nn.Module):
             #indices = topk_indices[:,:,None]
             #indices = indices.expand(-1, -1, values.size(-1))
             #word_output = torch.gather(words, 0, indices)
-            return topk_weights, topk_indices, words
+            return attention, topk_indices, words
         else:
-            return topk_weights, topk_indices
+            return attention, topk_indices
 
 
     def renew(self, inputs, words=None):
@@ -165,8 +166,9 @@ class Cache(nn.Module):
         else:
             new_key = self.summary(inputs[-1].reshape(-1, self.L * self.dv))
 
-        new_value = torch.einsum("mblh->lbmh", inputs).reshape(self.L, -1, 
-                                            (self.args.nlayers+1) * self.dv)
+        new_value = torch.einsum("mblh->lbmh", 
+                                 inputs
+                                 ).reshape(self.L, -1, (self.args.nlayers+1) * self.dv)
         self.keys.update({
             str(n): nn.Parameter(new_key)
             })

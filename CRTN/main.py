@@ -38,6 +38,8 @@ def parse_args():
                         help='data corpus name')
     parser.add_argument('--demo', action='store_true',
                         help='demo mode')
+    parser.add_argument('--stat', action='store_true',
+                        help='stat memory choices')
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
     parser.add_argument('--emsize', type=int, default=240,
@@ -127,16 +129,16 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
 
     for batch, (data, targets) in enumerate(train_loader):
         data, targets = data.to(device), targets.to(device)
-        data, targets = data.t().contiguous(), targets.t().contiguous()
+        data, targets = data.t(), targets.t()
         model.zero_grad()
         
         output, _ = model(data)
 
         if args.adaptive:
-            loss = criterion(output.view(-1, args.nhid), targets.view(-1))
+            loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))
             loss = loss.mean()
         else:
-            loss = criterion(output.view(-1, args.vocab_size), targets.view(-1))
+            loss = criterion(output.reshape(-1, args.vocab_size), targets.reshape(-1))
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
@@ -370,8 +372,8 @@ def main(args):
         criterion.load_state_dict(eval_checkpoint["criterion"])
 
     test_loss = evaluate(model, test_loader, criterion, args)
-    writer.add_embedding(model.encoder.embedding.emb_layers[0].weight, 
-                         corpus.vocabulary.index2word.values())
+    #writer.add_embedding(model.encoder.embedding.emb_layers[0].weight, 
+    #                     corpus.vocabulary.index2word.values())
     print('=' * 89)
     print('| best valid loss {:5.2f} | best valid ppl {:8.2f}'.format(
           best_eval_loss, math.exp(best_eval_loss)))

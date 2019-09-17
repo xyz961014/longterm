@@ -8,12 +8,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+#from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 import os
 from CRTN.utils.adaptive import AdaptiveEmbedding
 
-from CRTN.layers.attention import DotProductAttention
 from CRTN.layers.transformer import TransformerLM
 from CRTN.layers.cache import Cache
 
@@ -27,7 +26,6 @@ class CRTNModel(nn.Module):
         self.demo = self.args.demo
 
         self.drop = nn.Dropout(args.dropout)
-        self.attn = DotProductAttention()
 
         self.cache = Cache(args, corpus)
 
@@ -59,7 +57,7 @@ class CRTNModel(nn.Module):
                 query = query.expand(query.size(0), -1, -1, -1)
                 mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
                 mask = mask.bool()[:,:,None,None]
-                query.masked_fill_(mask, 0)
+                query = query.masked_fill(mask, 0)
             elif self.args.query_method == "fixed_length_1":
                 prev = self.cache._get_values()[-1]
                 prev = prev.view(seq_len, -1, self.args.nlayers+1, nhid)
@@ -170,10 +168,12 @@ class CRTNModel(nn.Module):
 
         #output, mems, attn_map = self.encoder(inputs, zones, weights, indices, words, draw)
         values = self.cache._get_values()
+
         if self.args.not_weighted:
             weights = None
+
         output, mems, attn_map = self.encoder(inputs, values, weights, 
-                                                indices, words, draw)
+                                              indices, words, draw)
         if renew:
             self.cache.renew(mems, inputs)
 

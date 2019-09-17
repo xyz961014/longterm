@@ -246,7 +246,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         if indice_bool is None:
             total_len = c.size(0)
-            rel_emb_matrix = rel_emb_matrix.view(total_len, batch_size, self.num_head, self.d_head)
+            rel_emb_matrix = rel_emb_matrix.view(total_len, batch_size, 
+                                                 self.num_head, self.d_head)
 
             heads_k = heads_k.view(total_len, batch_size, self.num_head, self.d_head)
             heads_v = heads_v.view(total_len, batch_size, self.num_head, self.d_head)
@@ -262,9 +263,9 @@ class LearnableMultiheadSelfAttention(nn.Module):
             pre_AC = torch.einsum("ibnd,ibk->kibnd", heads_qu, indice_bool)
             pre_BD = torch.einsum("ibnd,ibk->kibnd", heads_qv, indice_bool)
             pre_k = heads_k.view(mem_num + 1, x_len, batch_size, 
-                                    self.num_head, self.d_head)
+                                 self.num_head, self.d_head)
             pre_v = heads_v.view(mem_num + 1, x_len, batch_size, 
-                                    self.num_head, self.d_head)
+                                 self.num_head, self.d_head)
             if weights is not None:
                 #weights = weights.view(x_len, batch_size, -1)
                 #weights = torch.cat((weights, torch.ones_like(weights[:,:,0,None]) * -float("inf")), 2)
@@ -274,7 +275,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
                 pre_v = torch.einsum("kjbnd,jbk->kjbnd", pre_v, weights)
 
             pre_rel = rel_emb_matrix.view(mem_num + 1, x_len, 
-                                        batch_size, self.num_head, self.d_head)
+                                          batch_size, self.num_head, self.d_head)
             AC = torch.einsum("kibnd,kjbnd->ikjbn", pre_AC, pre_k)
             BD = torch.einsum("kibnd,kjbnd->ikjbn", pre_BD, pre_rel)
             #AC = torch.einsum("ibnd,ijbnd->ijbn", (heads_qu, heads_k))
@@ -405,11 +406,13 @@ class TransformerLM(nn.Module):
 
         if adaptive:
             self.embedding = AdaptiveEmbedding(vocab_size, d_embedding, d_model, 
-                                        cutoffs, div_val=div_val, init_std=init_std)
+                                               cutoffs, div_val=div_val, 
+                                               init_std=init_std)
         else:
             if args.tied:
                 self.embedding = nn.Embedding(vocab_size, d_embedding, 
-                                padding_idx=0).from_pretrained(self.decoder.weight)
+                                              padding_idx=0).from_pretrained(
+                                                      self.decoder.weight)
                 self.embedding.weight = self.decoder.weight
             else:
                 self.embedding = nn.Embedding(vocab_size, d_embedding, padding_idx=0)
@@ -465,8 +468,8 @@ class TransformerLM(nn.Module):
         if self.args.mem_len > 0:
             param = next(self.parameters())
             return torch.empty(self.args.nlayers+1, self.args.mem_len, 
-                                batch_size, self.args.nhid, 
-                                dtype=param.dtype, device=param.device)
+                               batch_size, self.args.nhid, 
+                               dtype=param.dtype, device=param.device)
         else:
             return None
 
@@ -516,12 +519,14 @@ class TransformerLM(nn.Module):
         ### POSITION SCHEME ###
         if indices is not None:
             #pos_seq
-            pos_indices = torch.cat((indices, (torch.ones_like(indices[0]) * values.size(0)).view(1, -1)))
+            pos_indices = torch.cat((indices, 
+                                    (torch.ones_like(indices[0]) * values.size(0)
+                                    ).view(1, -1)))
 
             pos_seq = torch.einsum("b,k->bk", 
                                    torch.ones(batch_size, device=inputs.device), 
                                    torch.arange((values.size(0) + 1) * 
-                                   self.args.num_steps-1, -1, -1.0, 
+                                       self.args.num_steps-1, -1, -1.0, 
                                    device=inputs.device))
 
             #one-hot pos_indices
@@ -535,10 +540,14 @@ class TransformerLM(nn.Module):
             if weights is not None:
                 x_len = inputs.size(0)
                 weights = weights.view(x_len, batch_size, -1)
-                weights = torch.cat((weights, torch.ones_like(weights[:,:,0,None]) * -float("inf")), 2)
+                weights = torch.cat((weights, 
+                                    torch.ones_like(
+                                        weights[:,:,0,None]) * -float("inf")
+                                    ), 2)
                 weights.masked_fill_((1 - indice_bool).bool(), -float("inf"))
                 weights = F.softmax(weights, 2)
-                weights = weights.index_fill(2, (weights.new_ones(1) * mem_num).long(), 1.0)
+                weights = weights.index_fill(
+                            2, (weights.new_ones(1) * mem_num).long(), 1.0)
             
             #zones
             #values.unsqueeze_(2)
@@ -552,9 +561,9 @@ class TransformerLM(nn.Module):
             #zones = zones.reshape(zones.size(0), -1, zone_bsz, zones.size(-1))
         else:
             pos_seq = torch.einsum("b,k->bk", 
-                            torch.ones(batch_size, device=inputs.device), 
-                            torch.arange(self.args.num_steps-1, -1, -1.0, 
-                                            device=inputs.device))
+                                   torch.ones(batch_size, device=inputs.device), 
+                                   torch.arange(self.args.num_steps-1, -1, -1.0, 
+                                   device=inputs.device))
             pos_indices = indices
             indice_bool = None
         pos_seq = pos_seq.view(batch_size, -1)
@@ -568,8 +577,7 @@ class TransformerLM(nn.Module):
         memories = [memory]
         attn_map = None
 
-        if self.demo and indices is not None:
-            print("-" * 89)
+        if self.demo and weights is not None:
             demo_display = tuple(zip(indice_bool.squeeze(), weights.squeeze()))
 
         for i, layer in enumerate(self.layers):
@@ -588,7 +596,8 @@ class TransformerLM(nn.Module):
                                               mask=mask, 
                                               memory=value_i, 
                                               indices=indice_bool, 
-                                              weights=weights)
+                                              weights=weights
+                                              )
 
 
             mem = core_out
@@ -611,11 +620,11 @@ class TransformerLM(nn.Module):
             output = core_out
 
         #output = pad_packed_sequence(output)
-
         if self.demo and weights is not None:
             id2w = self.corpus.vocabulary.index2word
             words = torch.cat((words.squeeze(), inputs.t()), 0)
             for idis, (ind, weight) in enumerate(demo_display):
+                print("-" * 89 + "\n")
                 print("Current Segment: ", end="")
                 for iinp, wd in enumerate(inputs):
                     if idis == iinp:
