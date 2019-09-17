@@ -21,12 +21,14 @@ class Cache(nn.Module):
         batch_size = self.args.batch_size // torch.cuda.device_count()
 
         self.keys = nn.ParameterDict({
-            str(i): nn.Parameter(torch.zeros(batch_size, self.dk)) 
+            str(i): nn.Parameter(torch.zeros(batch_size, self.dk),
+                                 requires_grad=False) 
                                     for i in range(args.cache_N)
         })
         self.values = nn.ParameterDict({
             str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, 
-                                            (args.nlayers+1) * args.nhid)) 
+                                             (args.nlayers+1) * args.nhid),
+                                requires_grad=False) 
                                     for i in range(args.cache_N)
         })
         if corpus is not None:
@@ -79,12 +81,14 @@ class Cache(nn.Module):
         self.keys.clear()
         self.values.clear()
         self.keys.update({
-            str(i): nn.Parameter(torch.zeros(batch_size, self.dk)) 
+            str(i): nn.Parameter(torch.zeros(batch_size, self.dk),
+                                 requires_grad=False)
                         for i in range(self.N)
         })
         self.values.update({
             str(i): nn.Parameter(torch.zeros(self.L, batch_size, 
-                                    (self.args.nlayers+1) * self.dv)) 
+                                 (self.args.nlayers+1) * self.dv), 
+                                 requires_grad=False) 
                         for i in range(self.N)
         })
         if self.demo:
