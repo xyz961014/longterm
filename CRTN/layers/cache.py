@@ -170,10 +170,10 @@ class Cache(nn.Module):
                                  inputs
                                  ).reshape(self.L, -1, (self.args.nlayers+1) * self.dv)
         self.keys.update({
-            str(n): nn.Parameter(new_key)
+            str(n): nn.Parameter(new_key, requires_grad=False)
             })
         self.values.update({
-            str(n): nn.Parameter(new_value)
+            str(n): nn.Parameter(new_value, requires_grad=False)
             })
         if self.demo:
             self.words.update({
