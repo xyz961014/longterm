@@ -117,6 +117,7 @@ class DataParallel(nn.DataParallel):
         super().__init__(module, device_ids, output_device, dim)
 
     def set_batch_size(self, batch_size):
+        batch_size = batch_size // len(self.device_ids)
         self.module.set_batch_size(batch_size)
 
 def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
