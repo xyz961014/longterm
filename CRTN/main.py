@@ -221,6 +221,7 @@ def main(args):
         checkpoint = torch.load(args.load)
         model_args = checkpoint["model_args"]
         model_args.demo = args.demo
+        model_args.stat = args.stat
         model_args.eval = args.eval
         model_args.load = args.load
         model_args.adam = args.adam
