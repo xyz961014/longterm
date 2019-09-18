@@ -14,6 +14,7 @@ from CRTN.utils.adaptive import AdaptiveEmbedding
 
 import ipdb
 import torchsnooper
+import visdom
 
 class PostionalEmbedding(nn.Module):
     def __init__(self, d_model):
@@ -433,6 +434,12 @@ class TransformerLM(nn.Module):
             self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
             self.pos_bias_v = nn.Parameter(torch.Tensor(num_head, d_head))
 
+        if args.stat:
+            self.select_stat = nn.Parameter(torch.zeros(args.cache_N), 
+                                            requires_grad=False)
+            self.viz = visdom.Visdom()
+            assert self.viz.check_connection()
+
         self.drop = nn.Dropout(dropout)
 
         self.layers = nn.ModuleList()
@@ -516,7 +523,6 @@ class TransformerLM(nn.Module):
         mask = torch.triu(word_emb.new_ones(seq_len, total_len), diagonal=1+mem_len) 
         mask = mask.bool()[:,:,None]
 
-        ### POSITION SCHEME ###
         if indices is not None:
             #pos_seq
             pos_indices = torch.cat((indices, 
@@ -537,6 +543,12 @@ class TransformerLM(nn.Module):
             indice_bool = torch.index_select(tfbase, 0, pos_indices.view(-1))
             indice_bool = indice_bool.view(indice_len, -1, batch_size, mem_num + 1)
             indice_bool = indice_bool.sum(0)
+
+            if self.args.stat:
+
+                stat = indice_bool.sum((0, 1))
+                self.select_stat += stat[:-1]
+                self.viz.bar(self.select_stat, win="select stat")
             if weights is not None:
                 x_len = inputs.size(0)
                 weights = weights.view(x_len, batch_size, -1)

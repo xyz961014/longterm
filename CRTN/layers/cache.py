@@ -35,7 +35,8 @@ class Cache(nn.Module):
             self.words = nn.ParameterDict({
                 str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, 
                                                  dtype=torch.long), 
-                                                 requires_grad=False)                                     for i in range(args.cache_N)
+                                                 requires_grad=False)                                     
+                    for i in range(args.cache_N)
         })
 
         self.renew_place = args.cache_N - 1

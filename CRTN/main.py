@@ -36,6 +36,8 @@ def parse_args():
                         help='location of the data corpus')
     parser.add_argument('--dataset', type=str, default='ptb',
                         help='data corpus name')
+    parser.add_argument('--eval', action='store_true',
+                        help='skip training')
     parser.add_argument('--demo', action='store_true',
                         help='demo mode')
     parser.add_argument('--stat', action='store_true',
@@ -219,6 +221,7 @@ def main(args):
         checkpoint = torch.load(args.load)
         model_args = checkpoint["model_args"]
         model_args.demo = args.demo
+        model_args.eval = args.eval
         model_args.load = args.load
         model_args.adam = args.adam
         model_args.lr = args.lr
@@ -252,11 +255,15 @@ def main(args):
 
 
     print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
-    print("# VOCABULARY: {} \n# train data words: {:.2e} \n# valid data words: {:.2e} \n# test data words: {:.2e} \nTRAINING......".format(
+    print("# VOCABULARY: {} \n# train data words: {:.2e} \n# valid data words: {:.2e} \n# test data words: {:.2e} ".format(
         corpus.vocabulary.num_words, 
         len(corpus.train_data.raw_data), 
         len(corpus.valid_data.raw_data), 
         len(corpus.test_data.raw_data)))
+    if args.eval:
+        print("SKIP TRAINING")
+    else:
+        print("TRAINING......")
 
     if args.load:
         # clear cache
@@ -321,44 +328,49 @@ def main(args):
     elif args.scheduler == "constant":
         scheduler = None
 
+    if not args.eval:
+        try:
+            best_eval_loss = float('inf')
+            for epoch in range(1, args.epochs+1):
+                epoch_start_time = time.time()
+                train(model, train_loader, criterion, args, epoch, optimizer, 
+                      scheduler)
+                eval_loss = evaluate(model, valid_loader, criterion, args)
+                print('-' * 89)
+                print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
+                        'valid ppl {:8.2f}'.format(epoch, 
+                                                   (time.time() - epoch_start_time),
+                                                   eval_loss, math.exp(eval_loss)))
+                print('-' * 89)
+                writer.add_scalar("valid/ppl", math.exp(eval_loss), 
+                                  epoch * len(train_loader))
+                writer.flush()
+                if eval_loss < best_eval_loss:
+                    module = model.module if args.multi_gpu else model
+                    torch.save({
+                        "model_args": module.args,
+                        "model_state_dict": module.state_dict(),
+                        "criterion": criterion.state_dict()
+                        }, 
+                        savepath + args.save + args.timestr + 
+                        "/" + args.save + "_best" + ".pt")
+                    #with open("save/" + args.save + "/" + args.save + "_best.pt", "wb") as f:
+                    #    torch.save(model, f)
+                    #with open("save/" + args.save + "/" + args.save + "_crit.pt", "wb") as f:
+                    #    torch.save(criterion, f)
+                    best_eval_loss = eval_loss
 
-    try:
-        best_eval_loss = float('inf')
-        for epoch in range(1, args.epochs+1):
-            epoch_start_time = time.time()
-            train(model, train_loader, criterion, args, epoch, optimizer, scheduler)
-            eval_loss = evaluate(model, valid_loader, criterion, args)
+        except KeyboardInterrupt:
             print('-' * 89)
-            print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
-                    'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
-                                               eval_loss, math.exp(eval_loss)))
-            print('-' * 89)
-            writer.add_scalar("valid/ppl", math.exp(eval_loss), 
-                              epoch * len(train_loader))
-            writer.flush()
-            if eval_loss < best_eval_loss:
-                module = model.module if args.multi_gpu else model
-                torch.save({
-                    "model_args": module.args,
-                    "model_state_dict": module.state_dict(),
-                    "criterion": criterion.state_dict()
-                    }, 
-                    savepath + args.save + args.timestr + 
-                    "/" + args.save + "_best" + ".pt")
-                #with open("save/" + args.save + "/" + args.save + "_best.pt", "wb") as f:
-                #    torch.save(model, f)
-                #with open("save/" + args.save + "/" + args.save + "_crit.pt", "wb") as f:
-                #    torch.save(criterion, f)
-                best_eval_loss = eval_loss
-
-    except KeyboardInterrupt:
-        print('-' * 89)
-        print('Exiting from training early')
+            print('Exiting from training early')
 
     ### Reload the best model
 
-    eval_checkpoint = torch.load(savepath + args.save + 
-                                 args.timestr + "/" + args.save + "_best.pt")
+    if args.eval:
+        best_model = args.load
+    else:
+        best_model = savepath + args.save + args.timestr + "/" + args.save + "_best.pt"
+    eval_checkpoint = torch.load(best_model)
     model_state_dict = eval_checkpoint["model_state_dict"]
     keys = model_state_dict.copy().keys()
 
@@ -370,6 +382,9 @@ def main(args):
 
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
+
+    if args.eval:
+        best_eval_loss = evaluate(model, valid_loader, criterion, args)
 
     test_loss = evaluate(model, test_loader, criterion, args)
     #writer.add_embedding(model.encoder.embedding.emb_layers[0].weight, 
