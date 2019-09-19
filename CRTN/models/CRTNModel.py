@@ -122,7 +122,7 @@ class CRTNModel(nn.Module):
                 if self.args.query_method == "last_l":
                     query = wise_inputs[-1]
                     query = torch.einsum("lbd,k->klbd",query, 
-                                            torch.ones_like(query[:,0,0]))
+                                         torch.ones_like(query[:,0,0]))
                     mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
                     mask = mask.bool()[:,:,None,None]
                     query.masked_fill_(mask, 0)
