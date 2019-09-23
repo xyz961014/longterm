@@ -12,6 +12,7 @@ import os
 import sys
 import re
 sys.path.append("..")
+sys.path.append("../baseline/pytorch")
 from data import dataloader
 import visdom
 viz = visdom.Visdom()
@@ -20,6 +21,11 @@ assert viz.check_connection()
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
 
 from models.CRTNModel import CRTNModel
+
+from transformer import TransformerLM
+
+import ipdb
+
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -30,6 +36,7 @@ def parse_args(args=None):
     parser.add_argument("--data", type=str, default="/home/xyz/Documents/Dataset/ptb_sample", help="data path")
     parser.add_argument("--demo", action="store_true", help="demo mode")
     parser.add_argument("--load", type=str, default="",  help="load model from saved models")
+    parser.add_argument("--loadbaseline", type=str, default="",  help="load baseline model from saved models")
     parser.add_argument("--cache_N", type=int, default=5,  help="cache size N")
     parser.add_argument("--cache_k", type=int, default=3,  help="choose k segment from cache")
     parser.add_argument("--func", type=str, default="", choices=["attention_map", "demo_words"], help="function to use, choices: attention_map, demo_words")
@@ -38,19 +45,26 @@ def parse_args(args=None):
 
     return parser.parse_args(args)
 
-def evaluate(model, eval_data, criterion, args):
-    model.set_batch_size(model.args.eval_batch_size)
+def evaluate(model, eval_data, criterion, model_args=None):
+    if model_args is None:
+        model.set_batch_size(model.args.eval_batch_size)
+    else:
+        model.args = model_args
     model.to(device)
     criterion.to(device)
     model.eval() 
     total_loss = 0.
+    memory = None
 
     with torch.no_grad():
         for data, targets in eval_data:
             data, targets = data.to(device), targets.to(device)
             data, targets = data.t().contiguous(), targets.t().contiguous()
 
-            output, _ = model(data)
+            if model_args is None:
+                output, _ = model(data)
+            else:
+                output, memory = model(data, memory)
             
             if model.args.adaptive:
                 loss = criterion(output.view(-1, model.args.nhid), targets.view(-1))
@@ -59,8 +73,9 @@ def evaluate(model, eval_data, criterion, args):
                 loss = criterion(output.view(-1, model.args.vocab_size), targets.view(-1))
     
             total_loss += loss
-
-    model.set_batch_size(model.args.batch_size)
+    
+    if model_args is None:
+        model.set_batch_size(model.args.batch_size)
 
     return total_loss / len(eval_data)
 
@@ -116,6 +131,9 @@ def demo_words(model, criterion, corpus, init_word, length=100):
     vocab_size = model.args.vocab_size
     cutoffs = model.args.cutoffs
 
+    if not init_word in corpus.vocabulary.word2index.keys():
+        print("initial word out of vocabulary")
+        return
     init_ind = corpus.vocabulary.word2index[init_word]
     print(corpus.vocabulary.index2word[init_ind], end= " ")
     sequence = [init_ind] + [0 for _ in range(num_steps-1)]
@@ -154,6 +172,50 @@ def main(args):
     model_args.cache_N = args.cache_N
     model_args.cache_k = args.cache_k
     model_args.demo = args.demo
+
+    if args.loadbaseline:
+        base_ckp = torch.load(args.loadbaseline)
+        base_args = base_ckp["model_args"]
+        base_args.demo = args.demo
+        if args.demo:
+            base_args.batch_size = 1
+
+        base_model = TransformerLM(
+                vocab_size=base_args.vocab_size,
+                num_layer=base_args.nlayers,
+                num_head=base_args.nhead,
+                d_model=base_args.nhid,
+                d_head=base_args.nhid // base_args.nhead,
+                d_ff=base_args.d_ff,
+                d_embedding=base_args.emsize,
+                tied_weights=base_args.tied,
+                num_steps=base_args.num_steps,
+                mem_len=base_args.mem_len,
+                attn_type=base_args.attn_type,
+                init_std=base_args.init_std,
+                adaptive=base_args.adaptive,
+                div_val=base_args.div_val,
+                cutoffs=base_args.cutoffs,
+                dropout=base_args.dropout)
+        base_model.load_state_dict(base_ckp["model_state_dict"])
+
+        if base_args.adaptive:
+            base_criterion = ProjectedAdaptiveLogSoftmax(base_args.vocab_size, base_args.emsize, base_args.nhid, base_args.cutoffs, div_val=base_args.div_val, init_std=base_args.init_std) 
+            if base_args.tied:
+                for i in range(len(base_criterion.out_layers)):
+                    base_criterion.out_layers[i].weight = base_model.embedding.emb_layers[i].weight
+
+            if base_args.tie_projs:
+                for i, tie_proj in enumerate(base_args.tie_projs):
+                    if tie_proj and base_args.div_val == 1 and base_args.nhid != base_args.emsize:
+                        base_criterion.out_projs[i] = base_model.encoder.embedding.emb_projs[0]
+                    elif tie_proj and base_args.div_val != 1:
+                        base_criterion.out_projs[i] = base_model.encoder.embedding.emb_projs[i]
+            base_criterion.load_state_dict(base_ckp["criterion"])
+
+        else:
+            base_criterion = nn.CrossEntropyLoss()
+
     if args.demo:
         model_args.eval_batch_size = 1
 
@@ -221,12 +283,22 @@ def main(args):
             init_word = input("Input initial word:")
             length = int(input("Input text length:"))
     else:
-        valid_loss = evaluate(model, valid_loader, criterion, args)
         print('=' * 89)
-        print('| valid loss {:5.2f} |valid ppl {:8.2f}'.format(
+        if args.loadbaseline:
+            base_valid_loss = evaluate(base_model, valid_loader, base_criterion, base_args)
+            print('| baseline valid loss {:5.2f} | baseline valid ppl {:8.2f}'.format(
+                base_valid_loss, math.exp(base_valid_loss)))
+            print('-' * 89)
+        valid_loss = evaluate(model, valid_loader, criterion)
+        print('| valid loss {:5.2f} | valid ppl {:8.2f}'.format(
             valid_loss, math.exp(valid_loss)))
-        test_loss = evaluate(model, test_loader, criterion, args)
         print('=' * 89)
+        if args.loadbaseline:
+            base_test_loss = evaluate(base_model, test_loader, base_criterion, base_args)
+            print('| baseline test loss {:5.2f} | baseline test ppl {:8.2f}'.format(
+                base_test_loss, math.exp(base_test_loss)))
+            print('-' * 89)
+        test_loss = evaluate(model, test_loader, criterion)
         print('| test loss {:5.2f} | test ppl {:8.2f}'.format(
             test_loss, math.exp(test_loss)))
         print('=' * 89)

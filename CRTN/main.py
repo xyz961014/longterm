@@ -220,6 +220,7 @@ def main(args):
     if args.load:
         checkpoint = torch.load(args.load)
         model_args = checkpoint["model_args"]
+        model_args.data = args.data
         model_args.demo = args.demo
         model_args.stat = args.stat
         model_args.eval = args.eval
@@ -292,7 +293,7 @@ def main(args):
         criterion = ProjectedAdaptiveLogSoftmax(args.vocab_size, 
                                                 args.emsize, 
                                                 args.nhid, 
-                                                cutoffs, 
+                                                args.cutoffs, 
                                                 div_val=args.div_val, 
                                                 init_std=args.init_std) 
         if args.tied:
