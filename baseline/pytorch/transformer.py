@@ -230,17 +230,25 @@ class TransformerUnit(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, attn_type, init_std, adaptive=False, div_val=1, cutoffs=[], dropout=0.0):
+    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, attn_type, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0):
         super().__init__()
         self.vocab_size = vocab_size
-        self.d_embedding = d_embedding
+        self.num_layer = num_layer
+        self.num_head = num_head
         self.d_model = d_model
         self.d_head = d_head
-        self.num_head = num_head
-        self.num_layer = num_layer
+        self.d_ff = d_ff
+        self.d_embedding = d_embedding
+        self.tied_weights = tied_weights
         self.num_steps = num_steps
         self.mem_len = mem_len
         self.attn_type = attn_type
+
+        self.init_std = init_std
+        self.adaptive = adaptive
+        self.div_val = div_val
+        self.cutoffs = cutoffs
+        self.dropout = dropout
 
         self.adaptive = adaptive
         self.decoder = nn.Linear(d_model, vocab_size, bias=False) 

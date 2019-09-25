@@ -39,7 +39,7 @@ def parse_args(args=None):
     parser.add_argument("--loadbaseline", type=str, default="",  help="load baseline model from saved models")
     parser.add_argument("--cache_N", type=int, default=5,  help="cache size N")
     parser.add_argument("--cache_k", type=int, default=3,  help="choose k segment from cache")
-    parser.add_argument("--func", type=str, default="", choices=["attention_map", "demo_words"], help="function to use, choices: attention_map, demo_words")
+    parser.add_argument("--func", type=str, default="", choices=["attention_map", "demo_words", "contrast"], help="function to use, choices: attention_map, demo_words, contrast")
     parser.add_argument("--init_word", type=str, default="you", help="initial word for generation")
     parser.add_argument("--length", type=int, default=70,  help="generation text length")
 
@@ -78,6 +78,70 @@ def evaluate(model, eval_data, criterion, model_args=None):
         model.set_batch_size(model.args.batch_size)
 
     return total_loss / len(eval_data)
+
+
+def contrast(model, base_model, criterion, base_criterion, dataloader, corpus):
+    model.set_batch_size(model.args.eval_batch_size)
+    model.to(device)
+    criterion.to(device)
+
+    base_model.to(device)
+    base_criterion.to(device)
+    memory = None
+    ipdb.set_trace()
+
+    with torch.no_grad():
+        for data, targets in dataloader:
+            data, targets = data.to(device), targets.to(device)
+            data, targets = data.t().contiguous(), targets.t().contiguous()
+            seq_len, bsz = data.size(0), data.size(1)
+
+            output, _ = model(data)
+            base_output, memory = base_model(data, memory)
+
+            head_prob, tails = criterion(output.view(-1, model.args.nhid), targets.view(-1), output=True)
+            base_head_prob, base_tails = base_criterion(base_output.view(-1, base_model.d_model), targets.view(-1), output=True)
+
+            def resize(obj, seq_len, bsz):
+                if type(obj) == torch.Tensor:
+                    return obj.reshape(seq_len, bsz, -1)
+                else:
+                    return [resize(o, seq_len, bsz) for o in obj]
+
+            head_prob = resize(head_prob, seq_len, bsz)
+            tails = resize(tails, seq_len, bsz)
+            base_head_prob = resize(base_head_prob, seq_len, bsz)
+            base_tails = resize(base_tails, seq_len, bsz)
+
+
+            def display_candidates(head_prob, tail_prob, cutoffs, corpus, topk=5):
+                probs, inds = head_prob.topk(topk)
+                probs, inds = probs[:,0,:], inds[:,0,:]
+
+                id2w = corpus.vocabulary.index2word
+                seg_words = []
+                for i, (prob, ind) in enumerate(list(zip(probs, inds))):
+
+                    for iw in range(topk):
+                        word_prob = prob[iw]
+                        word_ind = ind[iw]
+                        if word_ind.item() >= cutoffs[0]:
+                            cluster = word_ind - cutoffs[0]
+                            t_probs, t_inds = tail_prob[cluster][i,0,:].topk(topk)
+                            prob = torch.cat((prob, t_probs + word_prob), 0)
+                            ind = torch.cat((ind, t_inds + cutoffs[cluster]))
+                            prob[iw] = -float("inf")
+                    indice_choice = prob.topk(topk)[1]
+                    word_choice = ind.index_select(0, indice_choice)
+                    word_choice = [id2w[w.item()] for w in word_choice]
+                    seg_words.append(word_choice)
+        
+
+                return seg_words
+
+            cand_model = display_candidates(head_prob, tails, model.args.cutoffs, corpus)
+            cand_base = display_candidates(base_head_prob, base_tails, base_model.cutoffs, corpus)
+            ipdb.set_trace()
 
 def attention_map(model, criterion, corpus, loader, seg_num=200):
     model.set_batch_size(model.args.eval_batch_size)
@@ -282,6 +346,8 @@ def main(args):
             demo_words(model, criterion, corpus, init_word=init_word, length=length)
             init_word = input("Input initial word:")
             length = int(input("Input text length:"))
+    elif args.func == "contrast":
+        contrast(model, base_model, criterion, base_criterion, valid_loader, corpus)
     else:
         print('=' * 89)
         if args.loadbaseline:
