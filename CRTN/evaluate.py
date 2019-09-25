@@ -88,7 +88,8 @@ def contrast(model, base_model, criterion, base_criterion, dataloader, corpus):
     base_model.to(device)
     base_criterion.to(device)
     memory = None
-    ipdb.set_trace()
+
+    id2w = corpus.vocabulary.index2word
 
     with torch.no_grad():
         for data, targets in dataloader:
@@ -118,8 +119,8 @@ def contrast(model, base_model, criterion, base_criterion, dataloader, corpus):
                 probs, inds = head_prob.topk(topk)
                 probs, inds = probs[:,0,:], inds[:,0,:]
 
-                id2w = corpus.vocabulary.index2word
                 seg_words = []
+                seg_probs = []
                 for i, (prob, ind) in enumerate(list(zip(probs, inds))):
 
                     for iw in range(topk):
@@ -133,16 +134,39 @@ def contrast(model, base_model, criterion, base_criterion, dataloader, corpus):
                             prob[iw] = -float("inf")
                     indice_choice = prob.topk(topk)[1]
                     word_choice = ind.index_select(0, indice_choice)
+                    prob_choice = prob.index_select(0, indice_choice).exp()
                     word_choice = [id2w[w.item()] for w in word_choice]
                     seg_words.append(word_choice)
+                    seg_probs.append(prob_choice)
         
 
-                return seg_words
+                return seg_words, seg_probs
 
-            cand_model = display_candidates(head_prob, tails, model.args.cutoffs, corpus)
-            cand_base = display_candidates(base_head_prob, base_tails, base_model.cutoffs, corpus)
-            ipdb.set_trace()
+            cand_model, prob_model = display_candidates(head_prob, tails, model.args.cutoffs, corpus)
+            cand_base, prob_base = display_candidates(base_head_prob, base_tails, base_model.cutoffs, corpus)
+            showdata, showtgt = data[:,0], targets[:,0]
+            showdata = [id2w[w.item()] for w in showdata]
+            showtgt = [id2w[w.item()] for w in showtgt]
+            for i in range(len(showdata)):
+                print("-" * 89)
+                print("Current word to predict: %s \033[1;31m %s \033[0m" % (" ".join(showdata[:i+1]), showtgt[i]))
 
+                print("baseline model prediction: ", end="")
+                for word, prob in tuple(zip(cand_base[i], prob_base[i])):
+                    if word.strip() == showtgt[i].strip(): 
+                        print("\033[1;32m%s\033[0m|%.2f" % (word, prob), end=" ")
+                    else:
+                        print("%s|%.2f" % (word, prob), end=" ")
+                print("")
+
+                print("our crtn model prediction: ", end="")
+                for word, prob in tuple(zip(cand_model[i], prob_model[i])):
+                    if word.strip() == showtgt[i].strip(): 
+                        print("\033[1;32m%s\033[0m|%.2f" % (word, prob), end=" ")
+                    else:
+                        print("%s|%.2f" % (word, prob), end=" ")
+                print("\n")
+                input("Enter to continue")
 def attention_map(model, criterion, corpus, loader, seg_num=200):
     model.set_batch_size(model.args.eval_batch_size)
     model.to(device)
@@ -272,9 +296,9 @@ def main(args):
             if base_args.tie_projs:
                 for i, tie_proj in enumerate(base_args.tie_projs):
                     if tie_proj and base_args.div_val == 1 and base_args.nhid != base_args.emsize:
-                        base_criterion.out_projs[i] = base_model.encoder.embedding.emb_projs[0]
+                        base_criterion.out_projs[i] = base_model.embedding.emb_projs[0]
                     elif tie_proj and base_args.div_val != 1:
-                        base_criterion.out_projs[i] = base_model.encoder.embedding.emb_projs[i]
+                        base_criterion.out_projs[i] = base_model.embedding.emb_projs[i]
             base_criterion.load_state_dict(base_ckp["criterion"])
 
         else:
