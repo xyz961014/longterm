@@ -136,8 +136,9 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     module = model.module if args.multi_gpu else model
     
     if args.farnear:
-        mem = torch.zeros((args.nlayers+1)*args.neighbor_len, module.args.batch_size, 
-                          args.nhid, device=device)
+        mem = None
+    #    mem = torch.zeros((args.nlayers+1)*args.neighbor_len, module.args.batch_size, 
+    #                      args.nhid, device=device)
 
     for batch, (data, targets) in enumerate(train_loader):
         data, targets = data.to(device), targets.to(device)
@@ -145,7 +146,8 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         model.zero_grad()
         
         if args.farnear:
-            mem = mem.detach()
+            if mem is not None:
+                mem = mem.detach()
             output, mem, _ = model(data, neighbor_mem=mem)
         else:
             output, _ = model(data)
@@ -187,15 +189,17 @@ def evaluate(model, eval_loader, criterion, args):
     module = model.module if args.multi_gpu else model
     
     if args.farnear:
-        mem = torch.zeros((args.nlayers+1)*args.neighbor_len, args.eval_batch_size, 
-                          args.nhid, device=device)
+        mem = None
+    #    mem = torch.zeros((args.nlayers+1)*args.neighbor_len, args.eval_batch_size, 
+    #                      args.nhid, device=device)
     with torch.no_grad():
         for i, (data, targets) in enumerate(eval_loader):
             data, targets = data.to(device), targets.to(device)
             data, targets = data.t().contiguous(), targets.t().contiguous()
                 
             if args.farnear:
-                mem = mem.detach()
+                if mem is not None:
+                    mem = mem.detach()
                 output, mem, _ = model(data, neighbor_mem=mem)
             else:
                 output, _ = model(data)

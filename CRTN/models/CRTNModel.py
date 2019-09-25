@@ -53,10 +53,16 @@ class CRTNModel(nn.Module):
         bsz = inputs.size(1)
         nhid = self.args.nhid
 
-        if neighbor_mem is not None:
-            neighbor_mem = neighbor_mem.reshape(self.args.nlayers+1,
-                                                self.args.neighbor_len,
-                                                bsz, nhid)
+        if self.args.farnear:
+            if neighbor_mem is not None:
+                neighbor_mem = neighbor_mem.reshape(self.args.nlayers+1,
+                                                    self.args.neighbor_len,
+                                                    bsz, nhid)
+            else:
+                neighbor_mem = torch.zeros(self.args.nlayers+1,
+                                           self.args.neighbor_len,
+                                           bsz, nhid, device=inputs.device)
+
 
         if self.args.wise_summary:
             if self.args.query_method == "vanilla":
