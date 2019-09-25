@@ -136,7 +136,7 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     module = model.module if args.multi_gpu else model
     
     if args.farnear:
-        mem = torch.zeros(args.nlayers+1, args.neighbor_len, module.args.batch_size, 
+        mem = torch.zeros((args.nlayers+1)*args.neighbor_len, module.args.batch_size, 
                           args.nhid, device=device)
 
     for batch, (data, targets) in enumerate(train_loader):
@@ -187,7 +187,7 @@ def evaluate(model, eval_loader, criterion, args):
     module = model.module if args.multi_gpu else model
     
     if args.farnear:
-        mem = torch.zeros(args.nlayers+1, args.neighbor_len, module.args.batch_size, 
+        mem = torch.zeros((args.nlayers+1)*args.neighbor_len, module.args.batch_size, 
                           args.nhid, device=device)
     with torch.no_grad():
         for i, (data, targets) in enumerate(eval_loader):

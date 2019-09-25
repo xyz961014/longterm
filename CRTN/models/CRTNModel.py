@@ -53,6 +53,10 @@ class CRTNModel(nn.Module):
         bsz = inputs.size(1)
         nhid = self.args.nhid
 
+        if neighbor_mem is not None:
+            neighbor_mem = neighbor_mem.reshape(self.args.nlayers+1,
+                                                self.args.neighbor_len,
+                                                bsz, nhid)
 
         if self.args.wise_summary:
             if self.args.query_method == "vanilla":
@@ -213,6 +217,7 @@ class CRTNModel(nn.Module):
                                                  dim=1)
             #mems = total_mem[:,:seq_len,:,:]
             #neighbor_mem = total_mem[:,seq_len:,:,:]
+            neighbor_mem = neighbor_mem.reshape(-1, bsz, nhid)
 
         if renew:
             self.cache.renew(mems, inputs)
