@@ -32,7 +32,11 @@ class CRTNModel(nn.Module):
         self.encoder = TransformerLM(args, corpus)
 
         if args.query_method == "linear":
-            self.shorten = nn.Linear(2 * self.args.num_steps, self.args.num_steps)
+            if args.farnear:
+                self.shorten = nn.Linear(self.args.num_steps + self.args.neighbor_len, 
+                                         self.args.num_steps)
+            else:
+                self.shorten = nn.Linear(2 * self.args.num_steps, self.args.num_steps)
 
     def to(self, device):
         super().to(device)
@@ -44,7 +48,7 @@ class CRTNModel(nn.Module):
         self.encoder.set_batch_size(batch_size)
         self.args.batch_size = batch_size
 
-    def forward(self, inputs, draw=False, renew=True):
+    def forward(self, inputs, draw=False, renew=True, neighbor_mem=None):
         seq_len = self.args.num_steps
         bsz = inputs.size(1)
         nhid = self.args.nhid
@@ -59,9 +63,16 @@ class CRTNModel(nn.Module):
                 mask = mask.bool()[:,:,None,None]
                 query = query.masked_fill(mask, 0)
             elif self.args.query_method == "fixed_length":
-                prev = self.cache._get_values()[-1]
-                prev = prev.view(seq_len, -1, self.args.nlayers+1, nhid)
-                prev = prev[:,:,0,:]
+                if self.args.farnear:
+                    if self.args.neighbor_len < self.args.num_steps:
+                        raise ValueError("neighbor_len < num_steps, "
+                                         "not compatible with method fixed_length")
+                    else:
+                        prev = neighbor_mem[0,-seq_len:,:,:]
+                else:
+                    prev = self.cache._get_values()[-1]
+                    prev = prev.view(seq_len, -1, self.args.nlayers+1, nhid)
+                    prev = prev[:,:,0,:]
                 inputs = self.encoder.embedding(inputs)
                 new_input = torch.cat((prev, inputs), 0)
                 index_matrix = torch.arange(seq_len, 
@@ -127,12 +138,15 @@ class CRTNModel(nn.Module):
             #    
             #    query = query.view(seq_len, seq_len, -1, nhid)
             else:
-                prev_value = self.cache._get_values()[-1]
-                prev_value.unsqueeze_(0)
-                prev_indice = torch.zeros_like(inputs).view(-1)
-                prev_indice.unsqueeze_(0)
-                _, wise_inputs, _ = self.encoder(inputs, values=prev_value, 
-                                                    indices=prev_indice)
+                if self.args.farnear:
+                    prev_value = torch.einsum("nlbh->lbnh", neighbor_mem)
+                    prev_value = prev_value.reshape(1, self.args.neighbor_len, bsz, -1)
+                else:
+                    prev_value = self.cache._get_values()[-1]
+                    prev_value.unsqueeze_(0)
+                    #prev_indice = torch.zeros_like(inputs).view(-1)
+                    #prev_indice.unsqueeze_(0)
+                _, wise_inputs, _ = self.encoder(inputs, values=prev_value)
                 if self.args.query_method == "last_l":
                     query = wise_inputs[-1]
                     query = torch.einsum("lbd,k->klbd",query, 
@@ -141,24 +155,28 @@ class CRTNModel(nn.Module):
                     mask = mask.bool()[:,:,None,None]
                     query.masked_fill_(mask, 0)
                 elif self.args.query_method == "middle_l":
+                    if self.args.farnear and self.args.neighbor_len < seq_len:
+                        raise ValueError("neighbor_len < num_steps, "
+                                         "not compatible with method middle_l")
                     wise_inputs = wise_inputs[-1]
                     prev = prev_value.transpose(1, 2).contiguous()
-                    prev = prev.view(-1, seq_len, self.args.nlayers+1, nhid)
+                    prev = prev.view(-1, prev.size(2), self.args.nlayers+1, nhid)
                     prev = prev[:,:,-1,:]
                     prev.transpose_(0, 1)
                     query_base = torch.cat((prev, wise_inputs), 0)
-                    index_range = torch.arange(seq_len, device=inputs.device).unsqueeze(0)
+                    index_range = torch.arange(seq_len, 
+                                               device=inputs.device).unsqueeze(0)
                     index_matrix = index_range.expand(seq_len, -1)
                     index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) 
                     index_matrix = index_matrix.view(-1, 1, 1)
                     index_matrix = index_matrix.expand(-1, query_base.size(1), 
-                                                        query_base.size(2))
+                                                       query_base.size(2))
                     query = torch.gather(query_base, 0, index_matrix)
                     query = query.view(seq_len, seq_len, -1, nhid)
                 elif self.args.query_method == "linear":
                     wise_inputs = wise_inputs[-1]
                     prev = prev_value.transpose(1, 2).contiguous()
-                    prev = prev.view(-1, seq_len, self.args.nlayers+1, nhid)
+                    prev = prev.view(-1, prev.size(2), self.args.nlayers+1, nhid)
                     prev = prev[:,:,-1,:]
                     prev = prev.transpose(0, 1)
                     query_base = torch.cat((prev, wise_inputs), 0)
@@ -187,11 +205,22 @@ class CRTNModel(nn.Module):
             weights = None
 
         output, mems, attn_map = self.encoder(inputs, values, weights, 
-                                              indices, words, draw)
+                                              indices, words, draw, neighbor_mem)
+        
+        if self.args.farnear:
+            total_mem = torch.cat((neighbor_mem, mems), 1)
+            mems, neighbor_mem = total_mem.split([seq_len, self.args.neighbor_len], 
+                                                 dim=1)
+            #mems = total_mem[:,:seq_len,:,:]
+            #neighbor_mem = total_mem[:,seq_len:,:,:]
+
         if renew:
             self.cache.renew(mems, inputs)
 
-        return output, attn_map 
+        if self.args.farnear:
+            return output, neighbor_mem, attn_map
+        else:
+            return output, attn_map 
 
 
 

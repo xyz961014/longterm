@@ -103,6 +103,11 @@ def parse_args():
                         'mode')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
+    parser.add_argument('--farnear', action="store_true",
+                        help='split history into two parts,'
+                        ' near to compute query and attention; far to be queried')
+    parser.add_argument("--neighbor_len", type=int, default=50,
+                        help="length of near neighbor; only use in farnear mode")
     parser.add_argument('--div_val', type=int, default=1,
                         help='divident value for adaptive input and softmax')
     parser.add_argument('--seed', type=int, default=1111,
@@ -128,13 +133,20 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     model.train()
     start_time = time.time()
     total_loss = 0.
+    
+    if args.farnear:
+        mem = torch.zeros(model.args.nlayers+1, args.neighbor_len, model.args.batch_size, model.args.nhid, device=device)
 
     for batch, (data, targets) in enumerate(train_loader):
         data, targets = data.to(device), targets.to(device)
         data, targets = data.t(), targets.t()
         model.zero_grad()
         
-        output, _ = model(data)
+        if args.farnear:
+            mem = mem.detach()
+            output, mem, _ = model(data, neighbor_mem=mem)
+        else:
+            output, _ = model(data)
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))

@@ -92,6 +92,7 @@ def contrast(model, base_model, criterion, base_criterion, dataloader, corpus):
     id2w = corpus.vocabulary.index2word
 
     with torch.no_grad():
+        prev_data = None
         for data, targets in dataloader:
             data, targets = data.to(device), targets.to(device)
             data, targets = data.t().contiguous(), targets.t().contiguous()
@@ -147,9 +148,18 @@ def contrast(model, base_model, criterion, base_criterion, dataloader, corpus):
             showdata, showtgt = data[:,0], targets[:,0]
             showdata = [id2w[w.item()] for w in showdata]
             showtgt = [id2w[w.item()] for w in showtgt]
+
+            if prev_data is not None:
+                prev_words = prev_data[:,0]
+                prev_words = [id2w[w.item()] for w in prev_words]
+
+
             for i in range(len(showdata)):
                 print("-" * 89)
-                print("Current word to predict: %s \033[1;31m %s \033[0m" % (" ".join(showdata[:i+1]), showtgt[i]))
+                print("Current word to predict:", end="")
+                if prev_data is not None:
+                    print(" ".join(prev_words), end="")
+                print("%s \033[1;31m %s \033[0m" % (" ".join(showdata[:i+1]), showtgt[i]))
 
                 print("baseline model prediction: ", end="")
                 for word, prob in tuple(zip(cand_base[i], prob_base[i])):
@@ -167,6 +177,9 @@ def contrast(model, base_model, criterion, base_criterion, dataloader, corpus):
                         print("%s|%.2f" % (word, prob), end=" ")
                 print("\n")
                 input("Enter to continue")
+
+            prev_data = data
+
 def attention_map(model, criterion, corpus, loader, seg_num=200):
     model.set_batch_size(model.args.eval_batch_size)
     model.to(device)

@@ -153,7 +153,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         return x
 
 
-    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, indice_bool=None, weights=None):
+    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, indice_bool=None, weights=None, neighbor_mem=None):
         x_len, batch_size, nhid = x.size(0), x.size(1), x.size(2)
         #if indices is not None:
         #    ipdb.set_trace()
@@ -196,6 +196,15 @@ class LearnableMultiheadSelfAttention(nn.Module):
         heads_k, heads_v = torch.chunk(heads_matrix, 2, dim=-1)
 
         heads_q = self.lin_q(x)
+
+        if neighbor_mem is not None:
+            nei_len = neighbor_mem.size(0)
+            nei_matrix = self.lin_kv(neighbor_mem)
+            nei_k, nei_v = torch.chunk(nei_matrix, 2, dim=-1)
+
+            rel_cache, rel_nei, rel_inp = rel_emb_matrix.split([memory.size(0), 
+                                                                nei_len, x_len])
+            rel_emb_matrix = torch.cat((rel_cache, rel_inp), 0)
 
         #if indices is not None:
         #    indice_len = indices.size(0)
@@ -279,8 +288,23 @@ class LearnableMultiheadSelfAttention(nn.Module):
                                           batch_size, self.num_head, self.d_head)
             AC = torch.einsum("kibnd,kjbnd->ikjbn", pre_AC, pre_k)
             BD = torch.einsum("kibnd,kjbnd->ikjbn", pre_BD, pre_rel)
-            #AC = torch.einsum("ibnd,ijbnd->ijbn", (heads_qu, heads_k))
-            #BD = torch.einsum("ibnd,ijbnd->ijbn", (heads_qv, rel_emb_matrix))
+
+            if neighbor_mem is not None:
+                nei_k = nei_k.view(nei_len, batch_size, self.num_head, self.d_head)
+                nei_v = nei_v.view(nei_len, batch_size, self.num_head, self.d_head)
+                rel_nei = rel_nei.view(nei_len, batch_size, self.num_head, self.d_head)
+                nei_AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, nei_k))
+                nei_BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_nei))
+                
+                AC_cache, AC_inp = AC.split(mem_num, dim=1)
+                BD_cache, BD_inp = BD.split(mem_num, dim=1)
+
+                AC = torch.cat((AC_cache.reshape(x_len, -1, batch_size, self.num_head),
+                                nei_AC,
+                                AC_inp.squeeze()), 1)
+                BD = torch.cat((BD_cache.reshape(x_len, -1, batch_size, self.num_head),
+                                nei_BD,
+                                BD_inp.squeeze()), 1)
         
         BD = self._rel_shift(BD)
 
@@ -329,8 +353,18 @@ class LearnableMultiheadSelfAttention(nn.Module):
         if memory is None:
             attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
         else:
+            if neighbor_mem is not None:
+                prob_cache, prob_nei, prob_inp = attn_prob.split([memory.size(0),
+                                                                  nei_len,
+                                                                  x_len], dim=1)
+                attn_prob = torch.cat((prob_cache, prob_inp), 1)
+                nei_vec = torch.einsum("ilbn,lbnd->ibnd", prob_nei, nei_v)
+
             attn_prob = attn_prob.reshape(x_len, -1, x_len, batch_size, self.num_head)
             attn_vec = torch.einsum("ikjbn,kjbnd->ibnd", attn_prob, pre_v)
+
+            if neighbor_mem is not None:
+                attn_vec += nei_vec
 
         attn_vec = attn_vec.reshape(x_len, batch_size, self.num_head * self.d_head)
 
@@ -361,14 +395,17 @@ class TransformerUnit(nn.Module):
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, dropout)
 
-    def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, indices=None, weights=None):
+    def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, indices=None, weights=None, neighbor_mem=None):
         
         if self.attn_type == 0:
             output = self.attn(inputs, pos_emb, mask=mask, memory=memory, 
                                 indice_bool=indices, weights=weights)
         elif self.attn_type == 1:
             output, attn_matrix = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, 
-                        mask=mask, memory=memory, indice_bool=indices, weights=weights)
+                                            mask=mask, memory=memory, 
+                                            indice_bool=indices, 
+                                            weights=weights, 
+                                            neighbor_mem=neighbor_mem)
 
         output = self.pos_ff(output)
 
@@ -480,7 +517,7 @@ class TransformerLM(nn.Module):
         else:
             return None
 
-    def forward(self, inputs, values=None, weights=None, indices=None, words=None, draw=False):
+    def forward(self, inputs, values=None, weights=None, indices=None, words=None, draw=False, neighbor_mem=None):
         #input shape should be seq_len * bsz or seq_len * bsz * emsize
         if inputs.dim() == 2:
             word_emb = self.embedding(inputs)
@@ -503,11 +540,12 @@ class TransformerLM(nn.Module):
         #else:
         #    mem_len = 0
         #    zone_bsz = batch_size
+
         if indices is not None:
             #mem_len = seq_len * indices.size(0)
-            mem_len = seq_len * values.size(0)
+            mem_len = values.size(0) * values.size(1)
             zone_bsz = indices.size(1)
-            values = values.view(values.size(0), seq_len, -1, 
+            values = values.view(values.size(0), values.size(1), -1, 
                                  self.args.nlayers+1, self.args.nhid)
         else:
             mem_len = 0
@@ -517,7 +555,10 @@ class TransformerLM(nn.Module):
         if self.args.not_weighted:
             weights = None
 
-        total_len = seq_len + mem_len
+        if neighbor_mem is not None:
+            total_len = seq_len + mem_len + neighbor_mem.size(1)
+        else:
+            total_len = seq_len + mem_len
 
 
         mask = torch.triu(word_emb.new_ones(seq_len, total_len), diagonal=1+mem_len) 
@@ -531,8 +572,7 @@ class TransformerLM(nn.Module):
 
             pos_seq = torch.einsum("b,k->bk", 
                                    torch.ones(batch_size, device=inputs.device), 
-                                   torch.arange((values.size(0) + 1) * 
-                                       self.args.num_steps-1, -1, -1.0, 
+                                   torch.arange(total_len-1, -1, -1.0, 
                                    device=inputs.device))
 
             #one-hot pos_indices
@@ -545,17 +585,16 @@ class TransformerLM(nn.Module):
             indice_bool = indice_bool.sum(0)
 
             if self.args.stat:
-
                 stat = indice_bool.sum((0, 1))
                 self.select_stat += stat[:-1]
                 self.viz.bar(self.select_stat, win="select stat")
+
             if weights is not None:
                 x_len = inputs.size(0)
                 weights = weights.view(x_len, batch_size, -1)
                 weights = torch.cat((weights, 
                                     torch.ones_like(
-                                        weights[:,:,0,None]) * -float("inf")
-                                    ), 2)
+                                        weights[:,:,0,None]) * -float("inf")), 2)
                 weights.masked_fill_((1 - indice_bool).bool(), -float("inf"))
                 weights = F.softmax(weights, 2)
                 weights = weights.index_fill(
@@ -587,7 +626,6 @@ class TransformerLM(nn.Module):
         
         memory = word_emb.clone()
         memories = [memory]
-        attn_map = None
 
         if self.demo and weights is not None:
             demo_display = tuple(zip(indice_bool.squeeze(), weights.squeeze()))
@@ -599,6 +637,11 @@ class TransformerLM(nn.Module):
             else:
                 value_i = values[:,:,:,i,:]
 
+            if neighbor_mem is None:
+                neighbor_mem_i = None
+            else:
+                neighbor_mem_i = neighbor_mem[i]
+
             if self.args.attn_type == 0:
                 core_out = layer(core_out, pos_emb, mask=mask, memory=value_i, 
                                  indices=pos_indices, weights=weights)
@@ -608,7 +651,8 @@ class TransformerLM(nn.Module):
                                               mask=mask, 
                                               memory=value_i, 
                                               indices=indice_bool, 
-                                              weights=weights
+                                              weights=weights,
+                                              neighbor_mem=neighbor_mem_i
                                               )
 
 
@@ -620,6 +664,8 @@ class TransformerLM(nn.Module):
 
         if draw:
             attn_map = attn_matrix
+        else:
+            attn_map = None
 
 
 
