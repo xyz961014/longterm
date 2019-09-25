@@ -133,9 +133,11 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     model.train()
     start_time = time.time()
     total_loss = 0.
+    module = model.module if args.multi_gpu else model
     
     if args.farnear:
-        mem = torch.zeros(model.args.nlayers+1, args.neighbor_len, model.args.batch_size, model.args.nhid, device=device)
+        mem = torch.zeros(args.nlayers+1, args.neighbor_len, module.args.batch_size, 
+                          model.args.nhid, device=device)
 
     for batch, (data, targets) in enumerate(train_loader):
         data, targets = data.to(device), targets.to(device)
@@ -182,12 +184,21 @@ def evaluate(model, eval_loader, criterion, args):
     model.set_batch_size(args.eval_batch_size)
     model.eval()
     total_loss = 0.
+    module = model.module if args.multi_gpu else model
+    
+    if args.farnear:
+        mem = torch.zeros(args.nlayers+1, args.neighbor_len, module.args.batch_size, 
+                          model.args.nhid, device=device)
     with torch.no_grad():
         for i, (data, targets) in enumerate(eval_loader):
             data, targets = data.to(device), targets.to(device)
             data, targets = data.t().contiguous(), targets.t().contiguous()
                 
-            output, _ = model(data)
+            if args.farnear:
+                mem = mem.detach()
+                output, mem, _ = model(data, neighbor_mem=mem)
+            else:
+                output, _ = model(data)
 
             if args.adaptive:
                 loss = criterion(output.view(-1, args.nhid), targets.view(-1))
