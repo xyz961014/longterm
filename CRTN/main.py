@@ -137,7 +137,7 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     
     if args.farnear:
         mem = torch.zeros(args.nlayers+1, args.neighbor_len, module.args.batch_size, 
-                          model.args.nhid, device=device)
+                          args.nhid, device=device)
 
     for batch, (data, targets) in enumerate(train_loader):
         data, targets = data.to(device), targets.to(device)
@@ -188,7 +188,7 @@ def evaluate(model, eval_loader, criterion, args):
     
     if args.farnear:
         mem = torch.zeros(args.nlayers+1, args.neighbor_len, module.args.batch_size, 
-                          model.args.nhid, device=device)
+                          args.nhid, device=device)
     with torch.no_grad():
         for i, (data, targets) in enumerate(eval_loader):
             data, targets = data.to(device), targets.to(device)
