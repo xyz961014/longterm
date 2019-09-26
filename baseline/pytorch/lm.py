@@ -19,7 +19,7 @@ from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from transformer import TransformerLM
 from rnn import RNNModel
 
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 
 import ipdb
 
@@ -80,6 +80,8 @@ def parse_args():
                         help='enable multiple gpus')
     parser.add_argument('--adaptive', action="store_true",
                         help='use adaptive embedding and softmax')
+    parser.add_argument('--compatible', action="store_true",
+                        help='compatible with torch version < 1.2.0')
     parser.add_argument('--div_val', type=int, default=1,
                         help='divident value for adaptive input and softmax')
     parser.add_argument('--seed', type=int, default=1111,
@@ -270,7 +272,8 @@ def main(args):
                     adaptive=model_args.adaptive,
                     div_val=model_args.div_val,
                     cutoffs=cutoffs,
-                    dropout=model_args.dropout)
+                    dropout=model_args.dropout,
+                    compatible=model_args.compatible)
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
         if args.rnn:
@@ -292,7 +295,8 @@ def main(args):
                     adaptive=args.adaptive,
                     div_val=args.div_val,
                     cutoffs=cutoffs,
-                    dropout=args.dropout)
+                    dropout=args.dropout,
+                    compatible=args.compatible)
 
 
     

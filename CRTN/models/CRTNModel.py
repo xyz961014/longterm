@@ -54,6 +54,7 @@ class CRTNModel(nn.Module):
         nhid = self.args.nhid
 
         if self.args.farnear:
+            nei_len = self.args.neighbor_len
             if neighbor_mem is not None:
                 neighbor_mem = neighbor_mem.reshape(self.args.nlayers+1,
                                                     self.args.neighbor_len,
@@ -78,7 +79,8 @@ class CRTNModel(nn.Module):
                         raise ValueError("neighbor_len < num_steps, "
                                          "not compatible with method fixed_length")
                     else:
-                        prev = neighbor_mem[0,-seq_len:,:,:]
+                        prev = neighbor_mem[0].split([nei_len-seq_len, 
+                                                      seq_len], dim=0)[1]
                 else:
                     prev = self.cache._get_values()[-1]
                     prev = prev.view(seq_len, -1, self.args.nlayers+1, nhid)
