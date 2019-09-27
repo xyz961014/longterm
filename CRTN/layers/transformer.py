@@ -353,7 +353,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         if memory is None:
             attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
         else:
-            if neighbor_mem is not None:
+            if neighbor_mem is not None and neighbor_mem.size(0) > 0:
                 prob_cache, prob_nei, prob_inp = attn_prob.split([memory.size(0),
                                                                   nei_len,
                                                                   x_len], dim=1)
@@ -363,7 +363,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
             attn_prob = attn_prob.reshape(x_len, -1, x_len, batch_size, self.num_head)
             attn_vec = torch.einsum("ikjbn,kjbnd->ibnd", attn_prob, pre_v)
 
-            if neighbor_mem is not None:
+            if neighbor_mem is not None and neighbor_mem.size(0) > 0:
                 attn_vec += nei_vec
 
         attn_vec = attn_vec.reshape(x_len, batch_size, self.num_head * self.d_head)
@@ -544,12 +544,12 @@ class TransformerLM(nn.Module):
         if indices is not None:
             #mem_len = seq_len * indices.size(0)
             mem_len = values.size(0) * values.size(1)
-            zone_bsz = indices.size(1)
+            #zone_bsz = indices.size(1)
             values = values.view(values.size(0), values.size(1), -1, 
                                  self.args.nlayers+1, self.args.nhid)
         else:
             mem_len = 0
-            zone_bsz = batch_size
+            #zone_bsz = batch_size
 
 
         if self.args.not_weighted:

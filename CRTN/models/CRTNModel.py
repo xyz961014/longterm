@@ -52,7 +52,7 @@ class CRTNModel(nn.Module):
         seq_len = self.args.num_steps
         bsz = inputs.size(1)
         nhid = self.args.nhid
-
+        
         if self.args.farnear:
             nei_len = self.args.neighbor_len
             if neighbor_mem is not None:

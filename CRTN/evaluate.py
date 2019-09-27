@@ -62,7 +62,10 @@ def evaluate(model, eval_data, criterion, model_args=None):
             data, targets = data.t().contiguous(), targets.t().contiguous()
 
             if model_args is None:
-                output, _ = model(data)
+                if model.args.farnear:
+                    output, memory, _ = model(data, neighbor_mem=memory)
+                else:
+                    output, _ = model(data)
             else:
                 output, memory = model(data, memory)
             
@@ -84,6 +87,7 @@ def contrast(model, base_model, criterion, base_criterion, dataloader, corpus):
     model.set_batch_size(model.args.eval_batch_size)
     model.to(device)
     criterion.to(device)
+    mem = None
 
     base_model.to(device)
     base_criterion.to(device)
@@ -98,7 +102,10 @@ def contrast(model, base_model, criterion, base_criterion, dataloader, corpus):
             data, targets = data.t().contiguous(), targets.t().contiguous()
             seq_len, bsz = data.size(0), data.size(1)
 
-            output, _ = model(data)
+            if model.args.farnear:
+                output, mem, _ = model(data, neighbor_mem=mem)
+            else:
+                output, _ = model(data)
             base_output, memory = base_model(data, memory)
 
             head_prob, tails = criterion(output.view(-1, model.args.nhid), targets.view(-1), output=True)
