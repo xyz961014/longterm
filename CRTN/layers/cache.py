@@ -140,7 +140,8 @@ class Cache(nn.Module):
         attention = attention.view(-1, 1, attention.size(-1))
         
         _, topk_indices = attention.topk(self.topk)
-        topk_indices = topk_indices.transpose(0, 2).reshape(self.topk, -1)
+        topk_indices = topk_indices.squeeze().t()
+        #topk_indices = topk_indices.transpose(0, 2).reshape(self.topk, -1)
         #outputs = values[batch, topk_indices]
 
         #values.transpose_(0, 1)

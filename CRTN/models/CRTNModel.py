@@ -152,7 +152,8 @@ class CRTNModel(nn.Module):
             else:
                 if self.args.farnear:
                     prev_value = torch.einsum("nlbh->lbnh", neighbor_mem)
-                    prev_value = prev_value.reshape(1, self.args.neighbor_len, bsz, -1)
+                    prev_value = prev_value.reshape(1, self.args.neighbor_len, bsz, 
+                                                    (self.args.nlayers+1) * nhid)
                 else:
                     prev_value = self.cache._get_values()[-1]
                     prev_value.unsqueeze_(0)
@@ -188,7 +189,7 @@ class CRTNModel(nn.Module):
                 elif self.args.query_method == "linear":
                     wise_inputs = wise_inputs[-1]
                     prev = prev_value.transpose(1, 2).contiguous()
-                    prev = prev.view(-1, prev.size(2), self.args.nlayers+1, nhid)
+                    prev = prev.view(bsz, prev.size(2), self.args.nlayers+1, nhid)
                     prev = prev[:,:,-1,:]
                     prev = prev.transpose(0, 1)
                     query_base = torch.cat((prev, wise_inputs), 0)
