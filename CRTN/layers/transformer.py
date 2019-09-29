@@ -203,7 +203,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
             nei_k, nei_v = torch.chunk(nei_matrix, 2, dim=-1)
 
             rel_cache, rel_nei, rel_inp = rel_emb_matrix.split([memory.size(0), 
-                                                                nei_len, x_len])
+                                                                nei_len, x_len],
+                                                                dim=0)
             rel_emb_matrix = torch.cat((rel_cache, rel_inp), 0)
 
         #if indices is not None:
@@ -556,12 +557,15 @@ class TransformerLM(nn.Module):
             weights = None
 
         if neighbor_mem is not None:
-            total_len = seq_len + mem_len + neighbor_mem.size(1)
+            nei_len = neighbor_mem.size(1)
+            total_len = seq_len + mem_len + nei_len
         else:
+            nei_len = 0
             total_len = seq_len + mem_len
 
-
-        mask = torch.triu(word_emb.new_ones(seq_len, total_len), diagonal=1+mem_len) 
+        
+        mask = torch.triu(word_emb.new_ones(seq_len, total_len), 
+                          diagonal=1+mem_len+nei_len) 
         mask = mask.bool()[:,:,None]
 
         if indices is not None:
