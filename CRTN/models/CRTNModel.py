@@ -193,6 +193,8 @@ class CRTNModel(nn.Module):
                     index_matrix = index_matrix.view(-1, 1, 1)
                     index_matrix = index_matrix.expand(-1, query_base.size(1), 
                                                        query_base.size(2))
+                    if self.args.farnear:
+                        index_matrix = index_matrix + nei_len - seq_len
                     query = torch.gather(query_base, 0, index_matrix)
                     query = query.view(seq_len, seq_len, -1, nhid)
                 elif self.args.query_method == "linear":
