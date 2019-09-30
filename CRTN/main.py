@@ -23,7 +23,10 @@ from data import dataloader
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
 from models.CRTNModel import CRTNModel
 
-from torch.utils.tensorboard import SummaryWriter
+if torch.__version__ < "1.2.0":
+    from tensorboardX import SummaryWriter
+else:
+    from torch.utils.tensorboard import SummaryWriter
 import ipdb
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -263,6 +266,11 @@ def main(args):
             model_args.batch_size = 1
             model_args.eval_batch_size = 1
         args = model_args
+
+    #Print Params
+    for argk, argv in args.__dict__.items():
+        print("{}: {}".format(argk, argv))
+    print("")
         
     ### Load Data ###
     
@@ -289,10 +297,12 @@ def main(args):
         len(corpus.train_data.raw_data), 
         len(corpus.valid_data.raw_data), 
         len(corpus.test_data.raw_data)))
+    print("")
     if args.eval:
         print("SKIP TRAINING")
     else:
         print("TRAINING......")
+
 
     if args.load:
         # clear cache

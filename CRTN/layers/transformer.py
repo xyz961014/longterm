@@ -566,7 +566,10 @@ class TransformerLM(nn.Module):
         
         mask = torch.triu(word_emb.new_ones(seq_len, total_len), 
                           diagonal=1+mem_len+nei_len) 
-        mask = mask.bool()[:,:,None]
+        if torch.__version__ < "1.2.0":
+            mask = mask.byte()[:,:,None]
+        else:
+            mask = mask.bool()[:,:,None]
 
         if indices is not None:
             #pos_seq
@@ -599,7 +602,10 @@ class TransformerLM(nn.Module):
                 weights = torch.cat((weights, 
                                     torch.ones_like(
                                         weights[:,:,0,None]) * -float("inf")), 2)
-                weights.masked_fill_((1 - indice_bool).bool(), -float("inf"))
+                if torch.__version__ < "1.2.0":
+                    weights.masked_fill_((1 - indice_bool).byte(), -float("inf"))
+                else:
+                    weights.masked_fill_((1 - indice_bool).bool(), -float("inf"))
                 weights = F.softmax(weights, 2)
                 weights = weights.index_fill(
                             2, (weights.new_ones(1) * mem_num).long(), 1.0)
