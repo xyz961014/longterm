@@ -369,17 +369,20 @@ class LearnableMultiheadSelfAttention(nn.Module):
         if memory is None and neighbor_mem is None:
             attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
         else:
-            if neighbor_mem is not None and neighbor_mem.size(0) > 0:
+            if neighbor_mem is not None and nei_len > 0:
                 prob_cache, prob_nei, prob_inp = attn_prob.split([mem_len,
                                                                   nei_len,
                                                                   x_len], dim=1)
                 attn_prob = torch.cat((prob_cache, prob_inp), 1)
                 nei_vec = torch.einsum("ilbn,lbnd->ibnd", prob_nei, nei_v)
-                attn_vec = nei_vec
 
             if indice_bool is not None: 
                 attn_prob = attn_prob.reshape(x_len, -1, x_len, batch_size, self.num_head)
-                attn_vec += torch.einsum("ikjbn,kjbnd->ibnd", attn_prob, pre_v)
+                attn_vec = torch.einsum("ikjbn,kjbnd->ibnd", attn_prob, pre_v)
+                if neighbor_mem is not None and nei_len > 0:
+                    attn_vec += nei_vec
+            else:
+                attn_vec = nei_vec
 
         attn_vec = attn_vec.reshape(x_len, batch_size, self.num_head * self.d_head)
 

@@ -153,9 +153,9 @@ class CRTNModel(nn.Module):
             #    query = query.view(seq_len, seq_len, -1, nhid)
             else:
                 if self.args.farnear:
-                    #prev_value = torch.einsum("nlbh->lbnh", neighbor_mem)
-                    #prev_value = prev_value.reshape(1, self.args.neighbor_len, bsz, 
-                    #                                (self.args.nlayers+1) * nhid)
+                    prev_value = torch.einsum("nlbh->lbnh", neighbor_mem)
+                    prev_value = prev_value.reshape(1, self.args.neighbor_len, bsz, 
+                                                    (self.args.nlayers+1) * nhid)
                     _, wise_inputs, _ = self.encoder(inputs, 
                                                      neighbor_mem=neighbor_mem)
                 else:
