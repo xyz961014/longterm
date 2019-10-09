@@ -189,7 +189,8 @@ class CRTNModel(nn.Module):
                     index_range = torch.arange(seq_len, 
                                                device=inputs.device).unsqueeze(0)
                     index_matrix = index_range.expand(seq_len, -1)
-                    index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) 
+                    index_matrix = (index_matrix.t() + index_matrix + 
+                                    index_matrix.new_ones(seq_len, seq_len)) 
                     index_matrix = index_matrix.view(-1, 1, 1)
                     index_matrix = index_matrix.expand(-1, query_base.size(1), 
                                                        query_base.size(2))

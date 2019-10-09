@@ -29,9 +29,6 @@ else:
     from torch.utils.tensorboard import SummaryWriter
 import ipdb
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
-
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str,
@@ -115,6 +112,8 @@ def parse_args():
                         help='divident value for adaptive input and softmax')
     parser.add_argument('--seed', type=int, default=1111,
                         help='random seed')
+    parser.add_argument('--devices', type=int, default=[0], nargs="+",
+                        help='device list')
     parser.add_argument('--log-interval', type=int, default=50, metavar='N',
                         help='report interval')
     parser.add_argument('--save', type=str, default='model',
@@ -144,7 +143,8 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     #                      args.nhid, device=device)
 
     for batch, (data, targets) in enumerate(train_loader):
-        data, targets = data.to(device), targets.to(device)
+        if torch.cuda.is_available():
+            data, targets = data.cuda(), targets.cuda()
         data, targets = data.t(), targets.t()
         model.zero_grad()
         
@@ -197,7 +197,8 @@ def evaluate(model, eval_loader, criterion, args):
     #                      args.nhid, device=device)
     with torch.no_grad():
         for i, (data, targets) in enumerate(eval_loader):
-            data, targets = data.to(device), targets.to(device)
+            if torch.cuda.is_available():
+                data, targets = data.cuda(), targets.cuda()
             data, targets = data.t().contiguous(), targets.t().contiguous()
                 
             if args.farnear:
@@ -228,6 +229,9 @@ def main(args):
 
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
+        devices = [torch.device("cuda:" + str(i)) for i in args.devices]
+    else:
+        devices = [torch.device("cpu")]
 
     cutoffs, tie_projs = [], [False]
     if args.adaptive:
@@ -245,8 +249,6 @@ def main(args):
     args.cutoffs = cutoffs
     args.tie_projs = tie_projs
 
-
-
     if args.load:
         checkpoint = torch.load(args.load)
         model_args = checkpoint["model_args"]
@@ -262,6 +264,7 @@ def main(args):
         model_args.epochs = args.epochs
         model_args.multi_gpu = args.multi_gpu
         model_args.save = args.save
+        model_args.devices = args.devices
         if args.demo:
             model_args.batch_size = 1
             model_args.eval_batch_size = 1
@@ -350,10 +353,11 @@ def main(args):
         criterion = nn.CrossEntropyLoss()
 
         
-    model.to(device)
-    criterion.to(device)
+    criterion.to(devices[0])
     if args.multi_gpu:
-        model = DataParallel(model, dim=1)
+        model = DataParallel(model, device_ids=devices, dim=1)
+    else:
+        model.to(devices[0])
 
     if args.adam:
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
