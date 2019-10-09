@@ -352,12 +352,10 @@ def main(args):
     else:
         criterion = nn.CrossEntropyLoss()
 
-        
+    model.to(devices[0])
     criterion.to(devices[0])
     if args.multi_gpu:
         model = DataParallel(model, device_ids=devices, dim=1)
-    else:
-        model.to(devices[0])
 
     if args.adam:
         optimizer = optim.Adam(model.parameters(), lr=args.lr)
