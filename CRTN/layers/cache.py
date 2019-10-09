@@ -105,7 +105,7 @@ class Cache(nn.Module):
                             for i in range(self.N)
             })
 
-        self.init_keys(args.init_std)
+        self.init_keys(self.args.init_std)
 
         self.renew_place = self.N - 1
         self.to(device)
