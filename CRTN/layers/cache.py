@@ -39,6 +39,8 @@ class Cache(nn.Module):
                     for i in range(args.cache_N)
         })
 
+        self.init_keys(args.init_std)
+
         self.renew_place = args.cache_N - 1
         self.attn = DotProductAttention()
         if not args.no_summary:
@@ -57,6 +59,10 @@ class Cache(nn.Module):
         self.values = self.values.to(device)
         if self.demo:
             self.words = self.words.to(device)
+
+    def init_keys(self, init_std):
+        for key in self.keys.keys():
+            nn.init.normal_(self.keys[key])
 
     def _get_keys(self):
         keys = self.keys.values()
@@ -98,6 +104,8 @@ class Cache(nn.Module):
                                         dtype=torch.long), requires_grad=False) 
                             for i in range(self.N)
             })
+
+        self.init_keys(args.init_std)
 
         self.renew_place = self.N - 1
         self.to(device)
