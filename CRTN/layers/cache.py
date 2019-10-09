@@ -18,7 +18,7 @@ class Cache(nn.Module):
         else:
             self.dk = self.args.cache_dk
 
-        batch_size = self.args.batch_size // torch.cuda.device_count()
+        batch_size = self.args.batch_size // len(self.args.devices)
 
         self.keys = nn.ParameterDict({
             str(i): nn.Parameter(torch.zeros(batch_size, self.dk),

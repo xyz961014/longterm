@@ -136,6 +136,10 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     start_time = time.time()
     total_loss = 0.
     module = model.module if args.multi_gpu else model
+    if torch.cuda.is_available():
+        device = torch.device("cuda:" + str(module.args.devices[0]))
+    else:
+        device = torch.device("cpu")
     
     if args.farnear:
         mem = None
@@ -143,8 +147,7 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     #                      args.nhid, device=device)
 
     for batch, (data, targets) in enumerate(train_loader):
-        if torch.cuda.is_available():
-            data, targets = data.cuda(), targets.cuda()
+        data, targets = data.to(device), targets.to(device)
         data, targets = data.t(), targets.t()
         model.zero_grad()
         
@@ -190,6 +193,10 @@ def evaluate(model, eval_loader, criterion, args):
     model.eval()
     total_loss = 0.
     module = model.module if args.multi_gpu else model
+    if torch.cuda.is_available():
+        device = torch.device("cuda:" + str(module.args.devices[0]))
+    else:
+        device = torch.device("cpu")
     
     if args.farnear:
         mem = None
@@ -197,8 +204,7 @@ def evaluate(model, eval_loader, criterion, args):
     #                      args.nhid, device=device)
     with torch.no_grad():
         for i, (data, targets) in enumerate(eval_loader):
-            if torch.cuda.is_available():
-                data, targets = data.cuda(), targets.cuda()
+            data, targets = data.to(device), targets.to(device)
             data, targets = data.t().contiguous(), targets.t().contiguous()
                 
             if args.farnear:
