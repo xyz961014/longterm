@@ -236,6 +236,9 @@ def main(args):
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
         devices = [torch.device("cuda:" + str(i)) for i in args.devices]
+
+        args.batch_size = len(devices) * (args.batch_size // len(devices))
+        args.eval_batch_size = len(devices) * (args.eval_batch_size // len(devices))
     else:
         devices = [torch.device("cpu")]
 
