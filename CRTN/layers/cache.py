@@ -173,7 +173,10 @@ class Cache(nn.Module):
         n = self.renew_place
         
         if n >= self.N:
-            self.eliminate_last()
+            if self.args.merge:
+                self.merge()
+            else:
+                self.eliminate_last()
 
         if self.args.no_summary:
             new_key = inputs[-1].reshape(self.batch_size, -1)
@@ -212,11 +215,13 @@ class Cache(nn.Module):
 
         self.keys.update({
             str(keys_keys[-1]+1): nn.Parameter(torch.zeros(self.batch_size, self.dk, 
-                                                            device=device))
+                                                           device=device))
             })
         self.values.update({
-            str(keys_values[-1]+1): nn.Parameter(torch.zeros(self.L, self.batch_size, 
-                                    self.dv * (self.args.nlayers+1), device=device))
+            str(keys_values[-1]+1): nn.Parameter(
+                                        torch.zeros(self.L, self.batch_size, 
+                                                    self.dv * (self.args.nlayers+1), 
+                                                    device=device))
             })
         if self.demo:
             keys_words = list(self.words.keys())
@@ -224,9 +229,44 @@ class Cache(nn.Module):
             eli_word = self.words.pop(str(keys_words[0]))
             self.words.update({
                 str(keys_words[-1]+1): nn.Parameter(torch.zeros(self.L, 
-                        self.batch_size, dtype=torch.long), requires_grad=False)
+                                                                self.batch_size, 
+                                                                dtype=torch.long), 
+                                                    requires_grad=False)
                 })
+
+    def merge(self):
  
+        keys_keys = list(self.keys.keys())
+        keys_values = list(self.values.keys())
+
+        keys_keys = sorted(list(map(int, keys_keys)))
+        keys_values = sorted(list(map(int, keys_values)))
+
+        eli_key = self.keys.pop(str(keys_keys[0]))
+        eli_value = self.values.pop(str(keys_values[0]))
+
+        device = eli_key.device
+
+        self.keys.update({
+            str(keys_keys[1]): nn.Parameter(self.args.merge_alpha * eli_key 
+                + (1 - self.args.merge_alpha) * self.keys[str(keys_keys[1])])
+            })
+
+        self.values.update({
+            str(keys_values[1]): nn.Parameter(self.args.merge_alpha * eli_value 
+                + (1 - self.args.merge_alpha) * self.values[str(keys_values[1])])
+            })
+
+        self.keys.update({
+            str(keys_keys[-1]+1): nn.Parameter(torch.zeros(self.batch_size, self.dk, 
+                                                           device=device))
+            })
+        self.values.update({
+            str(keys_values[-1]+1): nn.Parameter(
+                                        torch.zeros(self.L, self.batch_size, 
+                                                    self.dv * (self.args.nlayers+1), 
+                                                    device=device))
+            })
 
 
 

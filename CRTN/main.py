@@ -108,6 +108,10 @@ def parse_args():
                         ' near to compute query and attention; far to be queried')
     parser.add_argument("--neighbor_len", type=int, default=50,
                         help="length of near neighbor; only use in farnear mode")
+    parser.add_argument('--merge', action="store_true",
+                        help='merge history instead of discarding')
+    parser.add_argument("--merge_alpha", type=float, default=0.5,
+                        help="ratio of retaining old information when merging")
     parser.add_argument('--div_val', type=int, default=1,
                         help='divident value for adaptive input and softmax')
     parser.add_argument('--seed', type=int, default=1111,
