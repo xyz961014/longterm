@@ -33,5 +33,6 @@ python main.py \
     --no_summary \
     --wise_summary \
     --farnear \
+    --neighbor_len 70 \
     ${@:2}
 

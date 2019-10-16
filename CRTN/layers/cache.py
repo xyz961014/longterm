@@ -20,14 +20,24 @@ class Cache(nn.Module):
 
         batch_size = self.args.batch_size // len(self.args.devices)
 
-        self.keys = nn.ParameterDict({
-            str(i): nn.Parameter(torch.zeros(batch_size, self.dk),
-                                 requires_grad=False) 
-                                    for i in range(args.cache_N)
-        })
-        self.values = nn.ParameterDict({
-            str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, 
-                                             (args.nlayers+1) * args.nhid),
+        #self.keys = nn.ParameterDict({
+        #    str(i): nn.Parameter(torch.zeros(batch_size, self.dk),
+        #                         requires_grad=False) 
+        #                            for i in range(args.cache_N)
+        #})
+        self.keys = dict({
+            str(i): torch.zeros(batch_size, self.dk, requires_grad=False) 
+                for i in range(args.cache_N)
+            })
+        #self.values = nn.ParameterDict({
+        #    str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, 
+        #                                     (args.nlayers+1) * args.nhid),
+        #                        requires_grad=False) 
+        #                            for i in range(args.cache_N)
+        #})
+        self.values = dict({
+            str(i): torch.zeros(args.num_steps, batch_size, 
+                                (args.nlayers+1) * args.nhid, 
                                 requires_grad=False) 
                                     for i in range(args.cache_N)
         })
@@ -55,8 +65,12 @@ class Cache(nn.Module):
 
     def to(self, device):
         super().to(device)
-        self.keys = self.keys.to(device)
-        self.values = self.values.to(device)
+        #self.keys = self.keys.to(device)
+        for key in self.keys.keys():
+            self.keys[key] = self.keys[key].to(device)
+        #self.values = self.values.to(device)
+        for key in self.values.keys():
+            self.values[key] = self.values[key].to(device)
         if self.demo:
             self.words = self.words.to(device)
 
@@ -87,17 +101,26 @@ class Cache(nn.Module):
         device = self._get_keys().device 
         self.keys.clear()
         self.values.clear()
+        #self.keys.update({
+        #    str(i): nn.Parameter(torch.zeros(batch_size, self.dk),
+        #                         requires_grad=False)
+        #                for i in range(self.N)
+        #})
         self.keys.update({
-            str(i): nn.Parameter(torch.zeros(batch_size, self.dk),
-                                 requires_grad=False)
-                        for i in range(self.N)
-        })
+            str(i): torch.zeros(batch_size, self.dk, requires_grad=False) 
+                for i in range(self.N)
+            })
+        #self.values.update({
+        #    str(i): nn.Parameter(torch.zeros(self.L, batch_size, 
+        #                         (self.args.nlayers+1) * self.dv), 
+        #                         requires_grad=False) 
+        #                for i in range(self.N)
+        #})
         self.values.update({
-            str(i): nn.Parameter(torch.zeros(self.L, batch_size, 
-                                 (self.args.nlayers+1) * self.dv), 
-                                 requires_grad=False) 
+            str(i): torch.zeros(self.L, batch_size, (self.args.nlayers+1) * self.dv, 
+                                requires_grad=False)
                         for i in range(self.N)
-        })
+            })
         if self.demo:
             self.words.update({
                 str(i): nn.Parameter(torch.zeros(self.L, batch_size, 
@@ -186,11 +209,17 @@ class Cache(nn.Module):
         new_value = torch.einsum("mblh->lbmh", 
                                  inputs
                                  ).reshape(self.L, -1, (self.args.nlayers+1) * self.dv)
+        #self.keys.update({
+        #    str(n): nn.Parameter(new_key, requires_grad=False)
+        #    })
         self.keys.update({
-            str(n): nn.Parameter(new_key, requires_grad=False)
+            str(n): new_key.detach() 
             })
+        #self.values.update({
+        #    str(n): nn.Parameter(new_value, requires_grad=False)
+        #    })
         self.values.update({
-            str(n): nn.Parameter(new_value, requires_grad=False)
+            str(n): new_value.detach()
             })
         if self.demo:
             self.words.update({
@@ -213,15 +242,24 @@ class Cache(nn.Module):
 
         device = eli_key.device
 
+        #self.keys.update({
+        #    str(keys_keys[-1]+1): nn.Parameter(torch.zeros(self.batch_size, self.dk, 
+        #                                                   device=device))
+        #    })
         self.keys.update({
-            str(keys_keys[-1]+1): nn.Parameter(torch.zeros(self.batch_size, self.dk, 
-                                                           device=device))
+            str(keys_keys[-1]+1): torch.zeros(self.batch_size, self.dk, device=device)
             })
+
+        #self.values.update({
+        #    str(keys_values[-1]+1): nn.Parameter(
+        #                                torch.zeros(self.L, self.batch_size, 
+        #                                            self.dv * (self.args.nlayers+1), 
+        #                                            device=device))
+        #    })
         self.values.update({
-            str(keys_values[-1]+1): nn.Parameter(
-                                        torch.zeros(self.L, self.batch_size, 
-                                                    self.dv * (self.args.nlayers+1), 
-                                                    device=device))
+            str(keys_values[-1]+1): torch.zeros(self.L, self.batch_size, 
+                                                self.dv * (self.args.nlayers+1), 
+                                                device=device)
             })
         if self.demo:
             keys_words = list(self.words.keys())
@@ -247,25 +285,41 @@ class Cache(nn.Module):
 
         device = eli_key.device
 
+        #self.keys.update({
+        #    str(keys_keys[1]): nn.Parameter(self.args.merge_alpha * eli_key 
+        #        + (1 - self.args.merge_alpha) * self.keys[str(keys_keys[1])])
+        #    })
         self.keys.update({
-            str(keys_keys[1]): nn.Parameter(self.args.merge_alpha * eli_key 
+            str(keys_keys[1]): (self.args.merge_alpha * eli_key 
                 + (1 - self.args.merge_alpha) * self.keys[str(keys_keys[1])])
             })
 
+        #self.values.update({
+        #    str(keys_values[1]): nn.Parameter(self.args.merge_alpha * eli_value 
+        #        + (1 - self.args.merge_alpha) * self.values[str(keys_values[1])])
+        #    })
         self.values.update({
-            str(keys_values[1]): nn.Parameter(self.args.merge_alpha * eli_value 
+            str(keys_values[1]): (self.args.merge_alpha * eli_value 
                 + (1 - self.args.merge_alpha) * self.values[str(keys_values[1])])
             })
 
+        #self.keys.update({
+        #    str(keys_keys[-1]+1): nn.Parameter(torch.zeros(self.batch_size, self.dk, 
+        #                                                   device=device))
+        #    })
         self.keys.update({
-            str(keys_keys[-1]+1): nn.Parameter(torch.zeros(self.batch_size, self.dk, 
-                                                           device=device))
+            str(keys_keys[-1]+1): torch.zeros(self.batch_size, self.dk, device=device)
             })
+        #self.values.update({
+        #    str(keys_values[-1]+1): nn.Parameter(
+        #                                torch.zeros(self.L, self.batch_size, 
+        #                                            self.dv * (self.args.nlayers+1), 
+        #                                            device=device))
+        #    })
         self.values.update({
-            str(keys_values[-1]+1): nn.Parameter(
-                                        torch.zeros(self.L, self.batch_size, 
-                                                    self.dv * (self.args.nlayers+1), 
-                                                    device=device))
+            str(keys_values[-1]+1): torch.zeros(self.L, self.batch_size, 
+                                                self.dv * (self.args.nlayers+1), 
+                                                device=device)
             })
 
 
