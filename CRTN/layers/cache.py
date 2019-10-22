@@ -41,6 +41,9 @@ class Cache(nn.Module):
                                 requires_grad=False) 
                                     for i in range(args.cache_N)
         })
+
+        self.cache2buffer()
+
         if corpus is not None:
             self.words = nn.ParameterDict({
                 str(i): nn.Parameter(torch.zeros(args.num_steps, batch_size, 
@@ -62,6 +65,12 @@ class Cache(nn.Module):
         self.dv = self.args.nhid
         self.topk = self.args.cache_k
 
+    def cache2buffer(self):
+        pass
+        #for key in self.keys.keys():
+        #    self.register_buffer("key:" + key, self.keys[key])
+        #for key in self.values.keys():
+        #    self.register_buffer("value:" + key, self.values[key])
 
     def to(self, device):
         super().to(device)
@@ -121,6 +130,9 @@ class Cache(nn.Module):
                                 requires_grad=False)
                         for i in range(self.N)
             })
+        
+        self.cache2buffer()
+
         if self.demo:
             self.words.update({
                 str(i): nn.Parameter(torch.zeros(self.L, batch_size, 
@@ -225,6 +237,8 @@ class Cache(nn.Module):
             self.words.update({
                 str(n): nn.Parameter(words, requires_grad=False)
                 })
+
+        self.cache2buffer()
         
         n += 1
         self.renew_place = n
@@ -247,7 +261,8 @@ class Cache(nn.Module):
         #                                                   device=device))
         #    })
         self.keys.update({
-            str(keys_keys[-1]+1): torch.zeros(self.batch_size, self.dk, device=device)
+            str(keys_keys[-1]+1): torch.zeros(self.batch_size, self.dk, device=device,
+                                              requires_grad=False)
             })
 
         #self.values.update({
@@ -259,8 +274,12 @@ class Cache(nn.Module):
         self.values.update({
             str(keys_values[-1]+1): torch.zeros(self.L, self.batch_size, 
                                                 self.dv * (self.args.nlayers+1), 
-                                                device=device)
+                                                device=device,
+                                                requires_grad=False)
             })
+
+        self.cache2buffer()
+
         if self.demo:
             keys_words = list(self.words.keys())
             keys_words = sorted(list(map(int, keys_words)))
@@ -308,7 +327,8 @@ class Cache(nn.Module):
         #                                                   device=device))
         #    })
         self.keys.update({
-            str(keys_keys[-1]+1): torch.zeros(self.batch_size, self.dk, device=device)
+            str(keys_keys[-1]+1): torch.zeros(self.batch_size, self.dk, device=device,
+                                              requires_grad=False)
             })
         #self.values.update({
         #    str(keys_values[-1]+1): nn.Parameter(
@@ -319,8 +339,11 @@ class Cache(nn.Module):
         self.values.update({
             str(keys_values[-1]+1): torch.zeros(self.L, self.batch_size, 
                                                 self.dv * (self.args.nlayers+1), 
-                                                device=device)
+                                                device=device,
+                                                requires_grad=False)
             })
+
+        self.cache2buffer()
 
 
 
