@@ -136,11 +136,11 @@ class Cache(nn.Module):
         self.mem_end = self.args.cache_N - 1
 
         for i in range(self.mem_start, self.mem_end + 1):
-            getattr(self, "key" + str(i)).copy_(torch.zeros(batch_size, self.dk))
-            getattr(self, "value" + str(i)).copy_(torch.zeros(self.args.num_steps,
-                                                               batch_size,
-                                                               ((self.args.nlayers + 1) 
-                                                                * self.args.nhid)))
+            setattr(self, "key" + str(i), torch.zeros(batch_size, self.dk))
+            setattr(self, "value" + str(i), torch.zeros(self.args.num_steps,
+                                                         batch_size,
+                                                         ((self.args.nlayers + 1) 
+                                                         * self.args.nhid)))
         #self.keys.clear()
         #self.values.clear()
         #self.keys.update({
