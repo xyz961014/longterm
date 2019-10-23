@@ -52,6 +52,10 @@ class CRTNModel(nn.Module):
         seq_len = self.args.num_steps
         bsz = inputs.size(1)
         nhid = self.args.nhid
+
+        #self.cache.testtensor += 1
+        #print(self.cache.testtensor) 
+        #ipdb.set_trace()
         
         if self.args.farnear:
             nei_len = self.args.neighbor_len
