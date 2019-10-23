@@ -45,6 +45,8 @@ class Cache(nn.Module):
         #                            for i in range(args.cache_N)
         #})
 
+        #self.register_buffer("testtensor", torch.zeros([3,3]))
+
         for i in range(self.mem_start, self.mem_end + 1):
             self.register_buffer("key" + str(i), torch.zeros(batch_size, self.dk))
             self.register_buffer("value" + str(i), torch.zeros(args.num_steps,
