@@ -55,7 +55,6 @@ class CRTNModel(nn.Module):
 
         #self.cache.testtensor += 1
         #print(self.cache.testtensor) 
-        #ipdb.set_trace()
         
         if self.args.farnear:
             nei_len = self.args.neighbor_len
