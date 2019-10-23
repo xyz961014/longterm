@@ -48,13 +48,20 @@ class CRTNModel(nn.Module):
         self.encoder.set_batch_size(batch_size)
         self.args.batch_size = batch_size
 
-    def forward(self, inputs, draw=False, renew=True, neighbor_mem=None):
+    def forward(self, inputs, cache_key, cache_value, draw=False, renew=True, neighbor_mem=None):
         seq_len = self.args.num_steps
         bsz = inputs.size(1)
         nhid = self.args.nhid
 
-        #self.cache.testtensor += 1
-        #print(self.cache.testtensor) 
+        # get cache key and value
+        self.cache.init_key_and_value(cache_key, cache_value)
+
+        #self.cache.testtensor.copy_(self.cache.testtensor + 1)
+        #print(self.cache.testtensor)
+        #if self.cache.testtensor[0,0].item() > 5:
+        #    print(self.cache.test2) 
+        #self.cache.register_buffer("test2", self.cache.testtensor)
+        #print(self.cache.key4[0][0])
         
         if self.args.farnear:
             nei_len = self.args.neighbor_len
@@ -249,10 +256,16 @@ class CRTNModel(nn.Module):
         if renew:
             self.cache.renew(mems, inputs)
 
+        #print("after:", self.cache.key4[0][0])
+
+        keys = self.cache._get_keys()
+        values = self.cache._get_values()
+        values.transpose_(1, 2)
+
         if self.args.farnear:
-            return output, neighbor_mem, attn_map
+            return output, neighbor_mem, (keys, values)
         else:
-            return output, attn_map 
+            return output, (keys, values) 
 
 
 

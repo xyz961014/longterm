@@ -103,6 +103,18 @@ class Cache(nn.Module):
         keys = keys.view(self.N, -1, self.dk)
         return keys
 
+    def init_key_and_value(self, key, value):
+        if key is not None:
+            for i in range(self.mem_start, self.mem_end + 1):
+                idx = torch.tensor(i).to(key.device)
+                getattr(self, "key" + str(i)).copy_(key.index_select(0, idx).squeeze())
+        if value is not None:
+            value.transpose_(1, 2)
+            for i in range(self.mem_start, self.mem_end + 1):
+                idx = torch.tensor(i).to(value.device)
+                getattr(self, 
+                        "value" + str(i)).copy_(value.index_select(0, idx).squeeze())
+
     def _get_values(self):
         values = [getattr(self, "value" + str(i)) 
                   for i in range(self.mem_start, self.mem_end + 1)]
@@ -124,8 +136,8 @@ class Cache(nn.Module):
         self.mem_end = self.args.cache_N - 1
 
         for i in range(self.mem_start, self.mem_end + 1):
-            self.register_buffer("key" + str(i), torch.zeros(batch_size, self.dk))
-            self.register_buffer("value" + str(i), torch.zeros(self.args.num_steps,
+            getattr(self, "key" + str(i)).copy_(torch.zeros(batch_size, self.dk))
+            getattr(self, "value" + str(i)).copy_(torch.zeros(self.args.num_steps,
                                                                batch_size,
                                                                ((self.args.nlayers + 1) 
                                                                 * self.args.nhid)))
@@ -242,8 +254,8 @@ class Cache(nn.Module):
                                  inputs
                                  ).reshape(self.L, -1, (self.args.nlayers+1) * self.dv)
 
-        self.register_buffer("key" + str(n), new_key.detach())
-        self.register_buffer("value" + str(n), new_value.detach())
+        getattr(self, "key" + str(n)).copy_(new_key.detach())
+        getattr(self, "value" + str(n)).copy_(new_value.detach())
         #self.keys.update({
         #    str(n): nn.Parameter(new_key, requires_grad=False)
         #    })
@@ -266,21 +278,20 @@ class Cache(nn.Module):
 
         device = getattr(self, "key" + str(self.mem_start)).device
 
-        self.register_buffer("key" + str(self.mem_start), None)
-        self.register_buffer("value" + str(self.mem_start), None)
-        self.mem_start += 1
+        for i in range(self.mem_start, self.mem_end):
+            getattr(self, "key" + str(i)).copy_(getattr(self, "key" + str(i+1)))
+            getattr(self, "value" + str(i)).copy_(getattr(self, "value" + str(i+1)))
 
-        self.register_buffer("key" + str(self.mem_end + 1), torch.zeros(
+        getattr(self, "key" + str(self.mem_end)).copy_(torch.zeros(
                                                                 self.batch_size,
                                                                 self.dk,
                                                                 device=device))
-        self.register_buffer("value" + str(self.mem_end + 1), torch.zeros(
+        getattr(self, "value" + str(self.mem_end)).copy_(torch.zeros(
                                                                 self.L,
                                                                 self.batch_size,
                                                                 (self.dv * 
                                                                 (self.args.nlayers+1)),
                                                                 device=device))
-        self.mem_end += 1
 
         #keys_keys = list(self.keys.keys())
         #keys_values = list(self.values.keys())
@@ -333,30 +344,29 @@ class Cache(nn.Module):
         eli_value = getattr(self, "value" + str(self.mem_start))
         device = eli_key.device
 
-        self.register_buffer("key" + str(self.mem_start), None)
-        self.register_buffer("value" + str(self.mem_start), None)
-        self.mem_start += 1
-
-        self.register_buffer("key" + str(self.mem_start), (
+        getattr(self, "key" + str(self.mem_start)).copy_((
             self.args.merge_alpha * eli_key
             + (1 - self.args.merge_alpha) * getattr(self, 
                                                     "key" + str(self.mem_start))))
-        self.register_buffer("value" + str(self.mem_start), (
+        getattr("value" + str(self.mem_start)).copy_((
             self.args.merge_alpha * eli_key
             + (1 - self.args.merge_alpha) * getattr(self, 
                                                     "value" + str(self.mem_start))))
+        for i in range(self.mem_start + 1, self.mem_end):
+            getattr(self, "key" + str(i)).copy_(getattr(self, "key" + str(i+1)))
+            getattr(self, "value" + str(i)).copy_(getattr(self, "value" + str(i+1)))
 
-        self.register_buffer("key" + str(self.mem_end + 1), torch.zeros(
+        getattr(self, "key" + str(self.mem_end)).copy_(torch.zeros(
                                                                 self.batch_size,
                                                                 self.dk,
                                                                 device=device))
-        self.register_buffer("value" + str(self.mem_end + 1), torch.zeros(
+        getattr(self, "value" + str(self.mem_end)).copy_(torch.zeros(
                                                                 self.L,
                                                                 self.batch_size,
                                                                 (self.dv * 
                                                                 (self.args.nlayers+1)),
                                                                 device=device))
-        self.mem_end += 1
+
 
         #keys_keys = list(self.keys.keys())
         #keys_values = list(self.values.keys())

@@ -145,6 +145,8 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     else:
         device = torch.device("cpu")
     
+    key = None
+    value = None
     if args.farnear:
         mem = None
     #    mem = torch.zeros((args.nlayers+1)*args.neighbor_len, module.args.batch_size, 
@@ -158,9 +160,9 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         if args.farnear:
             if mem is not None:
                 mem = mem.detach()
-            output, mem, _ = model(data, neighbor_mem=mem)
+            output, mem, (key, value) = model(data, key, value, neighbor_mem=mem)
         else:
-            output, _ = model(data)
+            output, (key, value) = model(data, key, value)
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))
@@ -202,6 +204,8 @@ def evaluate(model, eval_loader, criterion, args):
     else:
         device = torch.device("cpu")
     
+    key = None
+    value = None
     if args.farnear:
         mem = None
     #    mem = torch.zeros((args.nlayers+1)*args.neighbor_len, args.eval_batch_size, 
@@ -214,9 +218,9 @@ def evaluate(model, eval_loader, criterion, args):
             if args.farnear:
                 if mem is not None:
                     mem = mem.detach()
-                output, mem, _ = model(data, neighbor_mem=mem)
+                output, mem, (key, value) = model(data, key, value, neighbor_mem=mem)
             else:
-                output, _ = model(data)
+                output, (key, value) = model(data, key, value)
 
             if args.adaptive:
                 loss = criterion(output.view(-1, args.nhid), targets.view(-1))
