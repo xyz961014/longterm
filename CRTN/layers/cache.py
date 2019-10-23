@@ -347,11 +347,11 @@ class Cache(nn.Module):
         getattr(self, "key" + str(self.mem_start)).copy_((
             self.args.merge_alpha * eli_key
             + (1 - self.args.merge_alpha) * getattr(self, 
-                                                    "key" + str(self.mem_start))))
-        getattr("value" + str(self.mem_start)).copy_((
-            self.args.merge_alpha * eli_key
+                                                    "key" + str(self.mem_start+1))))
+        getattr(self, "value" + str(self.mem_start)).copy_((
+            self.args.merge_alpha * eli_value
             + (1 - self.args.merge_alpha) * getattr(self, 
-                                                    "value" + str(self.mem_start))))
+                                                    "value" + str(self.mem_start+1))))
         for i in range(self.mem_start + 1, self.mem_end):
             getattr(self, "key" + str(i)).copy_(getattr(self, "key" + str(i+1)))
             getattr(self, "value" + str(i)).copy_(getattr(self, "value" + str(i+1)))
