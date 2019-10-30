@@ -69,6 +69,10 @@ class Cache(nn.Module):
         if not args.no_summary:
             self.summary = nn.Linear(args.nhid * args.num_steps, args.cache_dk)
 
+        if args.p_discard:
+            self.p_content = nn.Linear(args.nhid * args.num_steps, 1)
+            self.p_pos = nn.Linear(args.nhid * args.num_steps, 1)
+
         self.batch_size = batch_size
         self.L = self.args.num_steps
         self.N = self.args.cache_N
@@ -105,6 +109,7 @@ class Cache(nn.Module):
 
     def init_key_and_value(self, key, value):
         if key is not None:
+            key = key[1]
             for i in range(self.mem_start, self.mem_end + 1):
                 idx = torch.tensor(i).to(key.device)
                 getattr(self, "key" + str(i)).copy_(key.index_select(0, idx).squeeze())
@@ -234,12 +239,14 @@ class Cache(nn.Module):
             return attention, topk_indices
 
 
-    def renew(self, inputs, words=None):
+    def renew(self, inputs, words=None, key_num=None):
         #inputs = inputs.detach()
         inputs = inputs.transpose(1, 2)
         
         if self.args.merge:
-            self.merge()
+            key_num = self.merge(key_num)
+        elif self.args.p_discard:
+            key_num = self.p_discard(key_num)
         else:
             self.eliminate_last()
 
@@ -272,6 +279,8 @@ class Cache(nn.Module):
             self.words.update({
                 str(n): nn.Parameter(words, requires_grad=False)
                 })
+
+        return key_num
 
 
     def eliminate_last(self):
@@ -338,20 +347,19 @@ class Cache(nn.Module):
                                                     requires_grad=False)
                 })
 
-    def merge(self):
+    def merge(self, key_num):
  
         eli_key = getattr(self, "key" + str(self.mem_start))
         eli_value = getattr(self, "value" + str(self.mem_start))
         device = eli_key.device
+        alpha = self.args.merge_alpha
 
         getattr(self, "key" + str(self.mem_start)).copy_((
-            self.args.merge_alpha * eli_key
-            + (1 - self.args.merge_alpha) * getattr(self, 
-                                                    "key" + str(self.mem_start+1))))
+            alpha * eli_key
+            + (1 - alpha) * getattr(self, "key" + str(self.mem_start+1))))
         getattr(self, "value" + str(self.mem_start)).copy_((
-            self.args.merge_alpha * eli_value
-            + (1 - self.args.merge_alpha) * getattr(self, 
-                                                    "value" + str(self.mem_start+1))))
+            alpha * eli_value
+            + (1 - alpha) * getattr(self, "value" + str(self.mem_start+1))))
         for i in range(self.mem_start + 1, self.mem_end):
             getattr(self, "key" + str(i)).copy_(getattr(self, "key" + str(i+1)))
             getattr(self, "value" + str(i)).copy_(getattr(self, "value" + str(i+1)))
@@ -367,56 +375,12 @@ class Cache(nn.Module):
                                                                 (self.args.nlayers+1)),
                                                                 device=device))
 
+        key_num[0] = alpha * key_num[0] + (1 - alpha) * key_num[1] + 1
+        return key_num
 
-        #keys_keys = list(self.keys.keys())
-        #keys_values = list(self.values.keys())
-
-        #keys_keys = sorted(list(map(int, keys_keys)))
-        #keys_values = sorted(list(map(int, keys_values)))
-
-        #eli_key = self.keys.pop(str(keys_keys[0]))
-        #eli_value = self.values.pop(str(keys_values[0]))
-
-        #device = eli_key.device
-
-        #self.keys.update({
-        #    str(keys_keys[1]): nn.Parameter(self.args.merge_alpha * eli_key 
-        #        + (1 - self.args.merge_alpha) * self.keys[str(keys_keys[1])])
-        #    })
-        #self.keys.update({
-        #    str(keys_keys[1]): (self.args.merge_alpha * eli_key 
-        #        + (1 - self.args.merge_alpha) * self.keys[str(keys_keys[1])])
-        #    })
-
-        #self.values.update({
-        #    str(keys_values[1]): nn.Parameter(self.args.merge_alpha * eli_value 
-        #        + (1 - self.args.merge_alpha) * self.values[str(keys_values[1])])
-        #    })
-        #self.values.update({
-        #    str(keys_values[1]): (self.args.merge_alpha * eli_value 
-        #        + (1 - self.args.merge_alpha) * self.values[str(keys_values[1])])
-        #    })
-
-        #self.keys.update({
-        #    str(keys_keys[-1]+1): nn.Parameter(torch.zeros(self.batch_size, self.dk, 
-        #                                                   device=device))
-        #    })
-        #self.keys.update({
-        #    str(keys_keys[-1]+1): torch.zeros(self.batch_size, self.dk, device=device,
-        #                                      requires_grad=False)
-        #    })
-        #self.values.update({
-        #    str(keys_values[-1]+1): nn.Parameter(
-        #                                torch.zeros(self.L, self.batch_size, 
-        #                                            self.dv * (self.args.nlayers+1), 
-        #                                            device=device))
-        #    })
-        #self.values.update({
-        #    str(keys_values[-1]+1): torch.zeros(self.L, self.batch_size, 
-        #                                        self.dv * (self.args.nlayers+1), 
-        #                                        device=device,
-        #                                        requires_grad=False)
-        #    })
+    def p_discard(self, key_num):
+        ipdb.set_trace()
+        pass
 
 
 

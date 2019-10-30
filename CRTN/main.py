@@ -108,10 +108,14 @@ def parse_args():
                         ' near to compute query and attention; far to be queried')
     parser.add_argument("--neighbor_len", type=int, default=50,
                         help="length of near neighbor; only use in farnear mode")
+    parser.add_argument('--p_discard', action="store_true",
+                        help='discard segment according to a computed posibility')
     parser.add_argument('--merge', action="store_true",
                         help='merge history instead of discarding')
     parser.add_argument('--merge_shift', action="store_true",
                         help='shift positioning encoding when merge')
+    parser.add_argument('--merge_shift_soft', action="store_true",
+                        help='soft shift positioning encoding when merge')
     parser.add_argument("--merge_alpha", type=float, default=0.5,
                         help="ratio of retaining old information when merging")
     parser.add_argument('--div_val', type=int, default=1,
@@ -147,6 +151,7 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     else:
         device = torch.device("cpu")
     
+    key_num = None
     key = None
     value = None
     if args.farnear:
@@ -162,9 +167,9 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         if args.farnear:
             if mem is not None:
                 mem = mem.detach()
-            output, mem, (key, value) = model(data, key, value, neighbor_mem=mem)
+            output, mem, key_num, (key, value) = model(data, key_num, key, value, neighbor_mem=mem)
         else:
-            output, (key, value) = model(data, key, value)
+            output, key_num, (key, value) = model(data, key_num, key, value)
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))
@@ -206,6 +211,7 @@ def evaluate(model, eval_loader, criterion, args):
     else:
         device = torch.device("cpu")
     
+    key_num = None
     key = None
     value = None
     if args.farnear:
@@ -220,9 +226,9 @@ def evaluate(model, eval_loader, criterion, args):
             if args.farnear:
                 if mem is not None:
                     mem = mem.detach()
-                output, mem, (key, value) = model(data, key, value, neighbor_mem=mem)
+                output, mem, key_num, (key, value) = model(data, key_num, key, value, neighbor_mem=mem)
             else:
-                output, (key, value) = model(data, key, value)
+                output, key_num, (key, value) = model(data, key_num, key, value)
 
             if args.adaptive:
                 loss = criterion(output.view(-1, args.nhid), targets.view(-1))

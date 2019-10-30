@@ -535,7 +535,7 @@ class TransformerLM(nn.Module):
         else:
             return None
 
-    def forward(self, inputs, values=None, weights=None, indices=None, words=None, draw=False, neighbor_mem=None):
+    def forward(self, inputs, key_num=None, values=None, weights=None, indices=None, words=None, draw=False, neighbor_mem=None):
         #input shape should be seq_len * bsz or seq_len * bsz * emsize
         if inputs.dim() == 2:
             word_emb = self.embedding(inputs)
@@ -595,13 +595,16 @@ class TransformerLM(nn.Module):
                                     ).view(1, -1)))
 
             pos_seq = torch.arange(total_len-1, -1, -1.0, device=inputs.device)
-            if self.args.merge and self.args.merge_shift:
+            if self.args.merge:
                 alpha = self.args.merge_alpha
                 if alpha == 1.0:
                     alpha -= 1e-10
                 pos_shift = pos_seq.new_ones(seq_len)
-                pos_shift = pos_shift * seq_len * alpha / (1 - alpha)
                 pos_pad = pos_seq.new_zeros(total_len-seq_len)
+                if self.args.merge_shift:
+                    pos_shift *= seq_len * alpha / (1 - alpha)
+                elif self.args.merge_shift_soft:
+                    pos_shift *= seq_len * (key_num[0] - self.args.cache_N + 1)
                 seq_shift = torch.cat((pos_shift, pos_pad), 0)
                 pos_seq += seq_shift
             pos_seq = pos_seq.expand(batch_size, -1)
