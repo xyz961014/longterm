@@ -110,6 +110,8 @@ def parse_args():
                         help="length of near neighbor; only use in farnear mode")
     parser.add_argument('--merge', action="store_true",
                         help='merge history instead of discarding')
+    parser.add_argument('--merge_shift', action="store_true",
+                        help='shift positioning encoding when merge')
     parser.add_argument("--merge_alpha", type=float, default=0.5,
                         help="ratio of retaining old information when merging")
     parser.add_argument('--div_val', type=int, default=1,

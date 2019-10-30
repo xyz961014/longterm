@@ -595,6 +595,15 @@ class TransformerLM(nn.Module):
                                     ).view(1, -1)))
 
             pos_seq = torch.arange(total_len-1, -1, -1.0, device=inputs.device)
+            if self.args.merge and self.args.merge_shift:
+                alpha = self.args.merge_alpha
+                if alpha == 1.0:
+                    alpha -= 1e-10
+                pos_shift = pos_seq.new_ones(seq_len)
+                pos_shift = pos_shift * seq_len * alpha / (1 - alpha)
+                pos_pad = pos_seq.new_zeros(total_len-seq_len)
+                seq_shift = torch.cat((pos_shift, pos_pad), 0)
+                pos_seq += seq_shift
             pos_seq = pos_seq.expand(batch_size, -1)
             #pos_seq = torch.einsum("b,k->bk", 
             #                       torch.ones(batch_size, device=inputs.device), 
