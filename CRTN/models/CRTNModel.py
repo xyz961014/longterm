@@ -48,7 +48,8 @@ class CRTNModel(nn.Module):
         self.encoder.set_batch_size(batch_size)
         self.args.batch_size = batch_size
 
-    def forward(self, inputs, key_num, cache_key, cache_value, draw=False, renew=True, neighbor_mem=None):
+    def forward(self, inputs, cache_key, cache_value, draw=False, renew=True, neighbor_mem=None, **kwargs):
+        key_num = kwargs["key_num"]
         seq_len = self.args.num_steps
         bsz = inputs.size(1)
         nhid = self.args.nhid
@@ -236,8 +237,13 @@ class CRTNModel(nn.Module):
             weights, indices = self.cache(query)
             words = None
 
-        if key_num is None:
-            key_num = list(range(self.args.cache_N - 1, -1, -1))
+        #if key_num is None:
+        #    key_num = torch.arange(self.args.cache_N - 1, -1, -1, 
+        #                           dtype=inputs.dtype,
+        #                           device=inputs.device)
+        #    key_num = key_num.expand(len(self.args.devices), -1)
+        #    key_num.transpose_(0, 1)
+        key_num.squeeze_()
 
         #output, mems, attn_map = self.encoder(inputs, zones, weights, indices, words, draw)
         values = self.cache._get_values()
@@ -265,6 +271,7 @@ class CRTNModel(nn.Module):
         values = self.cache._get_values()
         values.transpose_(1, 2)
 
+        key_num.unsqueeze_(-1)
         if self.args.farnear:
             return output, neighbor_mem, new_key_num, (keys, values)
         else:

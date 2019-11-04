@@ -604,7 +604,7 @@ class TransformerLM(nn.Module):
                 if self.args.merge_shift:
                     pos_shift *= seq_len * alpha / (1 - alpha)
                 elif self.args.merge_shift_soft:
-                    pos_shift *= seq_len * (key_num[0] - self.args.cache_N + 1)
+                    pos_shift *= seq_len * (key_num[0].item() - self.args.cache_N + 1)
                 seq_shift = torch.cat((pos_shift, pos_pad), 0)
                 pos_seq += seq_shift
             pos_seq = pos_seq.expand(batch_size, -1)

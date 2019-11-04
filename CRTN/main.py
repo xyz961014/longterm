@@ -151,7 +151,11 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     else:
         device = torch.device("cpu")
     
-    key_num = None
+    key_num = torch.arange(args.cache_N - 1, -1, -1, 
+                           dtype=torch.float,
+                           device=device)
+    key_num = key_num.expand(len(args.devices), -1)
+    key_num.transpose_(0, 1)
     key = None
     value = None
     if args.farnear:
@@ -167,9 +171,9 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         if args.farnear:
             if mem is not None:
                 mem = mem.detach()
-            output, mem, key_num, (key, value) = model(data, key_num, key, value, neighbor_mem=mem)
+            output, mem, key_num, (key, value) = model(data, key, value, neighbor_mem=mem, key_num=key_num)
         else:
-            output, key_num, (key, value) = model(data, key_num, key, value)
+            output, key_num, (key, value) = model(data, key, value, key_num=key_num)
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))
@@ -211,7 +215,11 @@ def evaluate(model, eval_loader, criterion, args):
     else:
         device = torch.device("cpu")
     
-    key_num = None
+    key_num = torch.arange(args.cache_N - 1, -1, -1, 
+                           dtype=torch.float,
+                           device=device)
+    key_num = key_num.expand(len(args.devices), -1)
+    key_num.transpose_(0, 1)
     key = None
     value = None
     if args.farnear:
@@ -226,9 +234,9 @@ def evaluate(model, eval_loader, criterion, args):
             if args.farnear:
                 if mem is not None:
                     mem = mem.detach()
-                output, mem, key_num, (key, value) = model(data, key_num, key, value, neighbor_mem=mem)
+                output, mem, key_num, (key, value) = model(data, key, value, neighbor_mem=mem, key_num=key_num)
             else:
-                output, key_num, (key, value) = model(data, key_num, key, value)
+                output, key_num, (key, value) = model(data, key, value, key_num=key_num)
 
             if args.adaptive:
                 loss = criterion(output.view(-1, args.nhid), targets.view(-1))

@@ -348,7 +348,7 @@ class Cache(nn.Module):
                 })
 
     def merge(self, key_num):
- 
+        
         eli_key = getattr(self, "key" + str(self.mem_start))
         eli_value = getattr(self, "value" + str(self.mem_start))
         device = eli_key.device
@@ -375,7 +375,7 @@ class Cache(nn.Module):
                                                                 (self.args.nlayers+1)),
                                                                 device=device))
 
-        key_num[0] = alpha * key_num[0] + (1 - alpha) * key_num[1] + 1
+        key_num[0] = alpha * key_num[0].item() + (1 - alpha) * key_num[1].item() + 1
         return key_num
 
     def p_discard(self, key_num):
