@@ -13,6 +13,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import torchtext
 
 from torch.utils.data import DataLoader
 
@@ -34,6 +35,8 @@ def parse_args():
     parser.add_argument('--data', type=str,
                         default='/home/xyz/Documents/Dataset/ptb_sample',
                         help='location of the data corpus')
+    parser.add_argument('--data_from_torchtext', action='store_true',
+                        help='load data from torchtext')
     parser.add_argument('--dataset', type=str, default='ptb',
                         help='data corpus name')
     parser.add_argument('--eval', action='store_true',
@@ -163,17 +166,23 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     #    mem = torch.zeros((args.nlayers+1)*args.neighbor_len, module.args.batch_size, 
     #                      args.nhid, device=device)
 
-    for batch, (data, targets) in enumerate(train_loader):
-        data, targets = data.to(device), targets.to(device)
-        data, targets = data.t(), targets.t()
+    for batch, data in enumerate(train_loader):
+        if not args.data_from_torchtext:
+            text, targets = data
+            text, targets = text.t(), targets.t()
+        else:
+            text, targets = data.text, data.target
+            if not text.size(0) == args.num_steps:
+                continue
+        text, targets = text.to(device), targets.to(device)
         model.zero_grad()
         
         if args.farnear:
             if mem is not None:
                 mem = mem.detach()
-            output, mem, key_num, (key, value) = model(data, key, value, neighbor_mem=mem, key_num=key_num)
+            output, mem, key_num, (key, value) = model(text, key, value, neighbor_mem=mem, key_num=key_num)
         else:
-            output, key_num, (key, value) = model(data, key, value, key_num=key_num)
+            output, key_num, (key, value) = model(text, key, value, key_num=key_num)
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))
@@ -227,16 +236,22 @@ def evaluate(model, eval_loader, criterion, args):
     #    mem = torch.zeros((args.nlayers+1)*args.neighbor_len, args.eval_batch_size, 
     #                      args.nhid, device=device)
     with torch.no_grad():
-        for i, (data, targets) in enumerate(eval_loader):
-            data, targets = data.to(device), targets.to(device)
-            data, targets = data.t().contiguous(), targets.t().contiguous()
+        for i, data in enumerate(eval_loader):
+            if not args.data_from_torchtext:
+                text, targets = data
+                text, targets = text.t(), targets.t()
+            else:
+                text, targets = data.text, data.target
+                if not text.size(0) == args.num_steps:
+                    continue
+            text, targets = text.to(device), targets.to(device)
                 
             if args.farnear:
                 if mem is not None:
                     mem = mem.detach()
-                output, mem, key_num, (key, value) = model(data, key, value, neighbor_mem=mem, key_num=key_num)
+                output, mem, key_num, (key, value) = model(text, key, value, neighbor_mem=mem, key_num=key_num)
             else:
-                output, key_num, (key, value) = model(data, key, value, key_num=key_num)
+                output, key_num, (key, value) = model(text, key, value, key_num=key_num)
 
             if args.adaptive:
                 loss = criterion(output.view(-1, args.nhid), targets.view(-1))
@@ -302,6 +317,8 @@ def main(args):
             model_args.batch_size = 1
             model_args.eval_batch_size = 1
         args = model_args
+        
+    args.mem_len = args.cache_k * args.num_steps
 
     #Print Params
     for argk, argv in args.__dict__.items():
@@ -310,30 +327,41 @@ def main(args):
         
     ### Load Data ###
     
-    print("Loading data from %s" % args.data)
-    datatime_begin = time.time()
+    if not args.data_from_torchtext:
+        print("Loading data from %s" % args.data)
+        datatime_begin = time.time()
 
-    corpus = dataloader.Corpus(args.data)
-    args.vocab_size = corpus.vocabulary.num_words
-    eval_batch_size = args.eval_batch_size
-
-    args.mem_len = args.cache_k * args.num_steps
-
-    train_loader = corpus.get_train_loader(batch_size=args.batch_size, 
-                                           num_steps=args.num_steps)
-    valid_loader = corpus.get_valid_loader(batch_size=eval_batch_size, 
-                                           num_steps=args.num_steps)
-    test_loader = corpus.get_test_loader(batch_size=eval_batch_size, 
-                                         num_steps=args.num_steps)
+        corpus = dataloader.Corpus(args.data)
+        args.vocab_size = corpus.vocabulary.num_words
+        eval_batch_size = args.eval_batch_size
 
 
-    print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
-    print("# VOCABULARY: {} \n# train data words: {:.2e} \n# valid data words: {:.2e} \n# test data words: {:.2e} ".format(
-        corpus.vocabulary.num_words, 
-        len(corpus.train_data.raw_data), 
-        len(corpus.valid_data.raw_data), 
-        len(corpus.test_data.raw_data)))
-    print("")
+        train_loader = corpus.get_train_loader(batch_size=args.batch_size, 
+                                               num_steps=args.num_steps)
+        valid_loader = corpus.get_valid_loader(batch_size=eval_batch_size, 
+                                               num_steps=args.num_steps)
+        test_loader = corpus.get_test_loader(batch_size=eval_batch_size, 
+                                             num_steps=args.num_steps)
+
+
+        print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
+        print("# VOCABULARY: {} \n# train data words: {:.2e} \n# valid data words: {:.2e} \n# test data words: {:.2e} ".format(
+            corpus.vocabulary.num_words, 
+            len(corpus.train_data.raw_data), 
+            len(corpus.valid_data.raw_data), 
+            len(corpus.test_data.raw_data)))
+        print("")
+    else:
+        train_loader, _, _ = torchtext.datasets.PennTreebank.iters(
+                batch_size=args.batch_size, 
+                bptt_len=args.num_steps, 
+                device=devices[0])
+        _, valid_loader, test_loader = torchtext.datasets.PennTreebank.iters(
+                batch_size=args.eval_batch_size, 
+                bptt_len=args.num_steps, 
+                device=devices[0])
+        vocab = train_loader.dataset.fields["text"].vocab
+        args.vocab_size = len(vocab.itos)
     if args.eval:
         print("SKIP TRAINING")
     else:
