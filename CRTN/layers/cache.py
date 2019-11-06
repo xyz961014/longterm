@@ -109,7 +109,6 @@ class Cache(nn.Module):
 
     def init_key_and_value(self, key, value):
         if key is not None:
-            key = key[1]
             for i in range(self.mem_start, self.mem_end + 1):
                 idx = torch.tensor(i).to(key.device)
                 getattr(self, "key" + str(i)).copy_(key.index_select(0, idx).squeeze())
