@@ -606,14 +606,27 @@ class TransformerLM(nn.Module):
                 pos_seq += seq_shift
 
             if self.args.real_pos:
-                pos_key = torch.cat((key_num + 1.0, 
-                                     key_num.new_zeros(1, key_num.size(1))))
+                #pos_key = torch.cat((key_num + 1.0, 
+                #                     key_num.new_zeros(1, key_num.size(1))))
+                pos_key = key_num + 1.0 
                 pos_start = torch.einsum("ib,j->bij", pos_key, 
                                          pos_key.new_ones(seq_len) * seq_len)
+                if self.args.farnear:
+                    pos_start += self.args.neighbor_len
                 pos_seq = pos_start + torch.arange(seq_len - 1, -1, -1, 
                                                    dtype=pos_key.dtype, 
                                                    device=pos_key.device)
                 pos_seq = pos_seq.reshape(batch_size, -1)
+                if self.args.farnear:
+                    pos_tail = torch.arange(seq_len + nei_len - 1, -1, -1,
+                                            dtype=pos_key.dtype,
+                                            device=pos_key.device)
+                else:
+                    pos_tail = torch.arange(seq_len - 1, -1, -1,
+                                            dtype=pos_key.device,
+                                            device=pos_key.device)
+                pos_tail = pos_tail.expand(batch_size, -1)
+                pos_seq = torch.cat((pos_seq, pos_tail), dim=1)
             else:
                 pos_seq = pos_seq.expand(batch_size, -1)
             #pos_seq = torch.einsum("b,k->bk", 
