@@ -393,9 +393,24 @@ class Cache(nn.Module):
         discards = list(map(lambda x:x[0], discards))
         indices = list(zip(discards, list(range(key_num.size(1)))))
         key_num = key_num.contiguous() + 1.0
-        for i, j in indices:
-            key_num[i][j] = 0.
 
+        for i, j in indices:
+            for pos in range(i, key_num.size(0) - 1):
+                key_num[pos][j] = key_num[pos+1][j]
+                getattr(self, "key" + str(pos)).index_copy_(
+                            0, 
+                            key_num.new_ones(1).to(torch.long) * j,
+                            getattr(self, "key" + str(pos+1))[j].unsqueeze(0))
+                getattr(self, "value" + str(pos)).index_copy_(
+                            1, 
+                            key_num.new_ones(1).to(torch.long) * j,
+                            getattr(self, "value" + str(pos+1))[:,j,:].unsqueeze(1))
+
+        key_num.index_fill_(0, 
+                            key_num.new_ones(1).to(torch.long) * (key_num.size(0) - 1),
+                            0.)
+
+        
         return key_num
 
 
