@@ -388,6 +388,7 @@ class Cache(nn.Module):
         keys = self._get_keys()
         probs = F.relu(self.p_content(keys) + self.p_pos(keys))
         probs.transpose_(0, 1).squeeze_()
+        probs = F.softmax(probs, dim=1)
         discards = list(torch.utils.data.WeightedRandomSampler(probs, 1))
         discards = list(map(lambda x:x[0], discards))
         indices = list(zip(discards, list(range(key_num.size(1)))))

@@ -623,7 +623,7 @@ class TransformerLM(nn.Module):
                                             device=pos_key.device)
                 else:
                     pos_tail = torch.arange(seq_len - 1, -1, -1,
-                                            dtype=pos_key.device,
+                                            dtype=pos_key.dtype,
                                             device=pos_key.device)
                 pos_tail = pos_tail.expand(batch_size, -1)
                 pos_seq = torch.cat((pos_seq, pos_tail), dim=1)
