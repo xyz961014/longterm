@@ -375,12 +375,27 @@ class Cache(nn.Module):
                                                                 (self.args.nlayers+1)),
                                                                 device=device))
 
-        key_num[0] = alpha * key_num[0].item() + (1 - alpha) * key_num[1].item() + 1
+        merge_matrix = torch.eye(key_num.size(0),
+                                 key_num.size(0) - 1,
+                                 device=key_num.device)
+        merge_matrix = torch.cat((merge_matrix.new_zeros(key_num.size(0), 1), 
+                                  merge_matrix), dim=1)
+        merge_matrix[0][0], merge_matrix[0][1] = alpha, 1 - alpha
+        key_num = torch.einsum("ij,jk->ik", merge_matrix, key_num + 1)
         return key_num
 
     def p_discard(self, key_num):
-        ipdb.set_trace()
-        pass
+        keys = self._get_keys()
+        probs = F.relu(self.p_content(keys) + self.p_pos(keys))
+        probs.transpose_(0, 1).squeeze_()
+        discards = list(torch.utils.data.WeightedRandomSampler(probs, 1))
+        discards = list(map(lambda x:x[0], discards))
+        indices = list(zip(discards, list(range(key_num.size(1)))))
+        key_num = key_num.contiguous() + 1.0
+        for i, j in indices:
+            key_num[i][j] = 0.
+
+        return key_num
 
 
 

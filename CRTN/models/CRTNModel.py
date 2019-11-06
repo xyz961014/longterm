@@ -243,7 +243,6 @@ class CRTNModel(nn.Module):
         #                           device=inputs.device)
         #    key_num = key_num.expand(len(self.args.devices), -1)
         #    key_num.transpose_(0, 1)
-        key_num.squeeze_()
 
         #output, mems, attn_map = self.encoder(inputs, zones, weights, indices, words, draw)
         values = self.cache._get_values()
@@ -271,7 +270,6 @@ class CRTNModel(nn.Module):
         values = self.cache._get_values()
         values.transpose_(1, 2)
 
-        key_num.unsqueeze_(-1)
         if self.args.farnear:
             return output, neighbor_mem, new_key_num, (keys, values)
         else:

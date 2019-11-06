@@ -114,10 +114,10 @@ def parse_args():
                         help='merge history instead of discarding')
     parser.add_argument('--merge_shift', action="store_true",
                         help='shift positioning encoding when merge')
-    parser.add_argument('--merge_shift_soft', action="store_true",
-                        help='soft shift positioning encoding when merge')
     parser.add_argument("--merge_alpha", type=float, default=0.5,
                         help="ratio of retaining old information when merging")
+    parser.add_argument('--real_pos', action="store_true",
+                        help='compute position encoding according to realtime pos')
     parser.add_argument('--div_val', type=int, default=1,
                         help='divident value for adaptive input and softmax')
     parser.add_argument('--seed', type=int, default=1111,
@@ -154,7 +154,7 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     key_num = torch.arange(args.cache_N - 1, -1, -1, 
                            dtype=torch.float,
                            device=device)
-    key_num = key_num.expand(len(args.devices), -1)
+    key_num = key_num.expand(args.batch_size, -1)
     key_num.transpose_(0, 1)
     key = None
     value = None
@@ -218,7 +218,7 @@ def evaluate(model, eval_loader, criterion, args):
     key_num = torch.arange(args.cache_N - 1, -1, -1, 
                            dtype=torch.float,
                            device=device)
-    key_num = key_num.expand(len(args.devices), -1)
+    key_num = key_num.expand(args.eval_batch_size, -1)
     key_num.transpose_(0, 1)
     key = None
     value = None
