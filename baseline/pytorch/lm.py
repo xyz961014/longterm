@@ -201,6 +201,7 @@ def evaluate(model, eval_loader, criterion, args):
     if args.rnn:
         hidden = model.init_hidden(args.eval_batch_size)
     memory = None
+    len_eval = len(eval_loader)
     with torch.no_grad():
         for i, data in enumerate(eval_loader):
             if not args.data_from_torchtext:
@@ -209,6 +210,7 @@ def evaluate(model, eval_loader, criterion, args):
             else:
                 text, targets = data.text, data.target
                 if not text.size(0) == args.num_steps:
+                    len_eval -= 1
                     continue
             text, targets = text.to(device), targets.to(device)
             if args.rnn:
@@ -225,7 +227,7 @@ def evaluate(model, eval_loader, criterion, args):
 
             total_loss += loss
 
-    return total_loss / len(eval_loader)
+    return total_loss / len_eval
 
 
 def main(args):

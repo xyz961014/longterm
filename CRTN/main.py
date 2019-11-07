@@ -180,7 +180,9 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         if args.farnear:
             if mem is not None:
                 mem = mem.detach()
-            output, mem, key_num, (key, value) = model(text, key, value, neighbor_mem=mem, key_num=key_num)
+            output, mem, key_num, (key, value) = model(text, key, value, 
+                                                       neighbor_mem=mem, 
+                                                       key_num=key_num)
         else:
             output, key_num, (key, value) = model(text, key, value, key_num=key_num)
 
@@ -231,6 +233,8 @@ def evaluate(model, eval_loader, criterion, args):
     key_num.transpose_(0, 1)
     key = None
     value = None
+    len_eval = len(eval_loader)
+
     if args.farnear:
         mem = None
     #    mem = torch.zeros((args.nlayers+1)*args.neighbor_len, args.eval_batch_size, 
@@ -243,15 +247,19 @@ def evaluate(model, eval_loader, criterion, args):
             else:
                 text, targets = data.text, data.target
                 if not text.size(0) == args.num_steps:
+                    len_eval -= 1
                     continue
             text, targets = text.to(device), targets.to(device)
                 
             if args.farnear:
                 if mem is not None:
                     mem = mem.detach()
-                output, mem, key_num, (key, value) = model(text, key, value, neighbor_mem=mem, key_num=key_num)
+                output, mem, key_num, (key, value) = model(text, key, value, 
+                                                           neighbor_mem=mem, 
+                                                           key_num=key_num)
             else:
-                output, key_num, (key, value) = model(text, key, value, key_num=key_num)
+                output, key_num, (key, value) = model(text, key, value, 
+                                                      key_num=key_num)
 
             if args.adaptive:
                 loss = criterion(output.view(-1, args.nhid), targets.view(-1))
@@ -263,7 +271,7 @@ def evaluate(model, eval_loader, criterion, args):
 
     model.set_batch_size(args.batch_size)
 
-    return total_loss / len(eval_loader)
+    return total_loss / len_eval
 
 
 
