@@ -7,6 +7,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import torchtext
 
 from torch.utils.data import DataLoader
 
@@ -33,6 +34,8 @@ def parse_args():
                         help='location of the data corpus')
     parser.add_argument('--dataset', type=str, default='ptb',
                         help='data corpus name')
+    parser.add_argument('--data_from_torchtext', action='store_true',
+                        help='load data from torchtext')
     parser.add_argument('--demo', action='store_true',
                         help='demo mode')
     parser.add_argument('--adam', action='store_true',
@@ -151,15 +154,21 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     memory = None
     total_loss = 0.
 
-    for batch, (data, targets) in enumerate(train_loader):
-        data, targets = data.to(device), targets.to(device)
-        data, targets = data.t().contiguous(), targets.t().contiguous()
+    for batch, data in enumerate(train_loader):
+        if not args.data_from_torchtext:
+            text, targets = data
+            text, targets = text.t(), targets.t()
+        else:
+            text, targets = data.text, data.target
+            if not text.size(0) == args.num_steps:
+                continue
+        text, targets = text.to(device), targets.to(device)
         model.zero_grad()
         if args.rnn:
             hidden = repackage_hidden(hidden)
-            output, hidden = model(data, hidden)
+            output, hidden = model(text, hidden)
         else:
-            output, memory = model(data, memory)
+            output, memory = model(text, memory)
         if args.adaptive:
             loss = criterion(output.view(-1, args.nhid), targets.view(-1))
             loss = loss.mean()
@@ -193,14 +202,20 @@ def evaluate(model, eval_loader, criterion, args):
         hidden = model.init_hidden(args.eval_batch_size)
     memory = None
     with torch.no_grad():
-        for i, (data, targets) in enumerate(eval_loader):
-            data, targets = data.to(device), targets.to(device)
-            data, targets = data.transpose(0, 1).contiguous(), targets.transpose(0, 1).contiguous()
+        for i, data in enumerate(eval_loader):
+            if not args.data_from_torchtext:
+                text, targets = data
+                text, targets = text.t(), targets.t()
+            else:
+                text, targets = data.text, data.target
+                if not text.size(0) == args.num_steps:
+                    continue
+            text, targets = text.to(device), targets.to(device)
             if args.rnn:
                 hidden = repackage_hidden(hidden)
-                output, hidden = model(data, hidden)
+                output, hidden = model(text, hidden)
             else:
-                output, memory = model(data, memory)
+                output, memory = model(text, memory)
 
             if args.adaptive:
                 loss = criterion(output.view(-1, args.nhid), targets.view(-1))
@@ -233,18 +248,32 @@ def main(args):
 
     ### Load Data ###
     
-    print("Loading data from %s" % args.data)
-    datatime_begin = time.time()
+    if not args.data_from_torchtext:
+        print("Loading data from %s" % args.data)
+        datatime_begin = time.time()
 
-    corpus = dataloader.Corpus(args.data)
-    args.vocab_size = corpus.vocabulary.num_words
-    eval_batch_size = args.eval_batch_size
+        corpus = dataloader.Corpus(args.data)
+        args.vocab_size = corpus.vocabulary.num_words
+        eval_batch_size = args.eval_batch_size
 
-    train_loader = corpus.get_train_loader(batch_size=args.batch_size, num_steps=args.num_steps)
-    valid_loader = corpus.get_valid_loader(batch_size=eval_batch_size, num_steps=args.num_steps)
-    test_loader = corpus.get_test_loader(batch_size=eval_batch_size, num_steps=args.num_steps)
+        train_loader = corpus.get_train_loader(batch_size=args.batch_size, num_steps=args.num_steps)
+        valid_loader = corpus.get_valid_loader(batch_size=eval_batch_size, num_steps=args.num_steps)
+        test_loader = corpus.get_test_loader(batch_size=eval_batch_size, num_steps=args.num_steps)
 
-    print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
+        print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
+    else:
+        train_loader, _, _ = torchtext.datasets.PennTreebank.iters(
+                batch_size=args.batch_size, 
+                bptt_len=args.num_steps, 
+                device=device,
+                root="../../CRTN/.data")
+        _, valid_loader, test_loader = torchtext.datasets.PennTreebank.iters(
+                batch_size=args.eval_batch_size, 
+                bptt_len=args.num_steps, 
+                device=device,
+                root="../../CRTN/.data")
+        vocab = train_loader.dataset.fields["text"].vocab
+        args.vocab_size = len(vocab.itos)
 
     if args.load:
         checkpoint = torch.load(args.load)

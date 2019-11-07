@@ -21,7 +21,7 @@ python lm.py \
     --d_ff 1300 \
     --num_steps 70 \
     --mem_len 210 \
-    --epochs 300 \
+    --epochs 200 \
     --batch_size 50 \
     --dropout 0.45 \
     --attn_type 1 \
