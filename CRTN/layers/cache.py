@@ -247,7 +247,7 @@ class Cache(nn.Module):
         #inputs = inputs.detach()
         inputs = inputs.transpose(1, 2)
 
-        self.detach_memory()
+        #self.detach_memory()
         
         if self.args.merge:
             key_num = self.merge(key_num)

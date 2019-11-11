@@ -252,6 +252,8 @@ class CRTNModel(nn.Module):
 
         output, mems, attn_map = self.encoder(inputs, key_num, values, weights, 
                                               indices, words, draw, neighbor_mem)
+
+        self.cache.detach_memory()
         
         if self.args.farnear:
             total_mem = torch.cat((neighbor_mem, mems), 1)
