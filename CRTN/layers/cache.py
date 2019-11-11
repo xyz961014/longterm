@@ -132,6 +132,11 @@ class Cache(nn.Module):
         words = words.view(-1, self.N, self.L)
         return words
 
+    def detach_memory(self):
+        for i in range(self.N):
+            setattr(self, "key" + str(i), getattr(self, "key" + str(i)).detach())
+            setattr(self, "value" + str(i), getattr(self, "value" + str(i)).detach())
+
     def set_batch_size(self, batch_size):
         self.batch_size = batch_size
         device = self._get_keys().device 
@@ -241,6 +246,8 @@ class Cache(nn.Module):
     def renew(self, inputs, words=None, key_num=None):
         #inputs = inputs.detach()
         inputs = inputs.transpose(1, 2)
+
+        self.detach_memory()
         
         if self.args.merge:
             key_num = self.merge(key_num)
@@ -262,18 +269,8 @@ class Cache(nn.Module):
 
         getattr(self, "key" + str(n)).copy_(new_key.detach())
         getattr(self, "value" + str(n)).copy_(new_value.detach())
-        #self.keys.update({
-        #    str(n): nn.Parameter(new_key, requires_grad=False)
-        #    })
-        #self.keys.update({
-        #    str(n): new_key.detach() 
-        #    })
-        #self.values.update({
-        #    str(n): nn.Parameter(new_value, requires_grad=False)
-        #    })
-        #self.values.update({
-        #    str(n): new_value.detach()
-        #    })
+
+
         if self.demo:
             self.words.update({
                 str(n): nn.Parameter(words, requires_grad=False)
@@ -384,30 +381,64 @@ class Cache(nn.Module):
         return key_num
 
     def p_discard(self, key_num):
+        key_num = key_num.detach()
         keys = self._get_keys()
-        probs = F.relu(self.p_content(keys) + self.p_pos(keys))
-        probs.transpose_(0, 1).squeeze_()
-        probs = F.softmax(probs, dim=1)
-        discards = torch.utils.data.WeightedRandomSampler(probs, 1)
+        probs = F.sigmoid(self.p_content(keys) + self.p_pos(keys))
+        probs = probs.transpose(0, 1)
+        probs = probs.squeeze()
+        probs = F.gumbel_softmax(probs, hard=True, dim=1)
+        bsz, klen = probs.size(0), probs.size(1)
 
-        key_num = key_num.contiguous() + 1.0
+        _, indices = probs.topk(1, dim=1)
+        move_matrix = torch.einsum("bi,ij->bij",
+                                    1.0 - probs, 
+                                    torch.eye(klen, device=probs.device))
+        move_matrix = move_matrix.reshape(-1, klen)
 
-        for j, discard in enumerate(discards):
-            i = discard[0]
-            for pos in range(i, key_num.size(0) - 1):
-                key_num[pos][j] = key_num[pos+1][j]
-                getattr(self, "key" + str(pos)).index_copy_(
-                            0, 
-                            key_num.new_ones(1).to(torch.long) * j,
-                            getattr(self, "key" + str(pos+1))[j].unsqueeze(0))
-                getattr(self, "value" + str(pos)).index_copy_(
-                            1, 
-                            key_num.new_ones(1).to(torch.long) * j,
-                            getattr(self, "value" + str(pos+1))[:,j,:].unsqueeze(1))
+        ind_sel = list(range(bsz * klen))
 
-        key_num.index_fill_(0, 
-                            key_num.new_ones(1).to(torch.long) * (key_num.size(0) - 1),
-                            0.)
+        for i in range(bsz):
+            ind_del = i * klen + indices[i].item()
+            ind_last = (i + 1) * klen - 1
+            ind_sel.insert(ind_last + 1, ind_sel[ind_del])
+            del ind_sel[ind_del]
+
+        ind_sel = torch.tensor(ind_sel, dtype=torch.long, device=probs.device)
+        move_matrix = move_matrix.index_select(0, ind_sel)
+        move_matrix = move_matrix.reshape(bsz, klen, klen)
+
+        key_num = torch.einsum("bij,jb->ib", move_matrix, key_num)
+
+        keys = self._get_keys()
+        values = self._get_values()
+
+        keys = torch.einsum("bij,jbh->ibh", move_matrix, keys)
+        values = torch.einsum("bij,jlbh->ilbh", move_matrix, values)
+
+        for i in range(klen):
+            setattr(self, "key" + str(i), keys[i])
+            setattr(self, "value" + str(i), values[i])
+
+
+
+        #for j, discard in enumerate(discards):
+        #    i = discard[0]
+        #    for pos in range(i, key_num.size(0) - 1):
+
+        #        key_num[pos][j] = key_num[pos+1][j]
+
+        #        getattr(self, "key" + str(pos)).index_copy_(
+        #                    0, 
+        #                    key_num.new_ones(1).to(torch.long) * j,
+        #                    getattr(self, "key" + str(pos+1))[j].unsqueeze(0))
+        #        getattr(self, "value" + str(pos)).index_copy_(
+        #                    1, 
+        #                    key_num.new_ones(1).to(torch.long) * j,
+        #                    getattr(self, "value" + str(pos+1))[:,j,:].unsqueeze(1))
+
+        #key_num.index_fill_(0, 
+        #                    key_num.new_ones(1).to(torch.long) * (key_num.size(0) - 1),
+        #                    0.)
 
         
         return key_num

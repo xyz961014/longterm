@@ -1,6 +1,6 @@
 #!/bin/bash
 
-kernprof -lv main.py \
+python -m torch.utils.bottleneck main.py \
     --adam \
     --lr 0.00025 \
     --nlayers 3 \
