@@ -608,6 +608,12 @@ class TransformerLM(nn.Module):
             if self.args.real_pos:
                 #pos_key = torch.cat((key_num + 1.0, 
                 #                     key_num.new_zeros(1, key_num.size(1))))
+                if key_num is None:
+                    key_num = torch.arange(indices.size(0) - 1, -1, -1, 
+                                           dtype=torch.float,
+                                           device=inputs.device)
+                    key_num = key_num.expand(self.args.batch_size, -1)
+                    key_num.transpose_(0, 1)
                 pos_key = key_num + 1.0 
                 pos_start = torch.einsum("ib,j->bij", pos_key, 
                                          pos_key.new_ones(seq_len) * seq_len)
