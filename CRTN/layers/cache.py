@@ -381,7 +381,6 @@ class Cache(nn.Module):
         return key_num
 
     def p_discard(self, key_num):
-        key_num = key_num.detach()
         keys = self._get_keys()
         probs = F.sigmoid(self.p_content(keys) + self.p_pos(keys))
         probs = probs.transpose(0, 1)

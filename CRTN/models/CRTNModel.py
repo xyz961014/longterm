@@ -265,6 +265,7 @@ class CRTNModel(nn.Module):
 
         if renew:
             new_key_num = self.cache.renew(mems, inputs, key_num)
+            new_key_num = new_key_num.detach()
 
         #print("after:", self.cache.key4[0][0])
 
