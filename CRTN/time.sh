@@ -6,8 +6,8 @@ python -m torch.utils.bottleneck main.py \
     --nlayers 3 \
     --dropout 0.1 \
     --nhead 4 \
-    --emsize 100 \
-    --nhid 100 \
+    --emsize 50 \
+    --nhid 50 \
     --batch_size 10 \
     --num_steps 40 \
     --tied \
@@ -15,8 +15,8 @@ python -m torch.utils.bottleneck main.py \
     --cache_k 3 \
     --cache_N 5 \
     --seed 1111 \
-    --epochs 100 \
-    --log-interval 10 \
+    --epochs 1 \
+    --log-interval 100 \
     --save demo \
     --adaptive \
     --no_summary \
