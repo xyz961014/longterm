@@ -438,6 +438,7 @@ def main(args):
     elif args.scheduler == "constant":
         scheduler = None
 
+
     if not args.eval:
         try:
             best_eval_loss = float('inf')

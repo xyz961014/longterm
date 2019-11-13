@@ -48,8 +48,7 @@ class CRTNModel(nn.Module):
         self.encoder.set_batch_size(batch_size)
         self.args.batch_size = batch_size
 
-    def forward(self, inputs, cache_key, cache_value, draw=False, renew=True, neighbor_mem=None, **kwargs):
-        key_num = kwargs["key_num"]
+    def forward(self, inputs, cache_key, cache_value, key_num=None, draw=False, renew=True, neighbor_mem=None, **kwargs):
         seq_len = self.args.num_steps
         bsz = inputs.size(1)
         nhid = self.args.nhid
