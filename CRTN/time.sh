@@ -1,6 +1,7 @@
 #!/bin/bash
 
 python -m torch.utils.bottleneck main.py \
+    --data_from_torchtext \
     --adam \
     --lr 0.00025 \
     --nlayers 3 \
