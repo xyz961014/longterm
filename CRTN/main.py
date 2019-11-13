@@ -143,6 +143,7 @@ class DataParallel(nn.DataParallel):
     def set_batch_size(self, batch_size):
         batch_size = batch_size // len(self.device_ids)
         self.module.set_batch_size(batch_size)
+        self.batch_size = batch_size
 
 def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     model.train()
@@ -154,7 +155,7 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     else:
         device = torch.device("cpu")
     
-    key_num = torch.arange(args.cache_N - 1, -1, -1, 
+    key_num = torch.arange(args.cache_N, 0, -1, 
                            dtype=torch.float,
                            device=device)
     key_num = key_num.expand(args.batch_size, -1)
@@ -180,11 +181,20 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         if args.farnear:
             if mem is not None:
                 mem = mem.detach()
-            output, mem, key_num, (key, value) = model(text, key, value, 
+            output, mems, mem, key_num = model(text, key, value, 
                                                        neighbor_mem=mem, 
                                                        key_num=key_num)
         else:
-            output, key_num, (key, value) = model(text, key, value, key_num=key_num)
+            output, mems, key_num = model(text, key, value, key_num=key_num)
+
+        module.cache.set_batch_size(args.batch_size)
+        module.cache.init_key_and_value(key, value)
+        module.cache.detach_memory()
+        key_num = module.cache.renew(mems, text, key_num)
+        key, value = (module.cache._get_keys(), 
+                      module.cache._get_values().transpose(1, 2))
+        module.cache.set_batch_size(args.batch_size // len(args.devices))
+
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))
@@ -226,7 +236,7 @@ def evaluate(model, eval_loader, criterion, args):
     else:
         device = torch.device("cpu")
     
-    key_num = torch.arange(args.cache_N - 1, -1, -1, 
+    key_num = torch.arange(args.cache_N, 0, -1, 
                            dtype=torch.float,
                            device=device)
     key_num = key_num.expand(args.eval_batch_size, -1)
@@ -251,15 +261,33 @@ def evaluate(model, eval_loader, criterion, args):
                     continue
             text, targets = text.to(device), targets.to(device)
                 
+
             if args.farnear:
                 if mem is not None:
                     mem = mem.detach()
-                output, mem, key_num, (key, value) = model(text, key, value, 
-                                                           neighbor_mem=mem, 
-                                                           key_num=key_num)
+                output, mems, mem, key_num = model(text, key, value, 
+                                                   neighbor_mem=mem, 
+                                                   key_num=key_num)
             else:
-                output, key_num, (key, value) = model(text, key, value, 
-                                                      key_num=key_num)
+                output, mems, key_num = model(text, key, value, key_num=key_num)
+
+            module.cache.set_batch_size(args.eval_batch_size)
+            module.cache.init_key_and_value(key, value)
+            module.cache.detach_memory()
+            key_num = module.cache.renew(mems, text, key_num)
+            key, value = (module.cache._get_keys(), 
+                          module.cache._get_values().transpose(1, 2))
+            module.cache.set_batch_size(args.eval_batch_size // len(args.devices))
+
+            #if args.farnear:
+            #    if mem is not None:
+            #        mem = mem.detach()
+            #    output, mem, key_num, (key, value) = model(text, key, value, 
+            #                                               neighbor_mem=mem, 
+            #                                               key_num=key_num)
+            #else:
+            #    output, key_num, (key, value) = model(text, key, value, 
+            #                                          key_num=key_num)
 
             if args.adaptive:
                 loss = criterion(output.view(-1, args.nhid), targets.view(-1))

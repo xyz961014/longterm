@@ -252,7 +252,6 @@ class CRTNModel(nn.Module):
         output, mems, attn_map = self.encoder(inputs, key_num, values, weights, 
                                               indices, words, draw, neighbor_mem)
 
-        self.cache.detach_memory()
         
         if self.args.farnear:
             total_mem = torch.cat((neighbor_mem, mems), 1)
@@ -262,20 +261,20 @@ class CRTNModel(nn.Module):
             #neighbor_mem = total_mem[:,seq_len:,:,:]
             neighbor_mem = neighbor_mem.reshape(-1, bsz, nhid)
 
-        if renew:
-            new_key_num = self.cache.renew(mems, inputs, key_num)
-            new_key_num = new_key_num.detach()
+        #self.cache.detach_memory()
+        #if renew:
+        #    new_key_num = self.cache.renew(mems, inputs, key_num)
 
         #print("after:", self.cache.key4[0][0])
 
-        keys = self.cache._get_keys()
-        values = self.cache._get_values()
-        values.transpose_(1, 2)
+        #keys = self.cache._get_keys()
+        #values = self.cache._get_values()
+        #values = values.transpose(1, 2)
 
         if self.args.farnear:
-            return output, neighbor_mem, new_key_num, (keys, values)
+            return output, mems, neighbor_mem, key_num
         else:
-            return output, new_key_num, (keys, values) 
+            return output, mems, key_num 
 
 
 

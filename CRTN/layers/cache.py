@@ -113,7 +113,7 @@ class Cache(nn.Module):
                 idx = torch.tensor(i).to(key.device)
                 getattr(self, "key" + str(i)).copy_(key.index_select(0, idx).squeeze())
         if value is not None:
-            value.transpose_(1, 2)
+            value = value.transpose(1, 2)
             for i in range(self.mem_start, self.mem_end + 1):
                 idx = torch.tensor(i).to(value.device)
                 getattr(self, 
@@ -267,8 +267,8 @@ class Cache(nn.Module):
                                  inputs
                                  ).reshape(self.L, -1, (self.args.nlayers+1) * self.dv)
 
-        getattr(self, "key" + str(n)).copy_(new_key.detach())
-        getattr(self, "value" + str(n)).copy_(new_value.detach())
+        setattr(self, "key" + str(n), new_key.detach())
+        setattr(self, "value" + str(n), new_value.detach())
 
 
         if self.demo:
@@ -276,7 +276,7 @@ class Cache(nn.Module):
                 str(n): nn.Parameter(words, requires_grad=False)
                 })
 
-        return key_num
+        return key_num.detach()
 
 
     def eliminate_last(self):
@@ -284,15 +284,13 @@ class Cache(nn.Module):
         device = getattr(self, "key" + str(self.mem_start)).device
 
         for i in range(self.mem_start, self.mem_end):
-            getattr(self, "key" + str(i)).copy_(getattr(self, "key" + str(i+1)))
-            getattr(self, "value" + str(i)).copy_(getattr(self, "value" + str(i+1)))
+            setattr(self, "key" + str(i), getattr(self, "key" + str(i+1)))
+            setattr(self, "value" + str(i), getattr(self, "value" + str(i+1)))
 
-        getattr(self, "key" + str(self.mem_end)).copy_(torch.zeros(
-                                                                self.batch_size,
-                                                                self.dk,
-                                                                device=device))
-        getattr(self, "value" + str(self.mem_end)).copy_(torch.zeros(
-                                                                self.L,
+        setattr(self, "key" + str(self.mem_end), torch.zeros(self.batch_size,
+                                                              self.dk,
+                                                              device=device))
+        setattr(self, "value" + str(self.mem_end), torch.zeros(self.L,
                                                                 self.batch_size,
                                                                 (self.dv * 
                                                                 (self.args.nlayers+1)),
@@ -350,26 +348,24 @@ class Cache(nn.Module):
         device = eli_key.device
         alpha = self.args.merge_alpha
 
-        getattr(self, "key" + str(self.mem_start)).copy_((
+        setattr(self, "key" + str(self.mem_start), (
             alpha * eli_key
             + (1 - alpha) * getattr(self, "key" + str(self.mem_start+1))))
-        getattr(self, "value" + str(self.mem_start)).copy_((
+        setattr(self, "value" + str(self.mem_start), (
             alpha * eli_value
             + (1 - alpha) * getattr(self, "value" + str(self.mem_start+1))))
         for i in range(self.mem_start + 1, self.mem_end):
-            getattr(self, "key" + str(i)).copy_(getattr(self, "key" + str(i+1)))
-            getattr(self, "value" + str(i)).copy_(getattr(self, "value" + str(i+1)))
+            setattr(self, "key" + str(i), getattr(self, "key" + str(i+1)))
+            setattr(self, "value" + str(i), getattr(self, "value" + str(i+1)))
 
-        getattr(self, "key" + str(self.mem_end)).copy_(torch.zeros(
-                                                                self.batch_size,
-                                                                self.dk,
-                                                                device=device))
-        getattr(self, "value" + str(self.mem_end)).copy_(torch.zeros(
-                                                                self.L,
-                                                                self.batch_size,
-                                                                (self.dv * 
-                                                                (self.args.nlayers+1)),
-                                                                device=device))
+        setattr(self, "key" + str(self.mem_end), torch.zeros(self.batch_size,
+                                                             self.dk,
+                                                             device=device))
+        setattr(self, "value" + str(self.mem_end), torch.zeros(self.L,
+                                                               self.batch_size,
+                                                               (self.dv * 
+                                                               (self.args.nlayers+1)),
+                                                               device=device))
 
         merge_matrix = torch.eye(key_num.size(0),
                                  key_num.size(0) - 1,
@@ -407,6 +403,7 @@ class Cache(nn.Module):
         move_matrix = move_matrix.reshape(bsz, klen, klen)
 
         key_num = torch.einsum("bij,jb->ib", move_matrix, key_num)
+        key_num = key_num + 1.0
 
         keys = self._get_keys()
         values = self._get_values()
