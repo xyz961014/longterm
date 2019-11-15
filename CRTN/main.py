@@ -99,7 +99,7 @@ def parse_args():
                         'of segments in the cache')
     parser.add_argument('--query_method', type=str, default='vanilla', 
                         choices=['fixed_length', 'last_l', 'middle_l', 
-                                 'linear', 'vanilla'],
+                                 'linear', 'single_linear', 'vanilla'],
                         help='query method to use. vanilla indicates just use '
                         'current segment to query, other methods link previous '
                         'segment. last_l and middle_l only work in wise_summary '

@@ -37,6 +37,9 @@ class CRTNModel(nn.Module):
                                          self.args.num_steps)
             else:
                 self.shorten = nn.Linear(2 * self.args.num_steps, self.args.num_steps)
+        elif args.query_method == "single_linear":
+            self.enlarge = nn.Linear(self.args.nhid, 
+                                     self.args.nhid * self.args.num_steps)
 
     def to(self, device):
         super().to(device)

@@ -16,7 +16,7 @@ import ipdb
 import torchsnooper
 import visdom
 
-class PostionalEmbedding(nn.Module):
+class PositionalEmbedding(nn.Module):
     def __init__(self, d_model):
         super().__init__()
             
@@ -473,7 +473,7 @@ class TransformerLM(nn.Module):
             else:
                 self.embedding = nn.Embedding(vocab_size, d_embedding, padding_idx=0)
 
-        self.pos_emb = PostionalEmbedding(d_model)
+        self.pos_emb = PositionalEmbedding(d_model)
 
 
 

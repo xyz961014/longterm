@@ -6,6 +6,7 @@ import math
 from copy import deepcopy
 
 from CRTN.layers.attention import DotProductAttention
+from CRTN.layers.transformer import PositionalEmbedding
 
 class Cache(nn.Module):
     def __init__(self, args, corpus=None):
@@ -78,6 +79,8 @@ class Cache(nn.Module):
         self.N = self.args.cache_N
         self.dv = self.args.nhid
         self.topk = self.args.cache_k
+
+        self.pos_emb = PositionalEmbedding(args.nhid)
 
     #def cache2buffer(self):
     #    for ik, key in enumerate(self.keys.keys()):
@@ -378,7 +381,15 @@ class Cache(nn.Module):
 
     def p_discard(self, key_num):
         keys = self._get_keys()
-        probs = F.sigmoid(self.p_content(keys) + self.p_pos(keys))
+        pos_start = torch.einsum("ib,j->ibj", 
+                                 key_num, key_num.new_ones(self.L) * (self.L))
+        pos_seq = pos_start + torch.arange(self.L - 1, -1, -1, 
+                                           dtype=key_num.dtype,
+                                           device=key_num.device)
+        pos_seq = pos_seq.reshape(-1, self.L)
+        pos_emb = self.pos_emb(pos_seq)
+        pos_emb = pos_emb.transpose(0, 1).reshape(self.N, -1, self.L * self.dv)
+        probs = F.sigmoid(self.p_content(keys) + self.p_pos(pos_emb))
         probs = probs.transpose(0, 1)
         probs = probs.squeeze()
         probs = F.gumbel_softmax(probs, hard=True, dim=1)
