@@ -5,6 +5,7 @@ from torchtext import data
 from torchtext import datasets
 import ipdb
 import time
+from nltk import sent_tokenize
 
 
 
@@ -15,13 +16,19 @@ class WPDataset(object):
 
         def complete(num_steps, data, vocab):
             com_len = -len(data[0]) % num_steps
-            com_list = [vocab.stoi["<pad>"]] * com_len
+            com_list = [vocab.stoi["<pad>"]] * (com_len - 1)
+            if com_len > 0:
+                com_list = [vocab.stoi["<eos>"]] + com_list
             for i in range(len(data)):
                 data[i] += com_list
-
             return data
 
-        self.TEXT = data.Field(sequential=True, pad_first=True, 
+        #def add_eos(corpus):
+        #    corpus = " ".join(corpus)
+        #    sentences = sent_tokenize(corpus)
+        #    return " <eos> ".join(sentences).split()
+
+        self.TEXT = data.Field(sequential=True, pad_first=True, eos_token="<eos>",
                                postprocessing=lambda x, y: complete(num_steps, x, y))
         self.TRG = data.Field(sequential=True, eos_token="<eos>")
 
@@ -51,11 +58,15 @@ class WPDataset(object):
 if __name__ == "__main__":
     path = "/home/xyz/Documents/Dataset/writingpromts/toy/"
     start_time = time.time()
-    dataloader = WPDataset(path, 10000, 20)
+    dataloader = WPDataset(path, 10000, 200)
     print("load time: %.2f s" % (time.time() - start_time))
-    ta = dataloader.get_train_loader(5, device="cuda:0")
+    ta = dataloader.get_train_loader(12, device="cuda:0")
     va = dataloader.get_valid_loader(5, device="cuda:0")
     vocab = dataloader.TRG.vocab
+    for data in ta:
+        text, trg = data.text, data.target
+        textlist = text[:,0].tolist()
+        ipdb.set_trace()
     while True:
         tait = next(ta.__iter__())
         vait = next(va.__iter__())

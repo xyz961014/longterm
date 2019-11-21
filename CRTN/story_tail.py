@@ -63,6 +63,8 @@ def parse_args():
                         help='lr scheduler to use')
     parser.add_argument('--clip', type=float, default=0.25,
                         help='gradient clipping')
+    parser.add_argument('--beam_size', type=int, default=4,
+                        help='beam size of beam search when inferencing')
     parser.add_argument('--epochs', type=int, default=200,
                         help='upper epoch limit')
     parser.add_argument('--batch_size', type=int, default=50, metavar='N',
@@ -193,6 +195,14 @@ def batch_bleu(vocab, pred, trg):
     return (bleu, [" ".join(p) for p in pred_sentences], 
                   [" ".join(t) for t in trg_sentences])
 
+def get_real_ind_and_prob(head_prob, tails, beam_size):
+    tail_len = len(tails)
+    for i in range(tail_len):
+        base_prob = head_prob[:,i-3].unsqueeze(1)
+        tails[i] += base_prob
+    real_prob = torch.cat((head_prob[:,:-tail_len], *tails), 1)
+    word_prob, word_ind = real_prob.topk(beam_size)
+    return word_ind, word_prob
 
 def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     model.train()
@@ -290,6 +300,7 @@ def evaluate(model, eval_loader, criterion, args):
             if args.farnear:
                 mem = None
 
+            # load history
             for i, block in enumerate(srcs):
                 if args.farnear:
                     if mem is not None:
@@ -306,33 +317,52 @@ def evaluate(model, eval_loader, criterion, args):
                                                               key, value, hidden, 
                                                               block, 
                                                               key_num)
+            # begin to evaluate
+
+            candidates = [[block.new_ones(eval_batch_size, 0), 
+                          output.new_zeros(eval_batch_size, 1)]]
 
             for ind in range(args.num_steps):
                 if block[ind][0].item() == 1:
+                    candidates[0].append(output[ind-1])
                     break
+            else:
+                candidates[0].append(output[ind])
+
             while ind < args.num_steps - 1:
-                out_ind = output[ind-1]
-                head_prob, tails = criterion(out_ind, block[ind-1], output=True)
-                word_ind = head_prob.max(1)[1]
-                for i, wid in enumerate(word_ind):
-                    if wid >= args.cutoffs[0]:
-                        cluster = wid - args.cutoffs[0]
-                        real_wid = (tails[cluster][i,:].max(0)[1] 
-                                    + args.cutoffs[cluster])
-                        word_ind[i] = real_wid
+                ind_tensor = block.new_ones(0)
+                prob_tensor = output.new_zeros(0)
+                for old_inds, old_probs, out in candidates:
+                    head_prob, tails = criterion(out, block[0], output=True)
+                    word_ind, word_prob = get_real_ind_and_prob(head_prob, tails, 
+                                                                args.beam_size)
+                    old_inds = old_inds.unsqueeze(1).expand(-1, args.beam_size, -1)
+                    word_ind = word_ind.unsqueeze(-1)
+                    word_ind = torch.cat((old_inds, word_ind), -1)
+                    word_prob = old_probs + word_prob
+
+                    ind_tensor = torch.cat((ind_tensor, word_ind), 1)
+                    prob_tensor = torch.cat((prob_tensor, word_prob), 1)
+
+                chosen_prob, chosen_ind = prob_tensor.topk(args.beam_size)
+                gather_id = chosen_ind.unsqueeze(-1).expand(-1, -1, 
+                                                            ind_tensor.size(-1))
+                chosen_ind = torch.gather(ind_tensor, 1, gather_id)
+
+                candidates = []
+                for i in range(args.beam_size): 
+                    cand = [chosen_ind[:,i,:], chosen_prob[:,i].unsqueeze(-1)]
+
+                    block[ind] = chosen_ind[:,i,-1]
+                    if args.farnear:
+                        output, hidden, mem, key_num = model(block, key, value, 
+                                                             neighbor_mem=mem, 
+                                                             key_num=key_num)
                     else:
-                        real_wid = wid
-                    word = vocab.itos[real_wid]
-                    if word == "<eos>":
-                        numofeos[i] = 1
-                pred.append(word_ind)
-                block[ind] = word_ind
-                if args.farnear:
-                    output, hidden, mem, key_num = model(block, key, value, 
-                                                         neighbor_mem=mem, 
-                                                         key_num=key_num)
-                else:
-                    output, hidden, key_num = model(block, key, value, key_num=key_num)
+                        output, hidden, key_num = model(block, key, value, 
+                                                        key_num=key_num)
+                    cand.append(output[ind])
+                    candidates.append(cand)
                 ind += 1
 
             model, key_num, key, value = update_cache(model, eval_batch_size, 
@@ -341,32 +371,39 @@ def evaluate(model, eval_loader, criterion, args):
             step = 0
             block = torch.ones_like(block)
             while step < args.trgmax - args.num_steps:
-                ind = step % args.num_steps
+                ind_tensor = block.new_ones(0)
+                prob_tensor = output.new_zeros(0)
+                for old_inds, old_probs, out in candidates:
+                    head_prob, tails = criterion(out, block[0], output=True)
+                    word_ind, word_prob = get_real_ind_and_prob(head_prob, tails, 
+                                                                args.beam_size)
+                    old_inds = old_inds.unsqueeze(1).expand(-1, args.beam_size, -1)
+                    word_ind = word_ind.unsqueeze(-1)
+                    word_ind = torch.cat((old_inds, word_ind), -1)
+                    word_prob = old_probs + word_prob
 
-                out_ind = output[ind-1]
-                head_prob, tails = criterion(out_ind, block[ind-1], output=True)
-                word_ind = head_prob.max(1)[1]
-                for i, wid in enumerate(word_ind):
-                    if wid >= args.cutoffs[0]:
-                        cluster = wid - args.cutoffs[0]
-                        real_wid = (tails[cluster][i,:].max(0)[1] 
-                                    + args.cutoffs[cluster])
-                        word_ind[i] = real_wid
+                    ind_tensor = torch.cat((ind_tensor, word_ind), 1)
+                    prob_tensor = torch.cat((prob_tensor, word_prob), 1)
+
+                chosen_prob, chosen_ind = prob_tensor.topk(args.beam_size)
+                gather_id = chosen_ind.unsqueeze(-1).expand(-1, -1, 
+                                                            ind_tensor.size(-1))
+                chosen_ind = torch.gather(ind_tensor, 1, gather_id)
+
+                candidates = []
+                for i in range(args.beam_size): 
+                    cand = [chosen_ind[:,i,:], chosen_prob[:,i].unsqueeze(-1)]
+
+                    block[ind] = chosen_ind[:,i,-1]
+                    if args.farnear:
+                        output, hidden, mem, key_num = model(block, key, value, 
+                                                             neighbor_mem=mem, 
+                                                             key_num=key_num)
                     else:
-                        real_wid = wid
-                    word = vocab.itos[real_wid]
-                    if word == "<eos>":
-                        numofeos[i] = 1
-                pred.append(word_ind)
-                block[ind] = word_ind
-                if sum(numofeos) >= eval_batch_size:
-                    break
-                if args.farnear:
-                    output, hidden, mem, key_num = model(block, key, value, 
-                                                         neighbor_mem=mem, 
-                                                         key_num=key_num)
-                else:
-                    output, hidden, key_num = model(block, key, value, key_num=key_num)
+                        output, hidden, key_num = model(block, key, value, 
+                                                        key_num=key_num)
+                    cand.append(output[ind])
+                    candidates.append(cand)
                 if ind == args.num_steps - 1: 
                     model, key_num, key, value = update_cache(model, 
                                                               eval_batch_size, 
@@ -376,7 +413,11 @@ def evaluate(model, eval_loader, criterion, args):
                     block = torch.ones_like(block)
 
                 step += 1
-            pred_tensor = torch.cat(pred, 0).view(-1, eval_batch_size)
+            final_ind = torch.cat([x[0].unsqueeze(0) for x in candidates], 0)
+            final_prob = torch.cat([x[1] for x in candidates], 1)
+            _, max_ind = final_prob.max(1)
+            max_ind = max_ind.unsqueeze(-1).expand(-1, final_ind.size(-1)).unsqueeze(0)
+            pred_tensor = torch.gather(final_ind, 0, max_ind).squeeze().t()
             b_bleu, b_pred, b_trg = batch_bleu(vocab, pred_tensor, trg)
             bleu += b_bleu
             preds += b_pred
@@ -389,7 +430,6 @@ def evaluate(model, eval_loader, criterion, args):
 def main(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    savepath = "../../../experiment/crtn/story/"
 
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
@@ -414,9 +454,11 @@ def main(args):
 
         # inject params for this time
         model_args.data = args.data
+        model_args.vocab_size = args.vocab_size
         model_args.demo = args.demo
         model_args.stat = args.stat
         model_args.eval = args.eval
+        model_args.beam_size = args.beam_size
         model_args.load = args.load
         model_args.adam = args.adam
         model_args.lr = args.lr
@@ -428,7 +470,7 @@ def main(args):
         model_args.save = args.save
 
         model_args.batch_size = args.batch_size
-        model.eval_batch_size = args.eval_batch_size
+        model_args.eval_batch_size = args.eval_batch_size
 
         args = model_args
 
@@ -461,7 +503,6 @@ def main(args):
 
     if args.load:
         # load state_dict
-        # TODO: may do some operation to clear cache
 
         if args.demo:
             model = CRTNModel(model_args, corpus=corpus)
@@ -528,12 +569,12 @@ def main(args):
                       scheduler)
                 eval_bleu, eval_preds, eval_trgs = evaluate(model, valid_loader, 
                                                             criterion, args)
-                with open(savepath + args.save + args.timestr 
+                with open(savepath 
                           + "/eval_" + str(epoch) + ".pred", "w") as fw:
                     for p in eval_preds:
                         fw.write(p)
                         fw.write("\n")
-                with open(savepath + args.save + args.timestr 
+                with open(savepath 
                           + "/eval_" + str(epoch) + ".trg", "w") as fw:
                     for t in eval_trgs:
                         fw.write(t)
@@ -554,17 +595,17 @@ def main(args):
                         "model_state_dict": module.state_dict(),
                         "criterion": criterion.state_dict()
                         }, 
-                        savepath + args.save + args.timestr + 
+                        savepath + 
                         "/" + args.save + "_best" + ".pt")
                     best_eval_bleu = eval_bleu
                     best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
                     # save prediction
-                    with open(savepath + args.save + args.timestr 
+                    with open(savepath 
                               + "/eval_best.pred", "w") as fw:
                         for p in best_eval_preds:
                             fw.write(p)
                             fw.write("\n")
-                    with open(savepath + args.save + args.timestr 
+                    with open(savepath 
                               + "/eval_best.trg", "w") as fw:
                         for t in best_eval_trgs:
                             fw.write(t)
@@ -579,7 +620,7 @@ def main(args):
     if args.eval:
         best_model = args.load
     else:
-        best_model = savepath + args.save + args.timestr + "/" + args.save + "_best.pt"
+        best_model = savepath + "/" + args.save + "_best.pt"
 
     eval_checkpoint = torch.load(best_model)
     model_state_dict = eval_checkpoint["model_state_dict"]
@@ -601,12 +642,12 @@ def main(args):
     test_bleu, test_preds, test_trgs = evaluate(model, test_loader, criterion, args)
 
     # save prediction
-    with open(savepath + args.save + args.timestr 
+    with open(savepath 
               + "/test_best.pred", "w") as fw:
         for p in test_preds:
             fw.write(p)
             fw.write("\n")
-    with open(savepath + args.save + args.timestr 
+    with open(savepath 
               + "/test_best.trg", "w") as fw:
         for t in test_trgs:
             fw.write(t)
@@ -622,11 +663,12 @@ def main(args):
 if __name__ == "__main__":
     args = parse_args()
     savepath = "../../../experiment/crtn/story/"
-    args.timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
+    timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
+    savepath += args.save + timestr
     
-    if not os.path.exists("./log/" + args.save + args.timestr):
-        os.mkdir("./log/" + args.save + args.timestr)
-    if not os.path.exists(savepath + args.save + args.timestr):
-        os.mkdir(savepath + args.save + args.timestr)
-    writer = SummaryWriter("./log/" + args.save + args.timestr)
+    if not os.path.exists("./log/" + args.save + timestr):
+        os.mkdir("./log/" + args.save + timestr)
+    if not os.path.exists(savepath):
+        os.mkdir(savepath)
+    writer = SummaryWriter("./log/" + args.save + timestr)
     main(args)
