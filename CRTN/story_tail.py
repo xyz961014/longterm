@@ -1,11 +1,14 @@
 import time
 from datetime import datetime
+import os
+import sys
 import re
 import argparse
-
 #ignore future warning from tensorboard
 import warnings
 warnings.filterwarnings("ignore")
+
+sys.path.append("..")
 
 import numpy as np
 import math
@@ -14,13 +17,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 import torchtext
+from nltk.translate.bleu_score import sentence_bleu
 
-from torch.utils.data import DataLoader
-
-import os
-import sys
-sys.path.append("..")
-from data import dataloader
+from data.wp_loader import WPDataset
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
 from models.CRTNModel import CRTNModel
 
@@ -33,12 +32,8 @@ import ipdb
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str,
-                        default='/home/xyz/Documents/Dataset/ptb_sample',
+                        default='/home/xyz/Documents/Dataset/writingpromts/toy/',
                         help='location of the data corpus')
-    parser.add_argument('--data_from_torchtext', action='store_true',
-                        help='load data from torchtext')
-    parser.add_argument('--dataset', type=str, default='ptb',
-                        help='data corpus name')
     parser.add_argument('--eval', action='store_true',
                         help='skip training')
     parser.add_argument('--demo', action='store_true',
@@ -47,6 +42,10 @@ def parse_args():
                         help='stat memory choices')
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
+    parser.add_argument('--vocab_size', type=int, default=10000,
+                        help='size of vocabulary, excluding special chars')
+    parser.add_argument('--trgmax', type=int, default=100,
+                        help='max len of generated tail')
     parser.add_argument('--emsize', type=int, default=240,
                         help='size of word embeddings')
     parser.add_argument('--nhid', type=int, default=240,
@@ -79,7 +78,7 @@ def parse_args():
     parser.add_argument('--tied', action="store_true",
                         help='tied embedding weights')
     parser.add_argument('--attn_type', type=int, default=1, choices=[0, 1],
-                        help='attention type, 0 for vaswani;1 for transformer-xl')
+                        help='attention type, 0 for vaswani; 1 for transformer-xl')
     parser.add_argument("--cache_N", type=int, default=5, 
                         help="size of Cache, default: 5")
     parser.add_argument("--cache_dk", type=int, default=240, 
@@ -90,6 +89,9 @@ def parse_args():
                         help='enable multiple gpus')
     parser.add_argument('--adaptive', action="store_true",
                         help='use adaptive embedding and softmax')
+    parser.add_argument('--cutoffs', type=int, 
+                        default=[20000, 40000, 80000], nargs="+",
+                        help='cutoffs for adaptive embedding')
     parser.add_argument('--no_summary', action="store_true",
                         help='use the output of the transformer layer as key')
     parser.add_argument('--wise_summary', action="store_true",
@@ -153,15 +155,43 @@ def init_key_num(args, device):
     key_num.transpose_(0, 1)
     return key_num
 
-def update_cache(model, args, key, value, hidden, text, key_num):
-    model.cache.set_batch_size(args.batch_size)
+def update_cache(model, batch_size, key, value, hidden, text, key_num):
+    model.cache.set_batch_size(batch_size)
     model.cache.init_key_and_value(key, value)
     model.cache.detach_memory()
     key_num = model.cache.renew(hidden, text, key_num)
     key, value = (model.cache._get_keys(), 
                   model.cache._get_values().transpose(1, 2))
-    model.cache.set_batch_size(args.batch_size // len(args.devices))
+    model.cache.set_batch_size(batch_size // len(model.args.devices))
     return model, key_num, key, value
+
+def batch_bleu(vocab, pred, trg):
+    bleu = 0.
+    batch_size = pred.size(1)
+    pred_sentences = []
+    trg_sentences = []
+    for i in range(batch_size):
+        pred_s = []
+        for w in pred[:,i]:
+            if vocab.itos[w] == "<eos>":
+                break
+            if not vocab.itos[w] == "<pad>":
+                pred_s.append(vocab.itos[w])
+        pred_sentences.append(pred_s)
+
+        trg_s = []
+        for w in trg[:,i]:
+            if vocab.itos[w] == "<eos>":
+                break
+            if not vocab.itos[w] == "<pad>":
+                trg_s.append(vocab.itos[w])
+        trg_sentences.append(trg_s)
+
+    for p, t in list(zip(pred_sentences, trg_sentences)):
+        bleu += sentence_bleu([t], p)
+
+    return (bleu, [" ".join(p) for p in pred_sentences], 
+                  [" ".join(t) for t in trg_sentences])
 
 
 def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
@@ -179,18 +209,12 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
     if args.farnear:
         mem = None
     key_num = init_key_num(args, device)
-    #    mem = torch.zeros((args.nlayers+1)*args.neighbor_len, module.args.batch_size, 
-    #                      args.nhid, device=device)
 
     for batch, data in enumerate(train_loader):
-        if not args.data_from_torchtext:
-            text, targets = data
-            text, targets = text.t(), targets.t()
-        else:
-            text, targets = data.text, data.target
-            if not text.size(0) == args.num_steps:
-                continue
-        text, targets = text.to(device), targets.to(device)
+        text, target = data.text, data.target
+        if not text.size(0) == args.num_steps:
+            continue
+
         model.zero_grad()
         
         if args.farnear:
@@ -202,23 +226,14 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         else:
             output, hidden, key_num = model(text, key, value, key_num=key_num)
 
-
-        module, key_num, key, value = update_cache(model, args, key, value, 
-                                                   hidden, text, key_num)
-        #module.cache.set_batch_size(args.batch_size)
-        #module.cache.init_key_and_value(key, value)
-        #module.cache.detach_memory()
-        #key_num = module.cache.renew(hidden, text, key_num)
-        #key, value = (module.cache._get_keys(), 
-        #              module.cache._get_values().transpose(1, 2))
-        #module.cache.set_batch_size(args.batch_size // len(args.devices))
-
+        model, key_num, key, value = update_cache(model, args.batch_size, key, value, 
+                                                  hidden, text, key_num)
 
         if args.adaptive:
-            loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))
+            loss = criterion(output.reshape(-1, args.nhid), target.reshape(-1))
             loss = loss.mean()
         else:
-            loss = criterion(output.reshape(-1, args.vocab_size), targets.reshape(-1))
+            loss = criterion(output.reshape(-1, args.vocab_size), target.reshape(-1))
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
@@ -245,84 +260,136 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
 
 
 def evaluate(model, eval_loader, criterion, args):
-    model.set_batch_size(args.eval_batch_size)
     model.eval()
-    total_loss = 0.
     module = model.module if args.multi_gpu else model
     if torch.cuda.is_available():
         device = torch.device("cuda:" + str(module.args.devices[0]))
     else:
         device = torch.device("cpu")
     
-    key = None
-    value = None
-    len_eval = len(eval_loader)
+    bleu = 0.
+    len_eval = 0
 
-    if args.farnear:
-        mem = None
-    key_num = init_key_num(args, device)
-    #    mem = torch.zeros((args.nlayers+1)*args.neighbor_len, args.eval_batch_size, 
-    #                      args.nhid, device=device)
+    vocab = eval_loader.dataset.fields["trg"].vocab
+    preds = []
+    trgs = []
+
     with torch.no_grad():
-        for i, data in enumerate(eval_loader):
-            if not args.data_from_torchtext:
-                text, targets = data
-                text, targets = text.t(), targets.t()
-            else:
-                text, targets = data.text, data.target
-                if not text.size(0) == args.num_steps:
-                    len_eval -= 1
-                    continue
-            text, targets = text.to(device), targets.to(device)
-                
+        for batch, data in enumerate(eval_loader):
+            src, trg = data.src, data.trg
+            eval_batch_size = src.size(1)
+            len_eval += eval_batch_size
+            srcs = src.split(module.args.num_steps)
 
+            model.set_batch_size(eval_batch_size)
+            key_num = init_key_num(args, device)
+            key = None
+            value = None
+            pred = []
+            numofeos = [0] * eval_batch_size
             if args.farnear:
-                if mem is not None:
-                    mem = mem.detach()
-                output, hidden, mem, key_num = model(text, key, value, 
-                                                   neighbor_mem=mem, 
-                                                   key_num=key_num)
-            else:
-                output, hidden, key_num = model(text, key, value, key_num=key_num)
+                mem = None
 
-            module, key_num, key, value = update_cache(model, args, key, value, 
-                                                       hidden, text, key_num)
-            #module.cache.set_batch_size(args.eval_batch_size)
-            #module.cache.init_key_and_value(key, value)
-            #module.cache.detach_memory()
-            #key_num = module.cache.renew(hidden, text, key_num)
-            #key, value = (module.cache._get_keys(), 
-            #              module.cache._get_values().transpose(1, 2))
-            #module.cache.set_batch_size(args.eval_batch_size // len(args.devices))
+            for i, block in enumerate(srcs):
+                if args.farnear:
+                    if mem is not None:
+                        mem = mem.detach()
+                    output, hidden, mem, key_num = model(block, key, value, 
+                                                         neighbor_mem=mem, 
+                                                         key_num=key_num)
+                else:
+                    output, hidden, key_num = model(block, key, value, key_num=key_num)
 
-            #if args.farnear:
-            #    if mem is not None:
-            #        mem = mem.detach()
-            #    output, mem, key_num, (key, value) = model(text, key, value, 
-            #                                               neighbor_mem=mem, 
-            #                                               key_num=key_num)
-            #else:
-            #    output, key_num, (key, value) = model(text, key, value, 
-            #                                          key_num=key_num)
+                if i < args.num_steps - 1:
+                    model, key_num, key, value = update_cache(model, 
+                                                              eval_batch_size, 
+                                                              key, value, hidden, 
+                                                              block, 
+                                                              key_num)
 
-            if args.adaptive:
-                loss = criterion(output.view(-1, args.nhid), targets.view(-1))
-                loss = loss.mean()
-            else:
-                loss = criterion(output.view(-1, args.vocab_size), targets.view(-1))
+            for ind in range(args.num_steps):
+                if block[ind][0].item() == 1:
+                    break
+            while ind < args.num_steps - 1:
+                out_ind = output[ind-1]
+                head_prob, tails = criterion(out_ind, block[ind-1], output=True)
+                word_ind = head_prob.max(1)[1]
+                for i, wid in enumerate(word_ind):
+                    if wid >= args.cutoffs[0]:
+                        cluster = wid - args.cutoffs[0]
+                        real_wid = (tails[cluster][i,:].max(0)[1] 
+                                    + args.cutoffs[cluster])
+                        word_ind[i] = real_wid
+                    else:
+                        real_wid = wid
+                    word = vocab.itos[real_wid]
+                    if word == "<eos>":
+                        numofeos[i] = 1
+                pred.append(word_ind)
+                block[ind] = word_ind
+                if args.farnear:
+                    output, hidden, mem, key_num = model(block, key, value, 
+                                                         neighbor_mem=mem, 
+                                                         key_num=key_num)
+                else:
+                    output, hidden, key_num = model(block, key, value, key_num=key_num)
+                ind += 1
 
-            total_loss += loss
+            model, key_num, key, value = update_cache(model, eval_batch_size, 
+                                                      key, value, hidden, block, 
+                                                      key_num)
+            step = 0
+            block = torch.ones_like(block)
+            while step < args.trgmax - args.num_steps:
+                ind = step % args.num_steps
+
+                out_ind = output[ind-1]
+                head_prob, tails = criterion(out_ind, block[ind-1], output=True)
+                word_ind = head_prob.max(1)[1]
+                for i, wid in enumerate(word_ind):
+                    if wid >= args.cutoffs[0]:
+                        cluster = wid - args.cutoffs[0]
+                        real_wid = (tails[cluster][i,:].max(0)[1] 
+                                    + args.cutoffs[cluster])
+                        word_ind[i] = real_wid
+                    else:
+                        real_wid = wid
+                    word = vocab.itos[real_wid]
+                    if word == "<eos>":
+                        numofeos[i] = 1
+                pred.append(word_ind)
+                block[ind] = word_ind
+                if sum(numofeos) >= eval_batch_size:
+                    break
+                if args.farnear:
+                    output, hidden, mem, key_num = model(block, key, value, 
+                                                         neighbor_mem=mem, 
+                                                         key_num=key_num)
+                else:
+                    output, hidden, key_num = model(block, key, value, key_num=key_num)
+                if ind == args.num_steps - 1: 
+                    model, key_num, key, value = update_cache(model, 
+                                                              eval_batch_size, 
+                                                              key, value, hidden, 
+                                                              block, 
+                                                              key_num)
+                    block = torch.ones_like(block)
+
+                step += 1
+            pred_tensor = torch.cat(pred, 0).view(-1, eval_batch_size)
+            b_bleu, b_pred, b_trg = batch_bleu(vocab, pred_tensor, trg)
+            bleu += b_bleu
+            preds += b_pred
+            trgs += b_trg
 
     model.set_batch_size(args.batch_size)
-
-    return total_loss / len_eval
-
-
+    return bleu / len_eval, preds, trgs
+ 
 
 def main(args):
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
-    savepath = "../../../experiment/crtn/save/"
+    savepath = "../../../experiment/crtn/story/"
 
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
@@ -333,25 +400,19 @@ def main(args):
     else:
         devices = [torch.device("cpu")]
 
-    cutoffs, tie_projs = [], [False]
     if args.adaptive:
-        if args.dataset == "ptb":
-            cutoffs = [2000, 4000, 8000]
-            tie_projs += [True] * 3
-        elif args.dataset == "wt103":
-            cutoffs = [20000, 40000, 80000]
-            tie_projs += [True] * 3
+        args.tie_projs = [False] + [True] * 3
 
     if args.demo:
         args.batch_size = 1
         args.eval_batch_size = 1
 
-    args.cutoffs = cutoffs
-    args.tie_projs = tie_projs
-
     if args.load:
+        # Load Model
         checkpoint = torch.load(args.load)
         model_args = checkpoint["model_args"]
+
+        # inject params for this time
         model_args.data = args.data
         model_args.demo = args.demo
         model_args.stat = args.stat
@@ -363,69 +424,44 @@ def main(args):
         model_args.clip = args.clip
         model_args.epochs = args.epochs
         model_args.multi_gpu = args.multi_gpu
-        model_args.save = args.save
         model_args.devices = args.devices
-        if args.demo:
-            model_args.batch_size = 1
-            model_args.eval_batch_size = 1
+        model_args.save = args.save
+
+        model_args.batch_size = args.batch_size
+        model.eval_batch_size = args.eval_batch_size
+
         args = model_args
-        
+
     args.mem_len = args.cache_k * args.num_steps
 
     #Print Params
     for argk, argv in args.__dict__.items():
         print("{}: {}".format(argk, argv))
     print("")
-        
+ 
     ### Load Data ###
+
+    print("Loading data from %s" % args.data)
+    datatime_begin = time.time()
+
+    corpus = WPDataset(args.data, args.vocab_size, args.num_steps)
+    args.vocab_size = len(corpus.TRG.vocab.itos)
     
-    if not args.data_from_torchtext:
-        print("Loading data from %s" % args.data)
-        datatime_begin = time.time()
-
-        corpus = dataloader.Corpus(args.data)
-        args.vocab_size = corpus.vocabulary.num_words
-        eval_batch_size = args.eval_batch_size
+    train_loader = corpus.get_train_loader(args.batch_size, device=devices[0])
+    valid_loader = corpus.get_valid_loader(args.eval_batch_size, device=devices[0])
+    test_loader = corpus.get_test_loader(args.eval_batch_size, device=devices[0])
 
 
-        train_loader = corpus.get_train_loader(batch_size=args.batch_size, 
-                                               num_steps=args.num_steps)
-        valid_loader = corpus.get_valid_loader(batch_size=eval_batch_size, 
-                                               num_steps=args.num_steps)
-        test_loader = corpus.get_test_loader(batch_size=eval_batch_size, 
-                                             num_steps=args.num_steps)
+    print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
 
-
-        print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
-        print("# VOCABULARY: {} \n# train data words: {:.2e} \n# valid data words: {:.2e} \n# test data words: {:.2e} ".format(
-            corpus.vocabulary.num_words, 
-            len(corpus.train_data.raw_data), 
-            len(corpus.valid_data.raw_data), 
-            len(corpus.test_data.raw_data)))
-        print("")
-    else:
-        train_loader, _, _ = torchtext.datasets.PennTreebank.iters(
-                batch_size=args.batch_size, 
-                bptt_len=args.num_steps, 
-                device=devices[0])
-        _, valid_loader, test_loader = torchtext.datasets.PennTreebank.iters(
-                batch_size=args.eval_batch_size, 
-                bptt_len=args.num_steps, 
-                device=devices[0])
-        vocab = train_loader.dataset.fields["text"].vocab
-        args.vocab_size = len(vocab.itos)
     if args.eval:
         print("SKIP TRAINING")
     else:
         print("TRAINING......")
 
-
     if args.load:
-        # clear cache
-        keys = checkpoint["model_state_dict"].copy().keys()
-        for key in keys:
-            if re.match(r"cache.keys", key) or re.match(r"cache.values", key) or re.match(r"cache.words", key) or re.match(r"encoder.pos_emb_bank", key):
-                popitem = checkpoint["model_state_dict"].pop(key)
+        # load state_dict
+        # TODO: may do some operation to clear cache
 
         if args.demo:
             model = CRTNModel(model_args, corpus=corpus)
@@ -440,8 +476,6 @@ def main(args):
         else:
             model = CRTNModel(args)
 
-
-    
     if args.adaptive:
         criterion = ProjectedAdaptiveLogSoftmax(args.vocab_size, 
                                                 args.emsize, 
@@ -453,8 +487,8 @@ def main(args):
             for i in range(len(criterion.out_layers)):
                 criterion.out_layers[i].weight = model.encoder.embedding.emb_layers[i].weight
 
-        if tie_projs:
-            for i, tie_proj in enumerate(tie_projs):
+        if args.tie_projs:
+            for i, tie_proj in enumerate(args.tie_projs):
                 if tie_proj and args.div_val == 1 and args.nhid != args.emsize:
                     criterion.out_projs[i] = model.encoder.embedding.emb_projs[0]
                 elif tie_proj and args.div_val != 1:
@@ -482,25 +516,38 @@ def main(args):
     elif args.scheduler == "constant":
         scheduler = None
 
+    ### Training ###
 
     if not args.eval:
         try:
-            best_eval_loss = float('inf')
+            best_eval_bleu = -float('inf')
+            best_eval_preds, best_eval_trgs = [], []
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
                 train(model, train_loader, criterion, args, epoch, optimizer, 
                       scheduler)
-                eval_loss = evaluate(model, valid_loader, criterion, args)
+                eval_bleu, eval_preds, eval_trgs = evaluate(model, valid_loader, 
+                                                            criterion, args)
+                with open(savepath + args.save + args.timestr 
+                          + "/eval_" + str(epoch) + ".pred", "w") as fw:
+                    for p in eval_preds:
+                        fw.write(p)
+                        fw.write("\n")
+                with open(savepath + args.save + args.timestr 
+                          + "/eval_" + str(epoch) + ".trg", "w") as fw:
+                    for t in eval_trgs:
+                        fw.write(t)
+                        fw.write("\n")
                 print('-' * 89)
-                print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
-                        'valid ppl {:8.2f}'.format(epoch, 
-                                                   (time.time() - epoch_start_time),
-                                                   eval_loss, math.exp(eval_loss)))
+                print('| end of epoch {:3d} | time: {:5.2f}s '
+                      '| valid bleu {:5.2f} |'.format(epoch, 
+                                                      (time.time() - epoch_start_time),
+                                                      eval_bleu * 100))
                 print('-' * 89)
-                writer.add_scalar("valid/ppl", math.exp(eval_loss), 
+                writer.add_scalar("valid/bleu", eval_bleu, 
                                   epoch * len(train_loader))
                 writer.flush()
-                if eval_loss < best_eval_loss:
+                if eval_bleu > best_eval_bleu:
                     module = model.module if args.multi_gpu else model
                     torch.save({
                         "model_args": module.args,
@@ -509,11 +556,19 @@ def main(args):
                         }, 
                         savepath + args.save + args.timestr + 
                         "/" + args.save + "_best" + ".pt")
-                    #with open("save/" + args.save + "/" + args.save + "_best.pt", "wb") as f:
-                    #    torch.save(model, f)
-                    #with open("save/" + args.save + "/" + args.save + "_crit.pt", "wb") as f:
-                    #    torch.save(criterion, f)
-                    best_eval_loss = eval_loss
+                    best_eval_bleu = eval_bleu
+                    best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
+                    # save prediction
+                    with open(savepath + args.save + args.timestr 
+                              + "/eval_best.pred", "w") as fw:
+                        for p in best_eval_preds:
+                            fw.write(p)
+                            fw.write("\n")
+                    with open(savepath + args.save + args.timestr 
+                              + "/eval_best.trg", "w") as fw:
+                        for t in best_eval_trgs:
+                            fw.write(t)
+                            fw.write("\n")
 
         except KeyboardInterrupt:
             print('-' * 89)
@@ -525,13 +580,10 @@ def main(args):
         best_model = args.load
     else:
         best_model = savepath + args.save + args.timestr + "/" + args.save + "_best.pt"
+
     eval_checkpoint = torch.load(best_model)
     model_state_dict = eval_checkpoint["model_state_dict"]
     keys = model_state_dict.copy().keys()
-
-    for key in keys:
-        if re.match(r"cache.keys", key) or re.match(r"cache.values", key) or re.match(r"cache.words", key):
-            model_state_dict.pop(key)
 
     model.load_state_dict(model_state_dict, strict=False)
 
@@ -539,18 +591,29 @@ def main(args):
         criterion.load_state_dict(eval_checkpoint["criterion"])
 
     if args.eval:
-        best_eval_loss = evaluate(model, valid_loader, criterion, args)
+        best_eval_bleu, best_eval_preds, best_eval_trgs = evaluate(model, valid_loader,
+                                                                   criterion, args)
 
-    test_loss = evaluate(model, test_loader, criterion, args)
-    #writer.add_embedding(model.encoder.embedding.emb_layers[0].weight, 
-    #                     corpus.vocabulary.index2word.values())
     print('=' * 89)
-    print('| best valid loss {:5.2f} | best valid ppl {:8.2f}'.format(
-          best_eval_loss, math.exp(best_eval_loss)))
+    print('| best valid bleu {:5.2f} |'.format(best_eval_bleu * 100))
     print('=' * 89)
-    print('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
-          test_loss, math.exp(test_loss)))
+
+    test_bleu, test_preds, test_trgs = evaluate(model, test_loader, criterion, args)
+
+    # save prediction
+    with open(savepath + args.save + args.timestr 
+              + "/test_best.pred", "w") as fw:
+        for p in test_preds:
+            fw.write(p)
+            fw.write("\n")
+    with open(savepath + args.save + args.timestr 
+              + "/test_best.trg", "w") as fw:
+        for t in test_trgs:
+            fw.write(t)
+            fw.write("\n")
+    print('| End of training | test bleu {:5.2f} |'.format(test_bleu * 100))
     print('=' * 89)
+
 
 
 
@@ -558,7 +621,7 @@ def main(args):
 
 if __name__ == "__main__":
     args = parse_args()
-    savepath = "../../../experiment/crtn/save/"
+    savepath = "../../../experiment/crtn/story/"
     args.timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
     
     if not os.path.exists("./log/" + args.save + args.timestr):

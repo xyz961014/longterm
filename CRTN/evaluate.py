@@ -55,19 +55,48 @@ def evaluate(model, eval_data, criterion, model_args=None):
     model.eval() 
     total_loss = 0.
     memory = None
+    key_num = torch.arange(model_args.cache_N, 0, -1, 
+                           dtype=torch.float,
+                           device=device)
+    key_num = key_num.expand(model_args.eval_batch_size, -1)
+    key_num.transpose_(0, 1)
+    key = None
+    value = None
+    len_eval = len(eval_data)
+
+
 
     with torch.no_grad():
         for data, targets in eval_data:
             data, targets = data.to(device), targets.to(device)
-            data, targets = data.t().contiguous(), targets.t().contiguous()
+            data, targets = data.t(), targets.t()
 
-            if model_args is None:
-                if model.args.farnear:
-                    output, memory, _ = model(data, neighbor_mem=memory)
-                else:
-                    output, _ = model(data)
+            #if model_args is None:
+            #    if model.args.farnear:
+            #        output, memory, _ = model(data, neighbor_mem=memory)
+            #    else:
+            #        output, _ = model(data)
+            #else:
+            #    output, memory = model(data, memory)
+
+            if args.farnear:
+                if mem is not None:
+                    mem = mem.detach()
+                output, mems, mem, key_num = model(text, key, value, 
+                                                   neighbor_mem=mem, 
+                                                   key_num=key_num)
             else:
-                output, memory = model(data, memory)
+                output, mems, key_num = model(text, key, value, key_num=key_num)
+
+            model.cache.set_batch_size(args.eval_batch_size)
+            model.cache.init_key_and_value(key, value)
+            model.cache.detach_memory()
+            key_num = model.cache.renew(mems, text, key_num)
+            key, value = (model.cache._get_keys(), 
+                          model.cache._get_values().transpose(1, 2))
+            model.cache.set_batch_size(args.eval_batch_size // len(args.devices))
+
+
             
             if model.args.adaptive:
                 loss = criterion(output.view(-1, model.args.nhid), targets.view(-1))
@@ -80,7 +109,7 @@ def evaluate(model, eval_data, criterion, model_args=None):
     if model_args is None:
         model.set_batch_size(model.args.batch_size)
 
-    return total_loss / len(eval_data)
+    return total_loss / len_eval
 
 
 def contrast(model, base_model, criterion, base_criterion, dataloader, corpus):
@@ -230,7 +259,7 @@ def attention_map(model, criterion, corpus, loader, seg_num=200):
 
 
 def demo_words(model, criterion, corpus, init_word, length=100):
-    model.set_batch_size(1)
+    model.set_batch_size(2)
     model.to(device)
     criterion.to(device)
     model.eval()
@@ -246,12 +275,35 @@ def demo_words(model, criterion, corpus, init_word, length=100):
     print(corpus.vocabulary.index2word[init_ind], end= " ")
     sequence = [init_ind] + [0 for _ in range(num_steps-1)]
     sequence = torch.tensor(sequence).view(-1, 1).to(device)
+    sequence = sequence.expand(-1, 2)
+
+    key_num = torch.arange(model.args.cache_N, 0, -1, 
+                           dtype=torch.float,
+                           device=device)
+    key_num = key_num.expand(2, -1)
+    key_num.transpose_(0, 1)
+    key = None
+    value = None
+    if model.args.farnear:
+        mem = None
+
     for i in range(length):
-        if i == length - 1:
-            output, _ = model(sequence)
+        if model.args.farnear:
+            if mem is not None:
+                mem = mem.detach()
+            output, mems, mem, key_num = model(sequence, key, value, 
+                                               neighbor_mem=mem, 
+                                               key_num=key_num)
         else:
-            output, _ = model(sequence, renew=False)
-        head_prob, tails = criterion(output.view(-1, model.args.nhid), sequence.view(-1), output=True)
+            output, mems, key_num = model(sequence, key, value, key_num=key_num)
+        if not i == length - 1:
+            model.cache.init_key_and_value(key, value)
+            model.cache.detach_memory()
+            key_num = model.cache.renew(mems, sequence, key_num)
+            key, value = (model.cache._get_keys(), 
+                          model.cache._get_values().transpose(1, 2))
+
+            head_prob, tails = criterion(output[:,0,:].view(-1, model.args.nhid), sequence[:,0].view(-1), output=True)
         word_ind = head_prob.max(1)[1][(i+1) % num_steps - 1]
         if word_ind >= cutoffs[0]:
             cluster = word_ind - cutoffs[0]

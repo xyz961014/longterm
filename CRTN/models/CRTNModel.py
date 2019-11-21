@@ -51,7 +51,7 @@ class CRTNModel(nn.Module):
         self.encoder.set_batch_size(batch_size)
         self.args.batch_size = batch_size
 
-    def forward(self, inputs, cache_key, cache_value, key_num=None, draw=False, renew=True, neighbor_mem=None, **kwargs):
+    def forward(self, inputs, cache_key, cache_value, key_num=None, draw=False, neighbor_mem=None, **kwargs):
         seq_len = self.args.num_steps
         bsz = inputs.size(1)
         nhid = self.args.nhid
@@ -246,27 +246,27 @@ class CRTNModel(nn.Module):
         #    key_num = key_num.expand(len(self.args.devices), -1)
         #    key_num.transpose_(0, 1)
 
-        #output, mems, attn_map = self.encoder(inputs, zones, weights, indices, words, draw)
+        #output, hidden, attn_map = self.encoder(inputs, zones, weights, indices, words, draw)
         values = self.cache._get_values()
 
         if self.args.not_weighted:
             weights = None
 
-        output, mems, attn_map = self.encoder(inputs, key_num, values, weights, 
+        output, hidden, attn_map = self.encoder(inputs, key_num, values, weights, 
                                               indices, words, draw, neighbor_mem)
 
         
         if self.args.farnear:
-            total_mem = torch.cat((neighbor_mem, mems), 1)
-            mems, neighbor_mem = total_mem.split([seq_len, self.args.neighbor_len], 
+            total_mem = torch.cat((neighbor_mem, hidden), 1)
+            hidden, neighbor_mem = total_mem.split([seq_len, self.args.neighbor_len], 
                                                  dim=1)
-            #mems = total_mem[:,:seq_len,:,:]
+            #hidden = total_mem[:,:seq_len,:,:]
             #neighbor_mem = total_mem[:,seq_len:,:,:]
             neighbor_mem = neighbor_mem.reshape(-1, bsz, nhid)
 
         #self.cache.detach_memory()
         #if renew:
-        #    new_key_num = self.cache.renew(mems, inputs, key_num)
+        #    new_key_num = self.cache.renew(hidden, inputs, key_num)
 
         #print("after:", self.cache.key4[0][0])
 
@@ -275,9 +275,9 @@ class CRTNModel(nn.Module):
         #values = values.transpose(1, 2)
 
         if self.args.farnear:
-            return output, mems, neighbor_mem, key_num
+            return output, hidden, neighbor_mem, key_num
         else:
-            return output, mems, key_num 
+            return output, hidden, key_num 
 
 
 
