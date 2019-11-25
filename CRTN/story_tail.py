@@ -302,7 +302,7 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         else:
             output, hidden = model(text, key, value, key_num=key_num)
 
-        model, key_num, key, value = update_cache(model, args.batch_size, key, value, 
+        module, key_num, key, value = update_cache(module, args.batch_size, key, value, 
                                                   hidden, text, key_num)
 
         if args.adaptive:
@@ -378,7 +378,7 @@ def evaluate(model, eval_loader, criterion, args):
                     output, hidden = model(block, key, value, key_num=key_num)
 
                 if i < args.num_steps - 1:
-                    model, key_num, key, value = update_cache(model, 
+                    module, key_num, key, value = update_cache(module, 
                                                               eval_batch_size, 
                                                               key, value, hidden, 
                                                               block, 
@@ -400,7 +400,7 @@ def evaluate(model, eval_loader, criterion, args):
 
             while ind < args.num_steps - 1:
                 candidates = beam_search(candidates, criterion, vocab, block, 
-                                         block_start, ind, model, args, 
+                                         block_start, ind, module, args, 
                                          ind == args.num_steps - 2)
 
                 ind += 1
@@ -411,7 +411,7 @@ def evaluate(model, eval_loader, criterion, args):
             while step < args.trgmax - args.num_steps:
                 ind = step % args.num_steps
                 candidates = beam_search(candidates, criterion, vocab, block, 
-                                         block_start, ind, model, args, 
+                                         block_start, ind, module, args, 
                                          ind == args.num_steps - 1)
                 step += 1
 
