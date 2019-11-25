@@ -20,7 +20,8 @@ python story_tail.py \
     --log-interval 50 \
     --save story_demo \
     --adaptive \
-    --cutoffs 2000 4000 8000 \
+    --vocab_size 25000 \
+    --cutoffs 5000 10000 20000 \
     --no_summary \
     --wise_summary \
     --farnear \
