@@ -16,7 +16,7 @@ python story_tail.py \
     --cache_k 3 \
     --cache_N 5 \
     --seed 1111 \
-    --epochs 10 \
+    --epochs 100 \
     --log-interval 50 \
     --save story_demo \
     --adaptive \

@@ -196,11 +196,11 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         if args.farnear:
             if mem is not None:
                 mem = mem.detach()
-            output, hidden, mem, key_num = model(text, key, value, 
+            output, hidden, mem = model(text, key, value, 
                                                        neighbor_mem=mem, 
                                                        key_num=key_num)
         else:
-            output, hidden, key_num = model(text, key, value, key_num=key_num)
+            output, hidden = model(text, key, value, key_num=key_num)
 
 
         module, key_num, key, value = update_cache(model, args, key, value, 
@@ -279,11 +279,11 @@ def evaluate(model, eval_loader, criterion, args):
             if args.farnear:
                 if mem is not None:
                     mem = mem.detach()
-                output, hidden, mem, key_num = model(text, key, value, 
+                output, hidden, mem = model(text, key, value, 
                                                    neighbor_mem=mem, 
                                                    key_num=key_num)
             else:
-                output, hidden, key_num = model(text, key, value, key_num=key_num)
+                output, hidden = model(text, key, value, key_num=key_num)
 
             module, key_num, key, value = update_cache(model, args, key, value, 
                                                        hidden, text, key_num)

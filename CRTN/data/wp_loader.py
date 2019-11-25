@@ -28,7 +28,7 @@ class WPDataset(object):
         #    sentences = sent_tokenize(corpus)
         #    return " <eos> ".join(sentences).split()
 
-        self.TEXT = data.Field(sequential=True, pad_first=True, eos_token="<eos>",
+        self.TEXT = data.Field(sequential=True, pad_first=True,
                                postprocessing=lambda x, y: complete(num_steps, x, y))
         self.TRG = data.Field(sequential=True, eos_token="<eos>")
 

@@ -275,9 +275,9 @@ class CRTNModel(nn.Module):
         #values = values.transpose(1, 2)
 
         if self.args.farnear:
-            return output, hidden, neighbor_mem, key_num
+            return output, hidden, neighbor_mem
         else:
-            return output, hidden, key_num 
+            return output, hidden
 
 
 
