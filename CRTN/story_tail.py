@@ -208,6 +208,8 @@ def get_real_ind_and_prob(head_prob, tails, beam_size):
 
 
 def beam_search(candidates, criterion, vocab, block, block_start, ind, model, args, update=False):
+    module = model.module if args.multi_gpu else model
+
     ind_tensor = block.new_ones(0)
     eos_tensor = block.new_ones(0).bool() # True represents sentence is not end.
     prob_tensor = candidates[0][-1].new_zeros(0)
@@ -260,7 +262,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
             output, hidden = model(block, key, value, key_num=key_num)
 
         if update:
-            model, key_num, key, value = update_cache(model, block.size(1), 
+            module, key_num, key, value = update_cache(module, block.size(1), 
                                                       key, value, hidden, block, 
                                                       key_num)
             mem = new_mem
@@ -400,7 +402,7 @@ def evaluate(model, eval_loader, criterion, args):
 
             while ind < args.num_steps - 1:
                 candidates = beam_search(candidates, criterion, vocab, block, 
-                                         block_start, ind, module, args, 
+                                         block_start, ind, model, args, 
                                          ind == args.num_steps - 2)
 
                 ind += 1
@@ -411,7 +413,7 @@ def evaluate(model, eval_loader, criterion, args):
             while step < args.trgmax - args.num_steps:
                 ind = step % args.num_steps
                 candidates = beam_search(candidates, criterion, vocab, block, 
-                                         block_start, ind, module, args, 
+                                         block_start, ind, model, args, 
                                          ind == args.num_steps - 1)
                 step += 1
 

@@ -8,6 +8,8 @@ elif [[ $1 == "243" ]]; then
     data="/data/disk5/private/xyz/datasets/writingpromts/"
 elif [[ $1 == "245" ]]; then
     data="/data/private/xyz/datasets/writingpromts/"
+elif [[ $1 == "102" ]]; then
+    data="/data/private/xyz/datasets/writingpromts/"
 fi
 
 python story_tail.py \

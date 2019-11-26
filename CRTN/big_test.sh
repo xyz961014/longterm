@@ -6,6 +6,8 @@ elif [[ $1 == "242" ]]; then
     data="/data/disk5/private/xyz/datasets/ptb_sample"
 elif [[ $1 == "245" ]]; then
     data="/data/private/xyz/datasets/ptb_sample"
+elif [[ $1 == "102" ]]; then
+    data="/data/private/xyz/datasets/ptb_sample"
 elif [[ $1 == "local" ]]; then
     data="/home/xyz/Documents/Dataset/ptb_sample"
 fi
