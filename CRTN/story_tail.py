@@ -27,7 +27,9 @@ if torch.__version__ < "1.2.0":
     from tensorboardX import SummaryWriter
 else:
     from torch.utils.tensorboard import SummaryWriter
+
 import ipdb
+from tqdm import tqdm
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -50,7 +52,7 @@ def parse_args():
                         help='size of word embeddings')
     parser.add_argument('--nhid', type=int, default=240,
                         help='number of hidden units per layer')
-    parser.add_argument('--nlayers', type=int, default=15,
+    parser.add_argument('--nlayers', type=int, default=3,
                         help='number of layers')
     parser.add_argument('--nhead', type=int, default=8,
                         help='number of heads')
@@ -135,6 +137,8 @@ def parse_args():
                         help='device list')
     parser.add_argument('--log-interval', type=int, default=50, metavar='N',
                         help='report interval')
+    parser.add_argument('--eval_steps', type=int, default=2000, metavar='N',
+                        help='evaluation steps')
     parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
     parser.add_argument('--load', type=str, default='',
@@ -273,7 +277,18 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
     
     return new_candidates 
 
-def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
+def save_pred(savepath, name, preds, trgs):
+    with open(savepath + "/" + name + ".pred", "w") as fw:
+        for p in preds:
+            fw.write(p)
+            fw.write("\n")
+    with open(savepath + "/" + name + ".trg", "w") as fw:
+        for t in trgs:
+            fw.write(t)
+            fw.write("\n")
+
+def train(model, train_loader, valid_loader, criterion, 
+          args, epoch, optimizer, scheduler):
     model.train()
     start_time = time.time()
     total_loss = 0.
@@ -304,8 +319,7 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
         else:
             output, hidden = model(text, key, value, key_num=key_num)
 
-        module, key_num, key, value = update_cache(module, args.batch_size, key, value, 
-                                                  hidden, text, key_num)
+        module, key_num, key, value = update_cache(module, args.batch_size, key, value,                                                   hidden, text, key_num)
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), target.reshape(-1))
@@ -336,6 +350,14 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
             total_loss = 0.
             start_time = time.time()
 
+        if batch % args.eval_steps == 0 and batch > 0:
+            eval_bleu, eval_preds, eval_trgs = evaluate(model, valid_loader, 
+                                                        criterion, args)
+            print('| eval at step {:3d} | valid bleu {:5.2f} |'.format(batch, 
+                                                                    eval_bleu * 100))
+            save_pred(savepath, 
+                      "eval_" + str(epoch) + "_" + str(batch // args.eval_steps), 
+                      eval_preds, eval_trgs)
 
 def evaluate(model, eval_loader, criterion, args):
     model.eval()
@@ -353,79 +375,84 @@ def evaluate(model, eval_loader, criterion, args):
     trgs = []
 
     with torch.no_grad():
-        for batch, data in enumerate(eval_loader):
-            src, trg = data.src, data.trg
-            eval_batch_size = src.size(1)
-            len_eval += eval_batch_size
-            srcs = src.split(module.args.num_steps)
+        with tqdm(total=len(eval_loader)) as pbar:
+            pbar.set_description("evaluating")
 
-            model.set_batch_size(eval_batch_size)
-            key_num = init_key_num(args, device)
-            key = None
-            value = None
-            pred = []
-            numofeos = [0] * eval_batch_size
-            if args.farnear:
-                mem = None
+            for batch, data in enumerate(eval_loader):
+                src, trg = data.src, data.trg
+                eval_batch_size = src.size(1)
+                len_eval += eval_batch_size
+                srcs = src.split(module.args.num_steps)
 
-            # load history
-            for i, block in enumerate(srcs):
+                model.set_batch_size(eval_batch_size)
+                key_num = init_key_num(args, device)
+                key = None
+                value = None
+                pred = []
+                numofeos = [0] * eval_batch_size
                 if args.farnear:
-                    if mem is not None:
-                        mem = mem.detach()
-                    output, hidden, mem = model(block, key, value, 
-                                                         neighbor_mem=mem, 
-                                                         key_num=key_num)
+                    mem = None
+
+                # load history
+                for i, block in enumerate(srcs):
+                    if args.farnear:
+                        if mem is not None:
+                            mem = mem.detach()
+                        output, hidden, mem = model(block, key, value, 
+                                                             neighbor_mem=mem, 
+                                                             key_num=key_num)
+                    else:
+                        output, hidden = model(block, key, value, key_num=key_num)
+
+                    if i < args.num_steps - 1:
+                        module, key_num, key, value = update_cache(module, 
+                                                                  eval_batch_size, 
+                                                                  key, value, hidden, 
+                                                                  block, 
+                                                                  key_num)
+                # begin to evaluate
+
+                candidates = [[block.new_ones(eval_batch_size, 0), 
+                              output.new_zeros(eval_batch_size, 1),
+                              block.new_ones(eval_batch_size, 1).bool(),
+                              key, value, mem, key_num]]
+
+                for ind in range(args.num_steps):
+                    if block[ind][0].item() == 1:
+                        candidates[0].append(output[ind-1])
+                        break
                 else:
-                    output, hidden = model(block, key, value, key_num=key_num)
+                    candidates[0].append(output[ind])
+                block_start = ind
 
-                if i < args.num_steps - 1:
-                    module, key_num, key, value = update_cache(module, 
-                                                              eval_batch_size, 
-                                                              key, value, hidden, 
-                                                              block, 
-                                                              key_num)
-            # begin to evaluate
+                while ind < args.num_steps - 1:
+                    candidates = beam_search(candidates, criterion, vocab, block, 
+                                             block_start, ind, model, args, 
+                                             ind == args.num_steps - 2)
 
-            candidates = [[block.new_ones(eval_batch_size, 0), 
-                          output.new_zeros(eval_batch_size, 1),
-                          block.new_ones(eval_batch_size, 1).bool(),
-                          key, value, mem, key_num]]
+                    ind += 1
 
-            for ind in range(args.num_steps):
-                if block[ind][0].item() == 1:
-                    candidates[0].append(output[ind-1])
-                    break
-            else:
-                candidates[0].append(output[ind])
-            block_start = ind
+                step = 0
+                block_start = 0
+                block = torch.ones_like(block)
+                while step < args.trgmax - args.num_steps:
+                    ind = step % args.num_steps
+                    candidates = beam_search(candidates, criterion, vocab, block, 
+                                             block_start, ind, model, args, 
+                                             ind == args.num_steps - 1)
+                    step += 1
 
-            while ind < args.num_steps - 1:
-                candidates = beam_search(candidates, criterion, vocab, block, 
-                                         block_start, ind, model, args, 
-                                         ind == args.num_steps - 2)
+                final_ind = torch.cat([x[0].unsqueeze(0) for x in candidates], 0)
+                final_prob = torch.cat([x[1] for x in candidates], 1)
+                _, max_ind = final_prob.max(1)
+                max_ind = max_ind.unsqueeze(-1).expand(-1, final_ind.size(-1)).unsqueeze(0)
+                pred_tensor = torch.gather(final_ind, 0, max_ind).squeeze().t()
+                b_bleu, b_pred, b_trg = batch_bleu(vocab, pred_tensor, trg)
+                bleu += b_bleu
+                preds += b_pred
+                trgs += b_trg
 
-                ind += 1
-
-            step = 0
-            block_start = 0
-            block = torch.ones_like(block)
-            while step < args.trgmax - args.num_steps:
-                ind = step % args.num_steps
-                candidates = beam_search(candidates, criterion, vocab, block, 
-                                         block_start, ind, model, args, 
-                                         ind == args.num_steps - 1)
-                step += 1
-
-            final_ind = torch.cat([x[0].unsqueeze(0) for x in candidates], 0)
-            final_prob = torch.cat([x[1] for x in candidates], 1)
-            _, max_ind = final_prob.max(1)
-            max_ind = max_ind.unsqueeze(-1).expand(-1, final_ind.size(-1)).unsqueeze(0)
-            pred_tensor = torch.gather(final_ind, 0, max_ind).squeeze().t()
-            b_bleu, b_pred, b_trg = batch_bleu(vocab, pred_tensor, trg)
-            bleu += b_bleu
-            preds += b_pred
-            trgs += b_trg
+                pbar.update(1)
 
     model.set_batch_size(args.batch_size)
     return bleu / len_eval, preds, trgs
@@ -450,6 +477,22 @@ def main(args):
     if args.demo:
         args.batch_size = 1
         args.eval_batch_size = 1
+ 
+    ### Load Data ###
+
+    print("Loading data from %s" % args.data)
+    datatime_begin = time.time()
+
+    corpus = WPDataset(args.data, args.vocab_size, args.num_steps)
+    args.vocab_size = len(corpus.TRG.vocab.itos)
+    
+    train_loader = corpus.get_train_loader(args.batch_size, device=devices[0])
+    valid_loader = corpus.get_valid_loader(args.eval_batch_size, device=devices[0])
+    test_loader = corpus.get_test_loader(args.eval_batch_size, device=devices[0])
+
+
+    print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
+
 
     if args.load:
         # Load Model
@@ -458,7 +501,6 @@ def main(args):
 
         # inject params for this time
         model_args.data = args.data
-        model_args.vocab_size = args.vocab_size
         model_args.demo = args.demo
         model_args.stat = args.stat
         model_args.eval = args.eval
@@ -477,6 +519,9 @@ def main(args):
         model_args.batch_size = args.batch_size
         model_args.eval_batch_size = args.eval_batch_size
 
+        model_args.log_interval = args.log_interval
+        model_args.eval_steps = args.eval_steps
+
         args = model_args
 
     args.mem_len = args.cache_k * args.num_steps
@@ -485,21 +530,6 @@ def main(args):
     for argk, argv in args.__dict__.items():
         print("{}: {}".format(argk, argv))
     print("")
- 
-    ### Load Data ###
-
-    print("Loading data from %s" % args.data)
-    datatime_begin = time.time()
-
-    corpus = WPDataset(args.data, args.vocab_size, args.num_steps)
-    args.vocab_size = len(corpus.TRG.vocab.itos)
-    
-    train_loader = corpus.get_train_loader(args.batch_size, device=devices[0])
-    valid_loader = corpus.get_valid_loader(args.eval_batch_size, device=devices[0])
-    test_loader = corpus.get_test_loader(args.eval_batch_size, device=devices[0])
-
-
-    print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
 
     if args.eval:
         print("SKIP TRAINING")
@@ -570,7 +600,7 @@ def main(args):
             best_eval_preds, best_eval_trgs = [], []
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
-                train(model, train_loader, criterion, args, epoch, optimizer, 
+                train(model, train_loader, valid_loader, criterion, args, epoch, optimizer, 
                       scheduler)
                 eval_bleu, eval_preds, eval_trgs = evaluate(model, valid_loader, 
                                                             criterion, args)
@@ -605,16 +635,17 @@ def main(args):
                     best_eval_bleu = eval_bleu
                     best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
                     # save prediction
-                    with open(savepath 
-                              + "/eval_best.pred", "w") as fw:
-                        for p in best_eval_preds:
-                            fw.write(p)
-                            fw.write("\n")
-                    with open(savepath 
-                              + "/eval_best.trg", "w") as fw:
-                        for t in best_eval_trgs:
-                            fw.write(t)
-                            fw.write("\n")
+                    save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
+                    #with open(savepath 
+                    #          + "/eval_best.pred", "w") as fw:
+                    #    for p in best_eval_preds:
+                    #        fw.write(p)
+                    #        fw.write("\n")
+                    #with open(savepath 
+                    #          + "/eval_best.trg", "w") as fw:
+                    #    for t in best_eval_trgs:
+                    #        fw.write(t)
+                    #        fw.write("\n")
 
         except KeyboardInterrupt:
             print('-' * 89)
@@ -647,16 +678,17 @@ def main(args):
     test_bleu, test_preds, test_trgs = evaluate(model, test_loader, criterion, args)
 
     # save prediction
-    with open(savepath 
-              + "/test_best.pred", "w") as fw:
-        for p in test_preds:
-            fw.write(p)
-            fw.write("\n")
-    with open(savepath 
-              + "/test_best.trg", "w") as fw:
-        for t in test_trgs:
-            fw.write(t)
-            fw.write("\n")
+    save_pred(savepath, "test", test_preds, test_trgs)
+    #with open(savepath 
+    #          + "/test_best.pred", "w") as fw:
+    #    for p in test_preds:
+    #        fw.write(p)
+    #        fw.write("\n")
+    #with open(savepath 
+    #          + "/test_best.trg", "w") as fw:
+    #    for t in test_trgs:
+    #        fw.write(t)
+    #        fw.write("\n")
     print('| End of training | test bleu {:5.2f} |'.format(test_bleu * 100))
     print('=' * 89)
 
