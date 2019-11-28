@@ -284,7 +284,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         if update:
             if args.farnear:
                 mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
-                total_mem = torch.cat((mem, inf_blocks), 1)
+                total_mem = torch.cat((mem, inf_blocks.transpose(1, 2)), 1)
                 update_hidden, new_mem = total_mem.split([args.num_steps, 
                                                           args.neighbor_len], 
                                                           dim=1)
@@ -295,7 +295,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
 
         hidden = hidden.transpose(1, 2)
         new_inf_blocks = inf_blocks.clone()
-        new_inf_blocks[:,ind,:,:] = hidden.squeeze(1)
+        new_inf_blocks[:,:,ind,:] = hidden.squeeze(1)
         cand.append(new_inf_blocks)
         cand += [key, value, mem, key_num]
         cand.append(output.squeeze(0))
@@ -445,6 +445,7 @@ def evaluate(model, eval_loader, criterion, args):
                     inf_blocks, new_mem = total_mem.split([args.num_steps, 
                                                            args.neighbor_len], 
                                                            dim=1)
+                inf_blocks = inf_blocks.transpose(1, 2)
                 candidates = [[block.new_ones(eval_batch_size, 0), 
                               output.new_zeros(eval_batch_size, 1),
                               block.new_ones(eval_batch_size, 1).bool(),

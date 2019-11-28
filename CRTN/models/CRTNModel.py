@@ -52,6 +52,14 @@ class CRTNModel(nn.Module):
         self.args.batch_size = batch_size
 
     def forward(self, inputs, cache_key, cache_value, key_num=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None, **kwargs):
+        """
+        inputs: num_steps * batch_size
+        cache_key: cache_N * batch_size * (num_steps * nhid)
+        cache_value: cache_N * batch_size * num_steps * ((nlayers+1) * nhid)
+        key_num: cache_N * batch_size
+        neighbor_mem: (nlayers+1) * batch_size * nei_len * nhid
+        inf_blocks: (nlayers+1) * batch_size * num_steps * nhid
+        """
         seq_len = self.args.num_steps
         bsz = inputs.size(1)
         nhid = self.args.nhid

@@ -479,6 +479,9 @@ class TransformerLM(nn.Module):
         if self.args.not_weighted:
             weights = None
 
+        if inf_blocks is not None:
+            inf_blocks = inf_blocks.transpose(1, 2)
+
         if neighbor_mem is not None:
             nei_len = neighbor_mem.size(1)
             total_len = seq_len + mem_len + nei_len
