@@ -164,6 +164,9 @@ def init_key_num(args, device):
     return key_num
 
 def update_cache(model, batch_size, key, value, hidden, text, key_num):
+    
+    hidden = hidden.transpose(1, 2)
+
     model.cache.set_batch_size(batch_size)
     model.cache.init_key_and_value(key, value)
     model.cache.detach_memory()
@@ -290,6 +293,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
                                                       block, key_num)
             mem = new_mem
 
+        hidden = hidden.transpose(1, 2)
         new_inf_blocks = inf_blocks.clone()
         new_inf_blocks[:,ind,:,:] = hidden.squeeze(1)
         cand.append(new_inf_blocks)
@@ -433,6 +437,7 @@ def evaluate(model, eval_loader, criterion, args):
                                                                    block, 
                                                                    key_num)
                 # begin to evaluate
+                hidden = hidden.transpose(1, 2)
 
                 if args.farnear:
                     mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)

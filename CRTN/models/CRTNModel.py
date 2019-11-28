@@ -210,6 +210,8 @@ class CRTNModel(nn.Module):
         #values = self.cache._get_values()
         #values = values.transpose(1, 2)
 
+        hidden = hidden.transpose(1, 2)
+
         if self.args.farnear:
             return output, hidden, neighbor_mem
         else:
