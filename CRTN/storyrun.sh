@@ -22,7 +22,7 @@ python story_tail.py \
     --emsize 240 \
     --nhid 240 \
     --batch_size 200 \
-    --eval_batch_size 10 \
+    --eval_batch_size 400 \
     --num_steps 20 \
     --tied \
     --attn_type 1 \

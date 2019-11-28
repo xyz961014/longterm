@@ -212,6 +212,18 @@ def get_real_ind_and_prob(head_prob, tails, beam_size):
 
 
 def beam_search(candidates, criterion, vocab, block, block_start, ind, model, args, update=False):
+    """
+    content in candidates:
+        generated word indices
+        sequence probability
+        sequence eos
+        nlayers representation of predicted words block
+        key
+        value
+        neighbor_mem
+        key_num
+        output of prediction of word
+    """
     module = model.module if args.multi_gpu else model
 
     ind_tensor = block.new_ones(0)
@@ -221,7 +233,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
     def length_punish(alpha, length):
         return ((5 + length) / 6) ** alpha
 
-    for old_inds, old_probs, old_eos, _, _, _, _, out in candidates:
+    for old_inds, old_probs, old_eos, _, _, _, _, _, out in candidates:
         head_prob, tails = criterion(out, block[0], output=True)
         word_ind, word_prob = get_real_ind_and_prob(head_prob, tails, args.beam_size)
         old_inds = old_inds.unsqueeze(1).expand(-1, args.beam_size, -1)
@@ -251,9 +263,9 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
     new_candidates = []
     for i in range(args.beam_size): 
         if len(candidates) == args.beam_size:
-            key, value, mem, key_num = tuple(candidates[i][3:7])
+            inf_blocks, key, value, mem, key_num = tuple(candidates[i][3:8])
         else:
-            key, value, mem, key_num = tuple(candidates[0][3:7])
+            inf_blocks, key, value, mem, key_num = tuple(candidates[0][3:8])
         cand = [chosen_ind[:,i,:], 
                 chosen_prob[:,i].unsqueeze(-1), 
                 chosen_eos[:,i].unsqueeze(-1)]
@@ -261,18 +273,28 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         block[block_start:ind+1] = chosen_ind[:,i,block_start-ind-1:].t()
         if args.farnear:
             output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
-                                            key_num=key_num)
+                                            key_num=key_num, inf_ind=ind, 
+                                            inf_blocks=inf_blocks)
         else:
             output, hidden = model(block, key, value, key_num=key_num)
 
         if update:
+            if args.farnear:
+                mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
+                total_mem = torch.cat((mem, inf_blocks), 1)
+                update_hidden, new_mem = total_mem.split([args.num_steps, 
+                                                          args.neighbor_len], 
+                                                          dim=1)
             module, key_num, key, value = update_cache(module, block.size(1), 
-                                                      key, value, hidden, block, 
-                                                      key_num)
+                                                      key, value, update_hidden, 
+                                                      block, key_num)
             mem = new_mem
 
+        new_inf_blocks = inf_blocks.clone()
+        new_inf_blocks[:,ind,:,:] = hidden.squeeze(1)
+        cand.append(new_inf_blocks)
         cand += [key, value, mem, key_num]
-        cand.append(output[ind])
+        cand.append(output.squeeze(0))
         new_candidates.append(cand)
     
     return new_candidates 
@@ -339,8 +361,8 @@ def train(model, train_loader, valid_loader, criterion,
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
-            print('| epoch {:2d} | {:3d}/{:3d} batches | lr {:02.2e} | '
-                  'ms/batch {:5.2f} | loss {:5.2f} | ppl {:8.2f}'.format(
+            print('| epoch {:1d} |{:5d}/{:5d} batches | lr {:02.2e} | '
+                  'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
                 epoch, batch, len(train_loader), 
                 optimizer.state_dict()["param_groups"][0]["lr"],
                 elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
@@ -399,22 +421,29 @@ def evaluate(model, eval_loader, criterion, args):
                         if mem is not None:
                             mem = mem.detach()
                         output, hidden, mem = model(block, key, value, 
-                                                             neighbor_mem=mem, 
-                                                             key_num=key_num)
+                                                    neighbor_mem=mem, 
+                                                    key_num=key_num)
                     else:
                         output, hidden = model(block, key, value, key_num=key_num)
 
                     if i < args.num_steps - 1:
                         module, key_num, key, value = update_cache(module, 
-                                                                  eval_batch_size, 
-                                                                  key, value, hidden, 
-                                                                  block, 
-                                                                  key_num)
+                                                                   eval_batch_size, 
+                                                                   key, value, hidden, 
+                                                                   block, 
+                                                                   key_num)
                 # begin to evaluate
 
+                if args.farnear:
+                    mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
+                    total_mem = torch.cat((mem, hidden), 1)
+                    inf_blocks, new_mem = total_mem.split([args.num_steps, 
+                                                           args.neighbor_len], 
+                                                           dim=1)
                 candidates = [[block.new_ones(eval_batch_size, 0), 
                               output.new_zeros(eval_batch_size, 1),
                               block.new_ones(eval_batch_size, 1).bool(),
+                              inf_blocks,
                               key, value, mem, key_num]]
 
                 for ind in range(args.num_steps):
@@ -491,8 +520,7 @@ def main(args):
     test_loader = corpus.get_test_loader(args.eval_batch_size, device=devices[0])
 
 
-    print("Data loading finished. time: {:.3f} s".format(time.time() - datatime_begin))
-
+    datatime_end = time.time()
 
     if args.load:
         # Load Model
@@ -530,6 +558,7 @@ def main(args):
     for argk, argv in args.__dict__.items():
         print("{}: {}".format(argk, argv))
     print("")
+    print("Data loading finished. time: {:.3f} s".format(datatime_end-datatime_begin))
 
     if args.eval:
         print("SKIP TRAINING")

@@ -9,7 +9,7 @@ python story_tail.py \
     --emsize 100 \
     --nhid 100 \
     --batch_size 50 \
-    --eval_batch_size 12 \
+    --eval_batch_size 50 \
     --num_steps 20 \
     --tied \
     --attn_type 1 \

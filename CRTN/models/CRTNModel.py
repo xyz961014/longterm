@@ -51,7 +51,7 @@ class CRTNModel(nn.Module):
         self.encoder.set_batch_size(batch_size)
         self.args.batch_size = batch_size
 
-    def forward(self, inputs, cache_key, cache_value, key_num=None, draw=False, neighbor_mem=None, **kwargs):
+    def forward(self, inputs, cache_key, cache_value, key_num=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None, **kwargs):
         seq_len = self.args.num_steps
         bsz = inputs.size(1)
         nhid = self.args.nhid
@@ -59,12 +59,6 @@ class CRTNModel(nn.Module):
         # get cache key and value
         self.cache.init_key_and_value(cache_key, cache_value)
 
-        #self.cache.testtensor.copy_(self.cache.testtensor + 1)
-        #print(self.cache.testtensor)
-        #if self.cache.testtensor[0,0].item() > 5:
-        #    print(self.cache.test2) 
-        #self.cache.register_buffer("test2", self.cache.testtensor)
-        #print(self.cache.key4[0][0])
         
         if self.args.farnear:
             nei_len = self.args.neighbor_len
@@ -81,8 +75,12 @@ class CRTNModel(nn.Module):
             if self.args.query_method == "vanilla":
                 _, wise_inputs, _ = self.encoder(inputs)
                 query = wise_inputs[-1]
-                query = query.expand(query.size(0), -1, -1, -1)
                 mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
+                if inf_ind is None:
+                    query = query.expand(query.size(0), -1, -1, -1)
+                else:
+                    query = query.unsqueeze(0)
+                    mask = mask[inf_ind].unsqueeze(0)
                 if torch.__version__ < "1.2.0":
                     mask = mask.byte()[:,:,None,None]
                 else:
@@ -110,60 +108,6 @@ class CRTNModel(nn.Module):
                 index_matrix = index_matrix.expand(-1, bsz, nhid)
                 query = torch.gather(new_input, 0, index_matrix)
                 query = query.view(seq_len, seq_len, -1, nhid)
-            #elif self.args.query_method == "fixed_length_1":
-            #    prev = self.cache._get_values()[-1]
-            #    prev = prev.view(seq_len, -1, self.args.nlayers+1, nhid)
-            #    prev = prev[:,:,0,:]
-            #    inputs = self.encoder.embedding(inputs)
-            #    new_input = torch.cat((prev, inputs), 0)
-            #    index_matrix = torch.arange(seq_len, device=new_input.device).unsqueeze(0)
-            #    index_matrix = index_matrix.expand(seq_len, -1)
-            #    index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) 
-            #    index_matrix = index_matrix.view(-1, 1, 1)
-            #    index_matrix = index_matrix.expand(-1, bsz, nhid)
-            #    query = torch.gather(new_input, 0, index_matrix)
-            #    query = query.view(seq_len, seq_len, bsz, nhid)
-            #    query = query.transpose(0, 1).contiguous()
-            #    query = query.view(seq_len, seq_len * bsz, nhid)
-            #    _, query, _ = self.encoder(query)
-            #    query = query[-1].view(seq_len, seq_len, bsz, nhid)
-            #elif self.args.query_method == "fixed_length_2":
-            #    new_inputs = inputs.expand(seq_len, -1, -1)
-            #    prev_value = self.cache._get_values()[-1]
-            #    prev_value.unsqueeze_(0)
-            #    prev = prev_value.expand(seq_len, -1, -1, -1)
-            #    input_mask = torch.triu(new_inputs.new_ones(seq_len, seq_len), 
-            #                                                    diagonal=1)
-            #    memory_mask = torch.tril(prev.new_ones(seq_len, seq_len), diagonal=0)
-            #    input_mask = input_mask.bool()[:,:,None]
-            #    memory_mask = memory_mask.bool()[:,:,None,None]
-            #    new_inputs.masked_fill_(input_mask, 0)
-            #    prev.masked_fill_(memory_mask, 0)
-            #    new_inputs = new_inputs.transpose(0, 2).contiguous()
-            #    new_inputs = new_inputs.view(seq_len, seq_len * bsz)
-            #    prev = prev.transpose(1, 2).contiguous()
-            #    prev = prev.view(1, seq_len * bsz, seq_len, (self.args.nlayers+1)*nhid)
-            #    prev_indice = torch.zeros_like(new_inputs).view(-1)
-            #    prev_indice.unsqueeze_(0)
-            #    _, wise_inputs, _ = self.encoder(new_inputs, values=prev_value, 
-            #                                        indices=prev_indice)
-            #    wise_inputs = wise_inputs[-1]
-            #    prev = prev.view(-1, seq_len, self.args.nlayers+1, nhid)
-            #    prev = prev[:,:,-1,:]
-            #    prev.transpose_(0, 1)
-            #    query_base = torch.cat((prev, wise_inputs), 0)
-            #    query_base = query_base.view(query_base.size(0), seq_len, -1, nhid)
-            #    query_base = query_base.transpose(0, 1).contiguous()
-            #    query_base = query_base.view(query_base.size(0) * seq_len, -1, nhid)
-            #    index_range = torch.arange(seq_len, device=new_inputs.device).unsqueeze(0)
-            #    index_matrix = index_range.expand(seq_len, -1)
-            #    index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) + index_range.t().expand(-1, seq_len) * 2 * seq_len 
-            #    index_matrix = index_matrix.view(-1, 1, 1)
-            #    index_matrix = index_matrix.expand(-1, query_base.size(1), 
-            #                                        query_base.size(2))
-            #    query = torch.gather(query_base, 0, index_matrix)
-            #    
-            #    query = query.view(seq_len, seq_len, -1, nhid)
             else:
                 if self.args.farnear:
                     prev_value = torch.einsum("nlbh->lbnh", neighbor_mem)
@@ -235,28 +179,20 @@ class CRTNModel(nn.Module):
         if self.demo:
             weights, indices, words = self.cache(query)
         else:
-            #weights, indices, zones = self.cache(query)
             weights, indices = self.cache(query)
             words = None
 
-        #if key_num is None:
-        #    key_num = torch.arange(self.args.cache_N - 1, -1, -1, 
-        #                           dtype=inputs.dtype,
-        #                           device=inputs.device)
-        #    key_num = key_num.expand(len(self.args.devices), -1)
-        #    key_num.transpose_(0, 1)
-
-        #output, hidden, attn_map = self.encoder(inputs, zones, weights, indices, words, draw)
         values = self.cache._get_values()
 
         if self.args.not_weighted:
             weights = None
 
         output, hidden, attn_map = self.encoder(inputs, key_num, values, weights, 
-                                              indices, words, draw, neighbor_mem)
+                                              indices, words, draw, neighbor_mem,
+                                              inf_ind, inf_blocks)
 
         
-        if self.args.farnear:
+        if self.args.farnear and inf_ind is None:
             total_mem = torch.cat((neighbor_mem, hidden), 1)
             hidden, neighbor_mem = total_mem.split([seq_len, self.args.neighbor_len], 
                                                  dim=1)
