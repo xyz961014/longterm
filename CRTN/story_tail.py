@@ -4,6 +4,7 @@ import os
 import sys
 import re
 import argparse
+import copy
 #ignore future warning from tensorboard
 import warnings
 warnings.filterwarnings("ignore")
@@ -16,6 +17,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+import torch.distributed as dist
+from torch.nn.parallel import DistributedDataParallel
 import torchtext
 from nltk.translate.bleu_score import sentence_bleu
 
@@ -145,11 +148,15 @@ def parse_args():
                         help='path to save the final model')
     parser.add_argument('--load', type=str, default='',
                         help='path to load the model')
+    parser.add_argument('--rank', type=int, default=0,
+                        help='rank in nccl')
     args = parser.parse_args()
     return args
 
+#class DataParallel(DistributedDataParallel):
 class DataParallel(nn.DataParallel):
-    def __init__(self, module, device_ids=None, output_device=None, dim=0):
+    def __init__(self, module, device_ids=None, output_device=None, dim=0, 
+                 find_unused_parameters=True):
         super().__init__(module, device_ids, output_device, dim)
 
     def set_batch_size(self, batch_size):
@@ -737,17 +744,23 @@ def main(args):
 
 
 
-
-
 if __name__ == "__main__":
+
     args = parse_args()
     savepath = "../../../experiment/crtn/story/"
     timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
     savepath += args.save + timestr
+
+    #os.environ["RANK"] = str(args.rank)
+    #os.environ["WORLD_SIZE"] = str(len(args.devices))
+    #os.environ["MASTER_ADDR"] = "127.0.0.1"
+    #os.environ["MASTER_PORT"] = "23456"
+    #dist.init_process_group("nccl")
     
     if not os.path.exists("./log/" + args.save + timestr):
         os.mkdir("./log/" + args.save + timestr)
     if not os.path.exists(savepath):
         os.mkdir(savepath)
     writer = SummaryWriter("./log/" + args.save + timestr)
+
     main(args)
