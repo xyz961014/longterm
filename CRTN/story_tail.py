@@ -139,6 +139,8 @@ def parse_args():
                         help='report interval')
     parser.add_argument('--eval_steps', type=int, default=2000, metavar='N',
                         help='evaluation steps')
+    parser.add_argument('--eval_part', type=float, default=0.1,
+                        help='only use a part of validation in eval during training')
     parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
     parser.add_argument('--load', type=str, default='',
@@ -378,14 +380,15 @@ def train(model, train_loader, valid_loader, criterion,
 
         if batch % args.eval_steps == 0 and batch > 0:
             eval_bleu, eval_preds, eval_trgs = evaluate(model, valid_loader, 
-                                                        criterion, args)
-            print('| eval at step {:3d} | valid bleu {:5.2f} |'.format(batch, 
+                                                        criterion, args, 
+                                                        args.eval_part)
+            print('| eval at step {:3d} | eval bleu {:5.2f} |'.format(batch, 
                                                                     eval_bleu * 100))
             save_pred(savepath, 
                       "eval_" + str(epoch) + "_" + str(batch // args.eval_steps), 
                       eval_preds, eval_trgs)
 
-def evaluate(model, eval_loader, criterion, args):
+def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     model.eval()
     module = model.module if args.multi_gpu else model
     if torch.cuda.is_available():
@@ -395,16 +398,19 @@ def evaluate(model, eval_loader, criterion, args):
     
     bleu = 0.
     len_eval = 0
+    total_len = math.ceil(len(eval_loader) * eval_part)
 
     vocab = eval_loader.dataset.fields["trg"].vocab
     preds = []
     trgs = []
 
     with torch.no_grad():
-        with tqdm(total=len(eval_loader)) as pbar:
+        with tqdm(total=total_len) as pbar:
             pbar.set_description("evaluating")
 
             for batch, data in enumerate(eval_loader):
+                if batch >= total_len:
+                    break
                 src, trg = data.src, data.trg
                 eval_batch_size = src.size(1)
                 len_eval += eval_batch_size
@@ -555,6 +561,7 @@ def main(args):
 
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
+        model_args.eval_part = args.eval_part
 
         args = model_args
 

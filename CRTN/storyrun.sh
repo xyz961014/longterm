@@ -22,7 +22,7 @@ python story_tail.py \
     --emsize 240 \
     --nhid 240 \
     --batch_size 200 \
-    --eval_batch_size 400 \
+    --eval_batch_size 200 \
     --num_steps 20 \
     --tied \
     --attn_type 1 \
@@ -39,6 +39,8 @@ python story_tail.py \
     --wise_summary \
     --farnear \
     --neighbor_len 20 \
+    --eval_steps 2000 \
+    --eval_part 0.05 \
     --multi_gpu \
     ${@:2}
 
