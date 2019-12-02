@@ -17,10 +17,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel
 import torchtext
 from nltk.translate.bleu_score import sentence_bleu
+
+#import torch.distributed as dist
+#from torch.nn.parallel import DistributedDataParallel
 
 from data.wp_loader import WPDataset
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
@@ -324,12 +325,13 @@ def save_pred(savepath, name, preds, trgs):
 
 def train(model, train_loader, valid_loader, criterion, 
           args, epoch, optimizer, scheduler):
+
     model.train()
     start_time = time.time()
     total_loss = 0.
     module = model.module if args.multi_gpu else model
     if torch.cuda.is_available():
-        device = torch.device("cuda:" + str(module.args.devices[0]))
+        device = torch.device("cuda:" + str(args.devices[0]))
     else:
         device = torch.device("cpu")
     
@@ -399,7 +401,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     model.eval()
     module = model.module if args.multi_gpu else model
     if torch.cuda.is_available():
-        device = torch.device("cuda:" + str(module.args.devices[0]))
+        device = torch.device("cuda:" + str(args.devices[0]))
     else:
         device = torch.device("cpu")
     
@@ -543,7 +545,7 @@ def main(args):
 
     if args.load:
         # Load Model
-        checkpoint = torch.load(args.load)
+        checkpoint = torch.load(args.load, map_location=devices[0])
         model_args = checkpoint["model_args"]
 
         # inject params for this time
@@ -584,6 +586,7 @@ def main(args):
         print("SKIP TRAINING")
     else:
         print("TRAINING......")
+
 
     if args.load:
         # load state_dict
@@ -707,7 +710,7 @@ def main(args):
     else:
         best_model = savepath + "/" + args.save + "_best.pt"
 
-    eval_checkpoint = torch.load(best_model)
+    eval_checkpoint = torch.load(best_model, map_location=devices[0])
     model_state_dict = eval_checkpoint["model_state_dict"]
     keys = model_state_dict.copy().keys()
 
