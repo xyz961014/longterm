@@ -489,7 +489,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
             for batch, data in enumerate(eval_loader):
                 if batch >= total_len:
                     break
-                src, trg = data.src, data.trg
+                src, trg = data.src.to(device), data.trg.to(device)
                 eval_batch_size = src.size(1)
                 len_eval += eval_batch_size
                 srcs = src.split(module.args.num_steps)
@@ -617,10 +617,9 @@ def main(args):
     args.vocab_size = len(corpus.TRG.vocab.itos)
     
     train_loader = corpus.get_train_loader(args.batch_size, device=devices[0])
-    train_valid_loader = corpus.get_train_valid_loader(args.batch_size, 
-                                                       device=devices[0])
-    valid_loader = corpus.get_valid_loader(args.eval_batch_size, device=devices[0])
-    test_loader = corpus.get_test_loader(args.eval_batch_size, device=devices[0])
+    train_valid_loader = corpus.get_train_valid_loader(args.batch_size)
+    valid_loader = corpus.get_valid_loader(args.eval_batch_size)
+    test_loader = corpus.get_test_loader(args.eval_batch_size)
 
 
     datatime_end = time.time()
