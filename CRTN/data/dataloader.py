@@ -12,10 +12,10 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-PAD_token = 0  # Used for padding short sentences
-SOS_token = 1  # Start-of-sentence token
+UNK_token = 0  # Unknown word token
+PAD_token = 1  # Used for padding short sentences
 EOS_token = 2  # End-of-sentence token
-UNK_token = 3  # Unknown word token
+SOS_token = 3  # Start-of-sentence token
 
 #normalize = mosestokenizer.MosesPunctuationNormalizer("en")
 

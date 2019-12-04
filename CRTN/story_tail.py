@@ -71,7 +71,7 @@ def parse_args():
                         help='gradient clipping')
     parser.add_argument('--beam_size', type=int, default=4,
                         help='beam size of beam search when inferencing')
-    parser.add_argument('--decode_alpha', type=float, default=0.6,
+    parser.add_argument('--decode_alpha', type=float, default=0.0,
                         help='length punishment when decoding: ((5+l)/6)^alpha')
     parser.add_argument('--epochs', type=int, default=200,
                         help='upper epoch limit')
@@ -165,11 +165,12 @@ class DataParallel(nn.DataParallel):
         self.module.set_batch_size(batch_size)
         self.batch_size = batch_size
 
-def init_key_num(args, device):
+def init_key_num(args, device, evaluate=False):
+    batch_size = args.eval_batch_size if evaluate else args.batch_size
     key_num = torch.arange(args.cache_N, 0, -1, 
                            dtype=torch.float,
                            device=device)
-    key_num = key_num.expand(args.batch_size, -1)
+    key_num = key_num.expand(batch_size, -1)
     key_num.transpose_(0, 1)
     return key_num
 
@@ -214,12 +215,13 @@ def batch_bleu(vocab, pred, trg):
     return (bleu, [" ".join(p) for p in pred_sentences], 
                   [" ".join(t) for t in trg_sentences])
 
-def get_real_ind_and_prob(head_prob, tails, beam_size):
+def get_real_ind_and_prob(head_prob, tails, beam_size, padding_idx=1):
     tail_len = len(tails)
     for i in range(tail_len):
         base_prob = head_prob[:,i-3].unsqueeze(1)
         tails[i] += base_prob
     real_prob = torch.cat((head_prob[:,:-tail_len], *tails), 1)
+    real_prob[:,padding_idx] = -float("inf")
     word_prob, word_ind = real_prob.topk(beam_size)
     return word_ind, word_prob
 
@@ -239,19 +241,36 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
     """
     module = model.module if args.multi_gpu else model
 
+    # record all searched results
     ind_tensor = block.new_ones(0)
     eos_tensor = block.new_ones(0).bool() # True represents sentence is not end.
     prob_tensor = candidates[0][-1].new_zeros(0)
+    blocks_tensor = prob_tensor.new_zeros(0)
+    keys_tensor = prob_tensor.new_zeros(0)
+    values_tensor = prob_tensor.new_zeros(0)
+    mems_tensor = prob_tensor.new_zeros(0)
+    key_nums_tensor = prob_tensor.new_zeros(0)
 
     def length_punish(alpha, length):
         return ((5 + length) / 6) ** alpha
 
-    for old_inds, old_probs, old_eos, _, _, _, _, _, out in candidates:
+    for old_inds, old_probs, old_eos, old_block, old_key, old_value, old_mem, old_key_num, out in candidates:
+        # get probablity
         head_prob, tails = criterion(out, block[0], output=True)
         word_ind, word_prob = get_real_ind_and_prob(head_prob, tails, args.beam_size)
+        # process eos 
+        word_ind.masked_fill_(old_eos.eq(False), 1)
+        word_prob.masked_fill_(old_eos.eq(False), -float("inf"))
+        # remain only one eos
+        if old_eos.eq(False).sum().item() > 0:
+            for eos_ind, eos_it in enumerate(old_eos):
+                if not eos_it:
+                    word_prob[eos_ind][0] = 0.0
+        # concat old ind and new ones
         old_inds = old_inds.unsqueeze(1).expand(-1, args.beam_size, -1)
         word_inds = word_ind.unsqueeze(-1)
         word_inds = torch.cat((old_inds, word_inds), -1)
+        # decode alpha scaling
         scale_len = word_inds.size(-1)
         return_tensor = torch.ones_like(word_prob) * length_punish(args.decode_alpha, 
                                                                    scale_len - 1)
@@ -261,54 +280,104 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         scale_tensor.masked_fill_(old_eos.eq(False), 1.0)
         word_prob = old_probs.mul(return_tensor) + word_prob
         word_prob.mul_(scale_tensor)
+        # mark eos
         eos = old_eos * word_ind.eq(vocab.stoi["<eos>"]).eq(False)
-
+        # record current result
         ind_tensor = torch.cat((ind_tensor, word_inds), 1)
         prob_tensor = torch.cat((prob_tensor, word_prob), 1)
         eos_tensor = torch.cat((eos_tensor, eos), 1)
+        # accumulate old tensors to gather from
+        old_block = old_block.unsqueeze(0)
+        blocks_tensor = torch.cat((blocks_tensor, old_block), 0)
+        old_key = old_key.unsqueeze(0)
+        keys_tensor = torch.cat((keys_tensor, old_key), 0)
+        old_value = old_value.unsqueeze(0)
+        values_tensor = torch.cat((values_tensor, old_value), 0)
+        old_mem = old_mem.unsqueeze(0)
+        mems_tensor = torch.cat((mems_tensor, old_mem), 0)
+        old_key_num = old_key_num.unsqueeze(0)
+        key_nums_tensor = torch.cat((key_nums_tensor, old_key_num), 0)
 
     chosen_prob, chosen_ind = prob_tensor.topk(args.beam_size)
     chosen_eos = torch.gather(eos_tensor, 1, chosen_ind)
-    gather_id = chosen_ind.unsqueeze(-1).expand(-1, -1, 
-                                                ind_tensor.size(-1))
+    chosen_cand = chosen_ind.t() / args.beam_size
+    gather_id = chosen_ind.unsqueeze(-1).expand(-1, -1, ind_tensor.size(-1))
     chosen_ind = torch.gather(ind_tensor, 1, gather_id)
+        
+    # gather corresponding tensors 
+    block_ind = chosen_cand[:,None,:,None,None]
+    block_ind = block_ind.expand(-1, blocks_tensor.size(1), -1, blocks_tensor.size(-2),
+                                 blocks_tensor.size(-1))
+    chosen_inf_blocks = torch.gather(blocks_tensor, 0, block_ind)
+
+    key_ind = chosen_cand[:,None,:,None]
+    key_ind = key_ind.expand(-1, keys_tensor.size(1), -1, keys_tensor.size(-1))
+    chosen_keys = torch.gather(keys_tensor, 0, key_ind)
+
+    value_ind = chosen_cand[:,None,:,None,None]
+    value_ind = value_ind.expand(-1, values_tensor.size(1), -1, values_tensor.size(-2),
+                                 values_tensor.size(-1))
+    chosen_values = torch.gather(values_tensor, 0, value_ind)
+
+    mem_ind = chosen_cand[:,None,None,:,None]
+    mem_ind = mem_ind.expand(-1, mems_tensor.size(1), mems_tensor.size(2), -1,
+                             mems_tensor.size(-1))
+    chosen_mems = torch.gather(mems_tensor, 0, mem_ind)
+
+    key_num_ind = chosen_cand[:,None,:]
+    key_num_ind = key_num_ind.expand(-1, key_nums_tensor.size(1), -1)
+    chosen_key_nums = torch.gather(key_nums_tensor, 0, key_num_ind)
+
+    # print words in batch0
+    #for words, prob in list(zip(chosen_ind[0], chosen_prob[0])):
+    #    print(" ".join([vocab.itos[w] for w in words]), end=" ")
+    #    print("%.3f" % prob.item())
+    #print("")
 
     new_candidates = []
     for i in range(args.beam_size): 
-        if len(candidates) == args.beam_size:
-            inf_blocks, key, value, mem, key_num = tuple(candidates[i][3:8])
-        else:
-            inf_blocks, key, value, mem, key_num = tuple(candidates[0][3:8])
+        inf_blocks = chosen_inf_blocks[i]
+        key = chosen_keys[i]
+        value = chosen_values[i]
+        mem = chosen_mems[i]
+        key_num = chosen_key_nums[i]
+        eos = chosen_eos[:,i]
+
         cand = [chosen_ind[:,i,:], 
                 chosen_prob[:,i].unsqueeze(-1), 
                 chosen_eos[:,i].unsqueeze(-1)]
 
         block[block_start:ind+1] = chosen_ind[:,i,block_start-ind-1:].t()
-        if args.farnear:
-            output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
-                                            key_num=key_num, inf_ind=ind, 
-                                            inf_blocks=inf_blocks)
-        else:
-            output, hidden = model(block, key, value, key_num=key_num)
-
-        if update:
+        
+        if not eos.eq(False).sum() == eos.size(0):
             if args.farnear:
-                mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
-                total_mem = torch.cat((mem, inf_blocks.transpose(1, 2)), 1)
-                update_hidden, new_mem = total_mem.split([args.num_steps, 
-                                                          args.neighbor_len], 
-                                                          dim=1)
-            module, key_num, key, value = update_cache(module, block.size(1), 
-                                                      key, value, update_hidden, 
-                                                      block, key_num)
-            mem = new_mem
+                output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
+                                                key_num=key_num, inf_ind=ind, 
+                                                inf_blocks=inf_blocks)
+            else:
+                output, hidden = model(block, key, value, key_num=key_num)
 
-        hidden = hidden.transpose(1, 2)
-        new_inf_blocks = inf_blocks.clone()
-        new_inf_blocks[:,:,ind,:] = hidden.squeeze(1)
-        cand.append(new_inf_blocks)
-        cand += [key, value, mem, key_num]
-        cand.append(output.squeeze(0))
+            if update:
+                if args.farnear:
+                    mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
+                    total_mem = torch.cat((mem, inf_blocks.transpose(1, 2)), 1)
+                    update_hidden, new_mem = total_mem.split([args.num_steps, 
+                                                              args.neighbor_len], 
+                                                              dim=1)
+                module, key_num, key, value = update_cache(module, block.size(1), 
+                                                          key, value, update_hidden, 
+                                                          block, key_num)
+                mem = new_mem
+
+            hidden = hidden.transpose(1, 2)
+            new_inf_blocks = inf_blocks.clone()
+            new_inf_blocks[:,:,ind,:] = hidden.squeeze(1)
+            cand.append(new_inf_blocks)
+            cand += [key, value, mem, key_num]
+            cand.append(output.squeeze(0))
+        else:
+            cand += [inf_blocks.clone(), key, value, mem, key_num,
+                     inf_blocks.new_zeros(inf_blocks.size(1), inf_blocks.size(-1))]
         new_candidates.append(cand)
     
     return new_candidates 
@@ -426,7 +495,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                 srcs = src.split(module.args.num_steps)
 
                 model.set_batch_size(eval_batch_size)
-                key_num = init_key_num(args, device)
+                key_num = init_key_num(args, device, True)
                 key = None
                 value = None
                 pred = []
@@ -445,58 +514,69 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     else:
                         output, hidden = model(block, key, value, key_num=key_num)
 
-                    if i < args.num_steps - 1:
+                    if i < len(srcs) - 1:
                         module, key_num, key, value = update_cache(module, 
                                                                    eval_batch_size, 
                                                                    key, value, hidden, 
                                                                    block, 
                                                                    key_num)
+
                 # begin to evaluate
                 hidden = hidden.transpose(1, 2)
 
                 if args.farnear:
                     mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
-                    total_mem = torch.cat((mem, hidden), 1)
-                    inf_blocks, new_mem = total_mem.split([args.num_steps, 
-                                                           args.neighbor_len], 
+                    total_mem = torch.cat((hidden, mem), 1)
+                    mem, inf_blocks = total_mem.split([args.neighbor_len, 
+                                                           args.num_steps], 
                                                            dim=1)
                 inf_blocks = inf_blocks.transpose(1, 2)
+
                 candidates = [[block.new_ones(eval_batch_size, 0), 
                               output.new_zeros(eval_batch_size, 1),
                               block.new_ones(eval_batch_size, 1).bool(),
                               inf_blocks,
                               key, value, mem, key_num]]
 
+                # generated index
+                # probability
+                # eos
+                # previous input
+
                 for ind in range(args.num_steps):
                     if block[ind][0].item() == 1:
-                        candidates[0].append(output[ind-1])
                         break
                 else:
-                    candidates[0].append(output[ind])
+                    ind += 1
+                candidates[0].append(output[ind-1])
                 block_start = ind
 
-                while ind < args.num_steps - 1:
+                # complete unfilled block
+                while ind < args.num_steps:
                     candidates = beam_search(candidates, criterion, vocab, block, 
-                                             block_start, ind, model, args, 
-                                             ind == args.num_steps - 2)
+                                             block_start, ind, model, args)
 
                     ind += 1
 
+                # start new blocks
                 step = 0
                 block_start = 0
-                block = torch.ones_like(block)
+                block = torch.ones_like(block) * vocab.stoi["<pad>"]
                 while step < args.trgmax - args.num_steps:
                     ind = step % args.num_steps
                     candidates = beam_search(candidates, criterion, vocab, block, 
                                              block_start, ind, model, args, 
-                                             ind == args.num_steps - 1)
+                                             ind == 0)
+                    eos_bool = torch.cat([c[2] for c in candidates], 0)
+                    if eos_bool.equal(torch.zeros_like(eos_bool)):
+                        break
                     step += 1
 
                 final_ind = torch.cat([x[0].unsqueeze(0) for x in candidates], 0)
                 final_prob = torch.cat([x[1] for x in candidates], 1)
                 _, max_ind = final_prob.max(1)
                 max_ind = max_ind.unsqueeze(-1).expand(-1, final_ind.size(-1)).unsqueeze(0)
-                pred_tensor = torch.gather(final_ind, 0, max_ind).squeeze().t()
+                pred_tensor = torch.gather(final_ind, 0, max_ind).squeeze(0).t()
                 b_bleu, b_pred, b_trg = batch_bleu(vocab, pred_tensor, trg)
                 bleu += b_bleu
                 preds += b_pred
@@ -537,6 +617,8 @@ def main(args):
     args.vocab_size = len(corpus.TRG.vocab.itos)
     
     train_loader = corpus.get_train_loader(args.batch_size, device=devices[0])
+    train_valid_loader = corpus.get_train_valid_loader(args.batch_size, 
+                                                       device=devices[0])
     valid_loader = corpus.get_valid_loader(args.eval_batch_size, device=devices[0])
     test_loader = corpus.get_test_loader(args.eval_batch_size, device=devices[0])
 
@@ -652,8 +734,8 @@ def main(args):
             best_eval_preds, best_eval_trgs = [], []
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
-                train(model, train_loader, valid_loader, criterion, args, epoch, optimizer, 
-                      scheduler)
+                train(model, train_loader, train_valid_loader, criterion, 
+                      args, epoch, optimizer, scheduler)
                 eval_bleu, eval_preds, eval_trgs = evaluate(model, valid_loader, 
                                                             criterion, args)
                 with open(savepath 
@@ -675,11 +757,19 @@ def main(args):
                 writer.add_scalar("valid/bleu", eval_bleu, 
                                   epoch * len(train_loader))
                 writer.flush()
+
+                torch.save({
+                    "model_args": model.args,
+                    "model_state_dict": model.state_dict(),
+                    "criterion": criterion.state_dict()
+                    }, 
+                    savepath + 
+                    "/" + args.save + "_" + str(epoch) + ".pt")
+
                 if eval_bleu > best_eval_bleu:
-                    module = model.module if args.multi_gpu else model
                     torch.save({
-                        "model_args": module.args,
-                        "model_state_dict": module.state_dict(),
+                        "model_args": model.args,
+                        "model_state_dict": model.state_dict(),
                         "criterion": criterion.state_dict()
                         }, 
                         savepath + 
@@ -688,16 +778,6 @@ def main(args):
                     best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
                     # save prediction
                     save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
-                    #with open(savepath 
-                    #          + "/eval_best.pred", "w") as fw:
-                    #    for p in best_eval_preds:
-                    #        fw.write(p)
-                    #        fw.write("\n")
-                    #with open(savepath 
-                    #          + "/eval_best.trg", "w") as fw:
-                    #    for t in best_eval_trgs:
-                    #        fw.write(t)
-                    #        fw.write("\n")
 
         except KeyboardInterrupt:
             print('-' * 89)
@@ -722,6 +802,7 @@ def main(args):
     if args.eval:
         best_eval_bleu, best_eval_preds, best_eval_trgs = evaluate(model, valid_loader,
                                                                    criterion, args)
+        save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
 
     print('=' * 89)
     print('| best valid bleu {:5.2f} |'.format(best_eval_bleu * 100))

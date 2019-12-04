@@ -37,6 +37,8 @@ class WPDataset(object):
         
         self.train_dataset = datasets.LanguageModelingDataset(path + "train.txt", 
                                                               self.TRG)
+        self.train_valid_dataset = datasets.TranslationDataset(path + "train", 
+                                                               exts, fields)
         self.valid_dataset = datasets.TranslationDataset(path + "valid", exts, fields)
         self.test_dataset = datasets.TranslationDataset(path + "test", exts, fields)
 
@@ -48,11 +50,20 @@ class WPDataset(object):
         return data.BPTTIterator(self.train_dataset, batch_size, self.num_steps, 
                                  **kwargs)
 
+    def get_train_valid_loader(self, batch_size, **kwargs):
+        return data.BucketIterator(self.train_valid_dataset, batch_size, 
+                                   train=False, shuffle=True, sort=False,
+                                   **kwargs)
+
     def get_valid_loader(self, batch_size, **kwargs):
-        return data.BucketIterator(self.valid_dataset, batch_size, **kwargs)
+        return data.BucketIterator(self.valid_dataset, batch_size, 
+                                   train=False, shuffle=False, sort=False,
+                                   **kwargs)
 
     def get_test_loader(self, batch_size, **kwargs):
-        return data.BucketIterator(self.test_dataset, batch_size, **kwargs)
+        return data.BucketIterator(self.test_dataset, batch_size, 
+                                   train=False, shuffle=False, sort=False,
+                                   **kwargs)
 
 
 if __name__ == "__main__":

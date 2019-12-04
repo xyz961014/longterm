@@ -390,11 +390,11 @@ class TransformerLM(nn.Module):
         else:
             if args.tied:
                 self.embedding = nn.Embedding(vocab_size, d_embedding, 
-                                              padding_idx=0).from_pretrained(
+                                              padding_idx=1).from_pretrained(
                                                       self.decoder.weight)
                 self.embedding.weight = self.decoder.weight
             else:
-                self.embedding = nn.Embedding(vocab_size, d_embedding, padding_idx=0)
+                self.embedding = nn.Embedding(vocab_size, d_embedding, padding_idx=1)
 
         self.pos_emb = PositionalEmbedding(d_model)
 

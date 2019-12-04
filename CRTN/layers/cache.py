@@ -114,13 +114,14 @@ class Cache(nn.Module):
         if key is not None:
             for i in range(self.mem_start, self.mem_end + 1):
                 idx = torch.tensor(i).to(key.device)
-                getattr(self, "key" + str(i)).copy_(key.index_select(0, idx).squeeze())
+                getattr(self, 
+                        "key" + str(i)).copy_(key.index_select(0, idx).squeeze(0))
         if value is not None:
             value = value.transpose(1, 2)
             for i in range(self.mem_start, self.mem_end + 1):
                 idx = torch.tensor(i).to(value.device)
                 getattr(self, 
-                        "value" + str(i)).copy_(value.index_select(0, idx).squeeze())
+                        "value" + str(i)).copy_(value.index_select(0, idx).squeeze(0))
 
     def _get_values(self):
         values = [getattr(self, "value" + str(i)) 
@@ -227,7 +228,7 @@ class Cache(nn.Module):
         attention = attention.view(-1, 1, attention.size(-1))
         
         _, topk_indices = attention.topk(self.topk)
-        topk_indices = topk_indices.squeeze().t()
+        topk_indices = topk_indices.squeeze(1).t()
         #topk_indices = topk_indices.transpose(0, 2).reshape(self.topk, -1)
         #outputs = values[batch, topk_indices]
 

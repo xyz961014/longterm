@@ -25,7 +25,7 @@ python story_tail.py \
     --no_summary \
     --wise_summary \
     --farnear \
-    --eval_steps 200 \
+    --eval_steps 500 \
     --eval_part 0.1 \
     ${@:1}
 
