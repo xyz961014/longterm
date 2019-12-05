@@ -307,6 +307,7 @@ def evaluate(model, eval_loader, criterion, args):
 
             if args.adaptive:
                 loss = criterion(output.view(-1, args.nhid), targets.view(-1))
+                ipdb.set_trace()
                 loss = loss.mean()
             else:
                 loss = criterion(output.view(-1, args.vocab_size), targets.view(-1))

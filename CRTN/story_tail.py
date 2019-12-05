@@ -145,6 +145,10 @@ def parse_args():
                         help='evaluation steps')
     parser.add_argument('--eval_part', type=float, default=0.1,
                         help='only use a part of validation in eval during training')
+    parser.add_argument('--eval_use_train', action="store_true",
+                        help='use part of training data to do evaluation')
+    parser.add_argument('--eval_ppl', action="store_true",
+                        help='compute ppl during evaluation')
     parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
     parser.add_argument('--load', type=str, default='',
@@ -217,10 +221,11 @@ def batch_bleu(vocab, pred, trg):
 
 def get_real_ind_and_prob(head_prob, tails, beam_size, padding_idx=1):
     tail_len = len(tails)
+    get_tails = []
     for i in range(tail_len):
-        base_prob = head_prob[:,i-3].unsqueeze(1)
-        tails[i] += base_prob
-    real_prob = torch.cat((head_prob[:,:-tail_len], *tails), 1)
+        base_prob = head_prob[:,-i-1].unsqueeze(1)
+        get_tails.append(tails[i] + base_prob)
+    real_prob = torch.cat((head_prob[:,:-tail_len], *get_tails), 1)
     real_prob[:,padding_idx] = -float("inf")
     word_prob, word_ind = real_prob.topk(beam_size)
     return word_ind, word_prob
@@ -333,6 +338,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
     #    print(" ".join([vocab.itos[w] for w in words]), end=" ")
     #    print("%.3f" % prob.item())
     #print("")
+    #ipdb.set_trace()
 
     new_candidates = []
     for i in range(args.beam_size): 
@@ -351,27 +357,35 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         
         if not eos.eq(False).sum() == eos.size(0):
             if args.farnear:
+                #output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
+                #                                key_num=key_num, inf_ind=ind, 
+                #                                inf_blocks=inf_blocks)
                 output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
-                                                key_num=key_num, inf_ind=ind, 
-                                                inf_blocks=inf_blocks)
+                                                key_num=key_num)
+                output = output[ind].unsqueeze(0)
+                update_hidden = hidden.clone()
+                hidden = new_mem.view_as(mem)[:,ind-args.num_steps,:,:].unsqueeze(1)
+                hidden = hidden.transpose(1, 2)
             else:
                 output, hidden = model(block, key, value, key_num=key_num)
 
-            if update:
-                if args.farnear:
-                    mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
-                    total_mem = torch.cat((mem, inf_blocks.transpose(1, 2)), 1)
-                    update_hidden, new_mem = total_mem.split([args.num_steps, 
-                                                              args.neighbor_len], 
-                                                              dim=1)
-                module, key_num, key, value = update_cache(module, block.size(1), 
-                                                          key, value, update_hidden, 
-                                                          block, key_num)
-                mem = new_mem
 
             hidden = hidden.transpose(1, 2)
             new_inf_blocks = inf_blocks.clone()
             new_inf_blocks[:,:,ind,:] = hidden.squeeze(1)
+
+            if update:
+                #if args.farnear:
+                #    mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
+                #    total_mem = torch.cat((mem, new_inf_blocks.transpose(1, 2)), 1)
+                #    update_hidden, new_mem = total_mem.split([args.num_steps, 
+                #                                              args.neighbor_len], 
+                #                                              dim=1)
+                module, key_num, key, value = update_cache(module, block.size(1), 
+                                                          key, value, update_hidden, 
+                                                          block, key_num)
+                mem = new_mem.view_as(mem)
+
             cand.append(new_inf_blocks)
             cand += [key, value, mem, key_num]
             cand.append(output.squeeze(0))
@@ -473,6 +487,11 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
         device = torch.device("cuda:" + str(args.devices[0]))
     else:
         device = torch.device("cpu")
+
+    if args.eval_ppl:
+        losses = 0.
+        eval_len = 0
+
     
     bleu = 0.
     len_eval = 0
@@ -499,7 +518,6 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                 key = None
                 value = None
                 pred = []
-                numofeos = [0] * eval_batch_size
                 if args.farnear:
                     mem = None
 
@@ -551,10 +569,69 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                 candidates[0].append(output[ind-1])
                 block_start = ind
 
+                if args.eval_ppl:
+                    #compute ppl of trg
+                    ppl_block = block.clone()
+                    outputs = output.new_zeros(0)
+                    trg_len = trg.size(0)
+                    tail_lens = []
+                    for story in trg.t():
+                        for wid, w in enumerate(story):
+                            if w.item() == vocab.stoi["<eos>"]:
+                                tail_lens.append(wid + 1)
+                                break
+                    if trg_len - args.num_steps + ind > 0:
+                        trg_fill, trg_last = trg.split([args.num_steps - ind, 
+                                                        trg_len - args.num_steps + ind])
+                        ppl_block[ind:] = trg_fill
+                        trg_lasts = list(trg_last.split(args.num_steps))
+                        last_trg_len = trg_lasts[-1].size(0)
+                        trg_lasts[-1] = torch.cat((trg_lasts[-1], 
+                                                   trg_lasts[-1].new_ones(
+                                                       args.num_steps - last_trg_len, 
+                                                       eval_batch_size)))
+                    else:
+                        ppl_block[ind:ind+trg_len] = trg
+                        trg_lasts = []
+                    if args.farnear:
+                        output, hidden, mem = model(ppl_block, key, value, 
+                                                    neighbor_mem=mem, 
+                                                    key_num=key_num)
+                    outputs = torch.cat((outputs, output), 0)
+
+                    module, key_num, key, value = update_cache(module, 
+                                                               eval_batch_size, 
+                                                               key, value, hidden, 
+                                                               ppl_block, 
+                                                               key_num)
+                    for trg_ppl_block in trg_lasts:
+                        output, hidden, mem = model(trg_ppl_block, key, value, 
+                                                    neighbor_mem=mem, 
+                                                    key_num=key_num)
+
+                        outputs = torch.cat((outputs, output), 0)
+
+                        module, key_num, key, value = update_cache(module, 
+                                                                   eval_batch_size, 
+                                                                   key, value, hidden, 
+                                                                   ppl_block, 
+                                                                   key_num)
+                    for batch, tail_len in enumerate(tail_lens):
+                        batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
+                        batch_trg = trg[:tail_len,batch]
+                        loss_tensor = criterion(batch_pred, batch_trg, keep_order=True)
+                        loss = loss_tensor.mean()
+
+                        losses += loss.item()
+                    eval_len += eval_batch_size
+
+
+
                 # complete unfilled block
                 while ind < args.num_steps:
                     candidates = beam_search(candidates, criterion, vocab, block, 
-                                             block_start, ind, model, args)
+                                             block_start, ind, model, args,
+                                             ind == args.num_steps - 1)
 
                     ind += 1
 
@@ -566,7 +643,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     ind = step % args.num_steps
                     candidates = beam_search(candidates, criterion, vocab, block, 
                                              block_start, ind, model, args, 
-                                             ind == 0)
+                                             ind == args.num_steps - 1)
                     eos_bool = torch.cat([c[2] for c in candidates], 0)
                     if eos_bool.equal(torch.zeros_like(eos_bool)):
                         break
@@ -585,6 +662,11 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                 pbar.update(1)
 
     model.set_batch_size(args.batch_size)
+    if args.eval_ppl:
+        loss_mean = losses / eval_len
+        print("ppl on eval: %.2f" % math.exp(loss_mean))
+
+
     return bleu / len_eval, preds, trgs
  
 
@@ -617,7 +699,7 @@ def main(args):
     args.vocab_size = len(corpus.TRG.vocab.itos)
     
     train_loader = corpus.get_train_loader(args.batch_size, device=devices[0])
-    train_valid_loader = corpus.get_train_valid_loader(args.batch_size)
+    train_valid_loader = corpus.get_train_valid_loader(args.eval_batch_size)
     valid_loader = corpus.get_valid_loader(args.eval_batch_size)
     test_loader = corpus.get_test_loader(args.eval_batch_size)
 
@@ -652,6 +734,8 @@ def main(args):
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
         model_args.eval_part = args.eval_part
+        model_args.eval_use_train = args.eval_use_train
+        model_args.eval_ppl = args.eval_ppl
 
         args = model_args
 
@@ -735,18 +819,17 @@ def main(args):
                 epoch_start_time = time.time()
                 train(model, train_loader, train_valid_loader, criterion, 
                       args, epoch, optimizer, scheduler)
-                eval_bleu, eval_preds, eval_trgs = evaluate(model, valid_loader, 
-                                                            criterion, args)
-                with open(savepath 
-                          + "/eval_" + str(epoch) + ".pred", "w") as fw:
-                    for p in eval_preds:
-                        fw.write(p)
-                        fw.write("\n")
-                with open(savepath 
-                          + "/eval_" + str(epoch) + ".trg", "w") as fw:
-                    for t in eval_trgs:
-                        fw.write(t)
-                        fw.write("\n")
+                if not args.eval_use_train:
+                    eval_bleu, eval_preds, eval_trgs = evaluate(model, valid_loader, 
+                                                                criterion, args)
+                else:
+                    eval_bleu, eval_preds, eval_trgs = evaluate(model, 
+                                                                train_valid_loader, 
+                                                                criterion, args,
+                                                                args.eval_part)
+
+                save_pred(savepath, "eval_" + str(epoch), eval_preds, eval_trgs)
+
                 print('-' * 89)
                 print('| end of epoch {:3d} | time: {:5.2f}s '
                       '| valid bleu {:5.2f} |'.format(epoch, 
@@ -799,8 +882,17 @@ def main(args):
         criterion.load_state_dict(eval_checkpoint["criterion"])
 
     if args.eval:
-        best_eval_bleu, best_eval_preds, best_eval_trgs = evaluate(model, valid_loader,
-                                                                   criterion, args)
+        if not args.eval_use_train:
+            best_eval_bleu, best_eval_preds, best_eval_trgs = evaluate(model, 
+                                                                       valid_loader, 
+                                                                       criterion, 
+                                                                       args)
+        else:
+            best_eval_bleu, best_eval_preds, best_eval_trgs = evaluate(
+                                                                model, 
+                                                                train_valid_loader, 
+                                                                criterion, args,
+                                                                args.eval_part)
         save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
 
     print('=' * 89)

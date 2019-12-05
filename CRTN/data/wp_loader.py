@@ -52,7 +52,7 @@ class WPDataset(object):
 
     def get_train_valid_loader(self, batch_size, **kwargs):
         return data.BucketIterator(self.train_valid_dataset, batch_size, 
-                                   train=False, shuffle=True, sort=False,
+                                   train=False, shuffle=False, sort=True,
                                    **kwargs)
 
     def get_valid_loader(self, batch_size, **kwargs):
