@@ -271,7 +271,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
             cand.append(output.squeeze(0))
         else:
             cand += [memory.clone(),
-                     memory.new_zeros(memory.size(-2), memory.size(-1))]
+                     memory.new_zeros(memory.size(1), memory.size(-1))]
         new_candidates.append(cand)
     
     return new_candidates 
