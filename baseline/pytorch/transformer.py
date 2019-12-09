@@ -311,9 +311,11 @@ class TransformerLM(nn.Module):
 
         if memory is None:
             memory = self.init_memory(batch_size)
+        else:
+            memory = memory.transpose(1, 2)
 
         if memory is not None:
-            mem_len = memory[0].size(0)
+            mem_len = memory.size(1)
         else:
             mem_len = 0
 
@@ -365,4 +367,4 @@ class TransformerLM(nn.Module):
         #output = pad_packed_sequence(output)
 
 
-        return output, new_memory
+        return output, new_memory.transpose(1, 2)

@@ -236,8 +236,8 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
     gather_id = chosen_ind.unsqueeze(-1).expand(-1, -1, ind_tensor.size(-1))
     chosen_ind = torch.gather(ind_tensor, 1, gather_id)
 
-    mem_ind = chosen_cand[:,None,None,:,None]
-    mem_ind = mem_ind.expand(-1, mems_tensor.size(1), mems_tensor.size(2), -1,
+    mem_ind = chosen_cand[:,None,:,None,None]
+    mem_ind = mem_ind.expand(-1, mems_tensor.size(1), -1, mems_tensor.size(-2),
                              mems_tensor.size(-1))
     chosen_mems = torch.gather(mems_tensor, 0, mem_ind)
         
