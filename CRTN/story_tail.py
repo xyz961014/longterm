@@ -424,7 +424,7 @@ def train(model, train_loader, valid_loader, criterion,
     key_num = init_key_num(args, device)
 
     for batch, data in enumerate(train_loader):
-        text, target = data.text, data.target
+        text, target = data.text.to(device), data.target.to(device)
         if not text.size(0) == args.num_steps:
             continue
 
@@ -699,7 +699,7 @@ def main(args):
     corpus = WPDataset(args.data, args.vocab_size, args.num_steps)
     args.vocab_size = len(corpus.TRG.vocab.itos)
     
-    train_loader = corpus.get_train_loader(args.batch_size, device=devices[0])
+    train_loader = corpus.get_train_loader(args.batch_size)
     train_valid_loader = corpus.get_train_valid_loader(args.eval_batch_size)
     valid_loader = corpus.get_valid_loader(args.eval_batch_size)
     test_loader = corpus.get_test_loader(args.eval_batch_size)
