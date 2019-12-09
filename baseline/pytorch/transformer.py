@@ -230,7 +230,7 @@ class TransformerUnit(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, attn_type, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, compatible=False):
+    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, attn_type, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layer = num_layer
@@ -249,7 +249,6 @@ class TransformerLM(nn.Module):
         self.div_val = div_val
         self.cutoffs = cutoffs
         self.dropout = dropout
-        self.compatible = compatible
 
         self.adaptive = adaptive
         self.decoder = nn.Linear(d_model, vocab_size, bias=False) 
@@ -324,7 +323,7 @@ class TransformerLM(nn.Module):
 
         mask = torch.triu(word_emb.new_ones(seq_len, total_len), diagonal=1+mem_len)
         #mask = torch.cat((word_emb.new_ones(mem_len, total_len), mask), 0)
-        if self.compatible:
+        if torch.__version__ < "1.2.0":
             mask = mask.byte()[:,:,None]
         else:
             mask = mask.bool()[:,:,None]

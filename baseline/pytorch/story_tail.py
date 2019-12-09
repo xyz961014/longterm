@@ -9,7 +9,7 @@ import copy
 import warnings
 warnings.filterwarnings("ignore")
 
-sys.path.append("..")
+sys.path.append("../..")
 
 import numpy as np
 import math
@@ -23,9 +23,9 @@ from nltk.translate.bleu_score import sentence_bleu
 #import torch.distributed as dist
 #from torch.nn.parallel import DistributedDataParallel
 
-from data.wp_loader import WPDataset
-from utils.adaptive import ProjectedAdaptiveLogSoftmax
-from models.CRTNModel import CRTNModel
+from CRTN.data.wp_loader import WPDataset
+from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
+from transformer import TransformerLM
 
 if torch.__version__ < "1.2.0":
     from tensorboardX import SummaryWriter
@@ -44,8 +44,6 @@ def parse_args():
                         help='skip training')
     parser.add_argument('--demo', action='store_true',
                         help='demo mode')
-    parser.add_argument('--stat', action='store_true',
-                        help='stat memory choices')
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
     parser.add_argument('--vocab_size', type=int, default=10000,
@@ -60,6 +58,8 @@ def parse_args():
                         help='number of layers')
     parser.add_argument('--nhead', type=int, default=8,
                         help='number of heads')
+    parser.add_argument('--mem_len', type=int, default=20,
+                        help='length of memory')
     parser.add_argument('--d_ff', type=int, default=1300,
                         help='dimension of feed-forward')
     parser.add_argument('--lr', type=float, default=27e-5,
@@ -89,12 +89,6 @@ def parse_args():
                         help='tied embedding weights')
     parser.add_argument('--attn_type', type=int, default=1, choices=[0, 1],
                         help='attention type, 0 for vaswani; 1 for transformer-xl')
-    parser.add_argument("--cache_N", type=int, default=5, 
-                        help="size of Cache, default: 5")
-    parser.add_argument("--cache_dk", type=int, default=240, 
-                        help="dimension of key, default: 240")
-    parser.add_argument("--cache_k", type=int, default=3, 
-                        help="select top k values, default: 3")
     parser.add_argument('--multi_gpu', action="store_true",
                         help='enable multiple gpus')
     parser.add_argument('--adaptive', action="store_true",
@@ -102,37 +96,8 @@ def parse_args():
     parser.add_argument('--cutoffs', type=int, 
                         default=[20000, 40000, 80000], nargs="+",
                         help='cutoffs for adaptive embedding')
-    parser.add_argument('--no_summary', action="store_true",
-                        help='use the output of the transformer layer as key')
-    parser.add_argument('--wise_summary', action="store_true",
-                        help='use encoder function(transformer-xl) to summary the key')
-    parser.add_argument('--max_pooling', action="store_true",
-                        help='use max pooling to justice importance' 
-                        'of segments in the cache')
-    parser.add_argument('--query_method', type=str, default='vanilla', 
-                        choices=['fixed_length', 'last_l', 'middle_l', 
-                                 'linear', 'single_linear', 'single_sum', 'vanilla'],
-                        help='query method to use. vanilla indicates just use '
-                        'current segment to query, other methods link previous '
-                        'segment. last_l and middle_l only work in wise_summary '
-                        'mode')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
-    parser.add_argument('--farnear', action="store_true",
-                        help='split history into two parts,'
-                        ' near to compute query and attention; far to be queried')
-    parser.add_argument("--neighbor_len", type=int, default=50,
-                        help="length of near neighbor; only use in farnear mode")
-    parser.add_argument('--p_discard', action="store_true",
-                        help='discard segment according to a computed posibility')
-    parser.add_argument('--merge', action="store_true",
-                        help='merge history instead of discarding')
-    parser.add_argument('--merge_shift', action="store_true",
-                        help='shift positioning encoding when merge')
-    parser.add_argument("--merge_alpha", type=float, default=0.5,
-                        help="ratio of retaining old information when merging")
-    parser.add_argument('--real_pos', action="store_true",
-                        help='compute position encoding according to realtime pos')
     parser.add_argument('--div_val', type=int, default=1,
                         help='divident value for adaptive input and softmax')
     parser.add_argument('--seed', type=int, default=1111,
@@ -153,8 +118,6 @@ def parse_args():
                         help='path to save the final model')
     parser.add_argument('--load', type=str, default='',
                         help='path to load the model')
-    parser.add_argument('--rank', type=int, default=0,
-                        help='rank in nccl')
     args = parser.parse_args()
     return args
 
@@ -169,27 +132,6 @@ class DataParallel(nn.DataParallel):
         self.module.set_batch_size(batch_size)
         self.batch_size = batch_size
 
-def init_key_num(args, device, evaluate=False):
-    batch_size = args.eval_batch_size if evaluate else args.batch_size
-    key_num = torch.arange(args.cache_N, 0, -1, 
-                           dtype=torch.float,
-                           device=device)
-    key_num = key_num.expand(batch_size, -1)
-    key_num.transpose_(0, 1)
-    return key_num
-
-def update_cache(model, batch_size, key, value, hidden, text, key_num):
-    
-    hidden = hidden.transpose(1, 2)
-
-    model.cache.set_batch_size(batch_size)
-    model.cache.init_key_and_value(key, value)
-    model.cache.detach_memory()
-    key_num = model.cache.renew(hidden, text, key_num)
-    key, value = (model.cache._get_keys(), 
-                  model.cache._get_values().transpose(1, 2))
-    model.cache.set_batch_size(batch_size // len(model.args.devices))
-    return model, key_num, key, value
 
 def batch_bleu(vocab, pred, trg):
     bleu = 0.
@@ -237,11 +179,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         generated word indices
         sequence probability
         sequence eos
-        nlayers representation of predicted words block
-        key
-        value
-        neighbor_mem
-        key_num
+        memory block
         output of prediction of word
     """
     module = model.module if args.multi_gpu else model
@@ -250,16 +188,12 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
     ind_tensor = block.new_ones(0)
     eos_tensor = block.new_ones(0).bool() # True represents sentence is not end.
     prob_tensor = candidates[0][-1].new_zeros(0)
-    blocks_tensor = prob_tensor.new_zeros(0)
-    keys_tensor = prob_tensor.new_zeros(0)
-    values_tensor = prob_tensor.new_zeros(0)
     mems_tensor = prob_tensor.new_zeros(0)
-    key_nums_tensor = prob_tensor.new_zeros(0)
 
     def length_punish(alpha, length):
         return ((5 + length) / 6) ** alpha
 
-    for old_inds, old_probs, old_eos, old_block, old_key, old_value, old_mem, old_key_num, out in candidates:
+    for old_inds, old_probs, old_eos, old_mem, out in candidates:
         # get probablity
         head_prob, tails = criterion(out, block[0], output=True)
         word_ind, word_prob = get_real_ind_and_prob(head_prob, tails, args.beam_size)
@@ -291,47 +225,22 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         ind_tensor = torch.cat((ind_tensor, word_inds), 1)
         prob_tensor = torch.cat((prob_tensor, word_prob), 1)
         eos_tensor = torch.cat((eos_tensor, eos), 1)
-        # accumulate old tensors to gather from
-        old_block = old_block.unsqueeze(0)
-        blocks_tensor = torch.cat((blocks_tensor, old_block), 0)
-        old_key = old_key.unsqueeze(0)
-        keys_tensor = torch.cat((keys_tensor, old_key), 0)
-        old_value = old_value.unsqueeze(0)
-        values_tensor = torch.cat((values_tensor, old_value), 0)
+        # accumulate old mems to gather from
         old_mem = old_mem.unsqueeze(0)
         mems_tensor = torch.cat((mems_tensor, old_mem), 0)
-        old_key_num = old_key_num.unsqueeze(0)
-        key_nums_tensor = torch.cat((key_nums_tensor, old_key_num), 0)
+
 
     chosen_prob, chosen_ind = prob_tensor.topk(args.beam_size)
     chosen_eos = torch.gather(eos_tensor, 1, chosen_ind)
     chosen_cand = chosen_ind.t() / args.beam_size
     gather_id = chosen_ind.unsqueeze(-1).expand(-1, -1, ind_tensor.size(-1))
     chosen_ind = torch.gather(ind_tensor, 1, gather_id)
-        
-    # gather corresponding tensors 
-    block_ind = chosen_cand[:,None,:,None,None]
-    block_ind = block_ind.expand(-1, blocks_tensor.size(1), -1, blocks_tensor.size(-2),
-                                 blocks_tensor.size(-1))
-    chosen_inf_blocks = torch.gather(blocks_tensor, 0, block_ind)
-
-    key_ind = chosen_cand[:,None,:,None]
-    key_ind = key_ind.expand(-1, keys_tensor.size(1), -1, keys_tensor.size(-1))
-    chosen_keys = torch.gather(keys_tensor, 0, key_ind)
-
-    value_ind = chosen_cand[:,None,:,None,None]
-    value_ind = value_ind.expand(-1, values_tensor.size(1), -1, values_tensor.size(-2),
-                                 values_tensor.size(-1))
-    chosen_values = torch.gather(values_tensor, 0, value_ind)
 
     mem_ind = chosen_cand[:,None,None,:,None]
     mem_ind = mem_ind.expand(-1, mems_tensor.size(1), mems_tensor.size(2), -1,
                              mems_tensor.size(-1))
     chosen_mems = torch.gather(mems_tensor, 0, mem_ind)
-
-    key_num_ind = chosen_cand[:,None,:]
-    key_num_ind = key_num_ind.expand(-1, key_nums_tensor.size(1), -1)
-    chosen_key_nums = torch.gather(key_nums_tensor, 0, key_num_ind)
+        
 
     # demo: print words in batch0
     #for words, prob in list(zip(chosen_ind[0], chosen_prob[0])):
@@ -341,11 +250,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
 
     new_candidates = []
     for i in range(args.beam_size): 
-        inf_blocks = chosen_inf_blocks[i]
-        key = chosen_keys[i]
-        value = chosen_values[i]
-        mem = chosen_mems[i]
-        key_num = chosen_key_nums[i]
+        memory = chosen_mems[i]
         eos = chosen_eos[:,i]
 
         cand = [chosen_ind[:,i,:], 
@@ -355,42 +260,18 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         block[block_start:ind+1] = chosen_ind[:,i,block_start-ind-1:].t()
         
         if not eos.eq(False).sum() == eos.size(0):
-            if args.farnear:
-                #output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
-                #                                key_num=key_num, inf_ind=ind, 
-                #                                inf_blocks=inf_blocks)
-                output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
-                                                key_num=key_num)
-                output = output[ind].unsqueeze(0)
-                update_hidden = hidden.clone()
-                hidden = new_mem.view_as(mem)[:,ind-args.num_steps,:,:].unsqueeze(1)
-                hidden = hidden.transpose(1, 2)
-            else:
-                output, hidden = model(block, key, value, key_num=key_num)
+            output, new_memory = model(block, memory)
 
-
-            hidden = hidden.transpose(1, 2)
-            new_inf_blocks = inf_blocks.clone()
-            new_inf_blocks[:,:,ind,:] = hidden.squeeze(1)
+            output = output[ind].unsqueeze(0)
 
             if update:
-                #if args.farnear:
-                #    mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
-                #    total_mem = torch.cat((mem, new_inf_blocks.transpose(1, 2)), 1)
-                #    update_hidden, new_mem = total_mem.split([args.num_steps, 
-                #                                              args.neighbor_len], 
-                #                                              dim=1)
-                module, key_num, key, value = update_cache(module, block.size(1), 
-                                                          key, value, update_hidden, 
-                                                          block, key_num)
-                mem = new_mem.view_as(mem)
-
-            cand.append(new_inf_blocks)
-            cand += [key, value, mem, key_num]
+                cand.append(new_memory)
+            else:
+                cand.append(memory)
             cand.append(output.squeeze(0))
         else:
-            cand += [inf_blocks.clone(), key, value, mem, key_num,
-                     inf_blocks.new_zeros(inf_blocks.size(1), inf_blocks.size(-1))]
+            cand += [memory.clone(),
+                     memory.new_zeros(memory.size(-2), memory.size(-1))]
         new_candidates.append(cand)
     
     return new_candidates 
@@ -416,12 +297,9 @@ def train(model, train_loader, valid_loader, criterion,
         device = torch.device("cuda:" + str(args.devices[0]))
     else:
         device = torch.device("cpu")
+
+    memory = None
     
-    key = None
-    value = None
-    if args.farnear:
-        mem = None
-    key_num = init_key_num(args, device)
 
     for batch, data in enumerate(train_loader):
         text, target = data.text, data.target
@@ -430,15 +308,7 @@ def train(model, train_loader, valid_loader, criterion,
 
         model.zero_grad()
         
-        if args.farnear:
-            if mem is not None:
-                mem = mem.detach()
-            output, hidden, mem = model(text, key, value, neighbor_mem=mem, 
-                                                          key_num=key_num)
-        else:
-            output, hidden = model(text, key, value, key_num=key_num)
-
-        module, key_num, key, value = update_cache(module, args.batch_size, key, value,                                                   hidden, text, key_num)
+        output, memory = model(text, memory)
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), target.reshape(-1))
@@ -503,6 +373,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     preds = []
     trgs = []
 
+
     with torch.no_grad():
         with tqdm(total=total_len) as pbar:
             pbar.set_description("evaluating")
@@ -513,50 +384,25 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                 src, trg = data.src.to(device), data.trg.to(device)
                 eval_batch_size = src.size(1)
                 len_eval += eval_batch_size
-                srcs = src.split(module.args.num_steps)
+                srcs = src.split(module.num_steps)
 
-                model.set_batch_size(eval_batch_size)
-                key_num = init_key_num(args, device, True)
-                key = None
-                value = None
+                memory = None
                 pred = []
-                if args.farnear:
-                    mem = None
 
                 # load history
                 for i, block in enumerate(srcs):
-                    if args.farnear:
-                        if mem is not None:
-                            mem = mem.detach()
-                        output, hidden, mem = model(block, key, value, 
-                                                    neighbor_mem=mem, 
-                                                    key_num=key_num)
-                    else:
-                        output, hidden = model(block, key, value, key_num=key_num)
-
                     if i < len(srcs) - 1:
-                        module, key_num, key, value = update_cache(module, 
-                                                                   eval_batch_size, 
-                                                                   key, value, hidden, 
-                                                                   block, 
-                                                                   key_num)
+                        output, memory = model(block, memory)
+                    else:
+                        output, new_memory = model(block, memory)
+
 
                 # begin to evaluate
-                hidden = hidden.transpose(1, 2)
-
-                if args.farnear:
-                    mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
-                    total_mem = torch.cat((hidden, mem), 1)
-                    mem, inf_blocks = total_mem.split([args.neighbor_len, 
-                                                           args.num_steps], 
-                                                           dim=1)
-                inf_blocks = inf_blocks.transpose(1, 2)
 
                 candidates = [[block.new_ones(eval_batch_size, 0), 
                               output.new_zeros(eval_batch_size, 1),
                               block.new_ones(eval_batch_size, 1).bool(),
-                              inf_blocks,
-                              key, value, mem, key_num]]
+                              memory]]
 
                 # generated index
                 # probability
@@ -595,29 +441,16 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     else:
                         ppl_block[ind:ind+trg_len] = trg
                         trg_lasts = []
-                    if args.farnear:
-                        output, hidden, mem = model(ppl_block, key, value, 
-                                                    neighbor_mem=mem, 
-                                                    key_num=key_num)
+
+                    output, memory = model(ppl_block, memory)
+
                     outputs = torch.cat((outputs, output), 0)
 
-                    module, key_num, key, value = update_cache(module, 
-                                                               eval_batch_size, 
-                                                               key, value, hidden, 
-                                                               ppl_block, 
-                                                               key_num)
                     for trg_ppl_block in trg_lasts:
-                        output, hidden, mem = model(trg_ppl_block, key, value, 
-                                                    neighbor_mem=mem, 
-                                                    key_num=key_num)
+                        output, memory = model(trg_ppl_block, memory)
 
                         outputs = torch.cat((outputs, output), 0)
 
-                        module, key_num, key, value = update_cache(module, 
-                                                                   eval_batch_size, 
-                                                                   key, value, hidden, 
-                                                                   ppl_block, 
-                                                                   key_num)
                     for batch, tail_len in enumerate(tail_lens):
                         batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
                         batch_trg = trg[:tail_len,batch]
@@ -662,7 +495,6 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
 
                 pbar.update(1)
 
-    model.set_batch_size(args.batch_size)
     if args.eval_ppl:
         loss_mean = losses / eval_len
         print("ppl on eval: %.2f" % math.exp(loss_mean))
@@ -714,8 +546,6 @@ def main(args):
 
         # inject params for this time
         model_args.data = args.data
-        model_args.demo = args.demo
-        model_args.stat = args.stat
         model_args.eval = args.eval
         model_args.beam_size = args.beam_size
         model_args.decode_alpha = args.decode_alpha
@@ -740,8 +570,6 @@ def main(args):
 
         args = model_args
 
-    args.mem_len = args.cache_k * args.num_steps
-
     #Print Params
     for argk, argv in args.__dict__.items():
         print("{}: {}".format(argk, argv))
@@ -757,18 +585,44 @@ def main(args):
     if args.load:
         # load state_dict
 
-        if args.demo:
-            model = CRTNModel(model_args, corpus=corpus)
-        else:
-            model = CRTNModel(model_args)
+        model = TransformerLM(
+                    vocab_size=model_args.vocab_size,
+                    num_layer=model_args.nlayers,
+                    num_head=model_args.nhead,
+                    d_model=model_args.nhid,
+                    d_head=model_args.nhid // model_args.nhead,
+                    d_ff=model_args.d_ff,
+                    d_embedding=model_args.emsize,
+                    tied_weights=model_args.tied,
+                    num_steps=args.num_steps,
+                    mem_len=model_args.mem_len,
+                    attn_type=model_args.attn_type,
+                    init_std=model_args.init_std,
+                    adaptive=model_args.adaptive,
+                    div_val=model_args.div_val,
+                    cutoffs=model_args.cutoffs,
+                    dropout=model_args.dropout)
 
-        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        model.load_state_dict(checkpoint["model_state_dict"])
     else:
         #create model
-        if args.demo:
-            model = CRTNModel(args, corpus=corpus)
-        else:
-            model = CRTNModel(args)
+        model = TransformerLM(
+                    vocab_size=args.vocab_size,
+                    num_layer=args.nlayers,
+                    num_head=args.nhead,
+                    d_model=args.nhid,
+                    d_head=args.nhid // args.nhead,
+                    d_ff=args.d_ff,
+                    d_embedding=args.emsize,
+                    tied_weights=args.tied,
+                    num_steps=args.num_steps,
+                    mem_len=args.mem_len,
+                    attn_type=args.attn_type,
+                    init_std=args.init_std,
+                    adaptive=args.adaptive,
+                    div_val=args.div_val,
+                    cutoffs=args.cutoffs,
+                    dropout=args.dropout)
 
     if args.adaptive:
         criterion = ProjectedAdaptiveLogSoftmax(args.vocab_size, 
@@ -779,14 +633,14 @@ def main(args):
                                                 init_std=args.init_std) 
         if args.tied:
             for i in range(len(criterion.out_layers)):
-                criterion.out_layers[i].weight = model.encoder.embedding.emb_layers[i].weight
+                criterion.out_layers[i].weight = model.embedding.emb_layers[i].weight
 
         if args.tie_projs:
             for i, tie_proj in enumerate(args.tie_projs):
                 if tie_proj and args.div_val == 1 and args.nhid != args.emsize:
-                    criterion.out_projs[i] = model.encoder.embedding.emb_projs[0]
+                    criterion.out_projs[i] = model.embedding.emb_projs[0]
                 elif tie_proj and args.div_val != 1:
-                    criterion.out_projs[i] = model.encoder.embedding.emb_projs[i]
+                    criterion.out_projs[i] = model.embedding.emb_projs[i]
         if args.load:
             criterion.load_state_dict(checkpoint["criterion"])
 
@@ -842,7 +696,7 @@ def main(args):
                 writer.flush()
 
                 torch.save({
-                    "model_args": model.args,
+                    "model_args": args,
                     "model_state_dict": model.state_dict(),
                     "criterion": criterion.state_dict()
                     }, 
@@ -851,7 +705,7 @@ def main(args):
 
                 if eval_bleu > best_eval_bleu:
                     torch.save({
-                        "model_args": model.args,
+                        "model_args": args,
                         "model_state_dict": model.state_dict(),
                         "criterion": criterion.state_dict()
                         }, 
@@ -904,16 +758,6 @@ def main(args):
 
     # save prediction
     save_pred(savepath, "test", test_preds, test_trgs)
-    #with open(savepath 
-    #          + "/test_best.pred", "w") as fw:
-    #    for p in test_preds:
-    #        fw.write(p)
-    #        fw.write("\n")
-    #with open(savepath 
-    #          + "/test_best.trg", "w") as fw:
-    #    for t in test_trgs:
-    #        fw.write(t)
-    #        fw.write("\n")
     print('| End of training | test bleu {:5.2f} |'.format(test_bleu * 100))
     print('=' * 89)
 
@@ -923,15 +767,10 @@ def main(args):
 if __name__ == "__main__":
 
     args = parse_args()
-    savepath = "../../../experiment/crtn/story/"
+    savepath = "../../../../experiment/crtn/story/"
     timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
     savepath += args.save + timestr
 
-    #os.environ["RANK"] = str(args.rank)
-    #os.environ["WORLD_SIZE"] = str(len(args.devices))
-    #os.environ["MASTER_ADDR"] = "127.0.0.1"
-    #os.environ["MASTER_PORT"] = "23456"
-    #dist.init_process_group("nccl")
     
     if not os.path.exists("./log/" + args.save + timestr):
         os.mkdir("./log/" + args.save + timestr)

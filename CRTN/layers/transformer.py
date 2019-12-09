@@ -156,7 +156,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
     def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, indice_bool=None, weights=None, neighbor_mem=None, inf_ind=None):
         """
-        use in: 
+        3 usage: 
             - compute query
             - compute hidden state
             - inference: ind

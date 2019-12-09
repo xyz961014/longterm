@@ -303,8 +303,7 @@ def main(args):
                     adaptive=model_args.adaptive,
                     div_val=model_args.div_val,
                     cutoffs=cutoffs,
-                    dropout=model_args.dropout,
-                    compatible=model_args.compatible)
+                    dropout=model_args.dropout)
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
         if args.rnn:
@@ -326,8 +325,7 @@ def main(args):
                     adaptive=args.adaptive,
                     div_val=args.div_val,
                     cutoffs=cutoffs,
-                    dropout=args.dropout,
-                    compatible=args.compatible)
+                    dropout=args.dropout)
 
 
     

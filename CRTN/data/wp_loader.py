@@ -1,6 +1,7 @@
 import os
 import time
 
+import torch
 from torchtext import data
 from torchtext import datasets
 import ipdb
@@ -69,14 +70,18 @@ class WPDataset(object):
 if __name__ == "__main__":
     path = "/home/xyz/Documents/Dataset/writingpromts/toy/"
     start_time = time.time()
-    dataloader = WPDataset(path, 10000, 200)
+    dataloader = WPDataset(path, 10000, 20)
     print("load time: %.2f s" % (time.time() - start_time))
     ta = dataloader.get_train_loader(12, device="cuda:0")
-    va = dataloader.get_valid_loader(5, device="cuda:0")
+    va = dataloader.get_train_valid_loader(50)
     vocab = dataloader.TRG.vocab
+    device = torch.device("cuda:0")
     for data in ta:
         text, trg = data.text, data.target
         textlist = text[:,0].tolist()
+    va.dataset.fields["trg"].eos_token = "<eos>"
+    for i, data in enumerate(va):
+        src, trg = data.src.to(device), data.trg.to(device)
         ipdb.set_trace()
     while True:
         tait = next(ta.__iter__())
