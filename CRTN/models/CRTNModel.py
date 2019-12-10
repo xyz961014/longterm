@@ -16,7 +16,7 @@ from CRTN.utils.adaptive import AdaptiveEmbedding
 from CRTN.layers.transformer import TransformerLM
 from CRTN.layers.cache import Cache
 
-import torchsnooper
+#import torchsnooper
 
 class CRTNModel(nn.Module):
     def __init__(self, args, corpus=None):

@@ -13,7 +13,7 @@ import os
 from CRTN.utils.adaptive import AdaptiveEmbedding
 
 import ipdb
-import torchsnooper
+#import torchsnooper
 import visdom
 import time
 

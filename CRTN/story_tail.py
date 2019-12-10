@@ -336,7 +336,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
     # demo: print words in batch0
     #for words, prob in list(zip(chosen_ind[0], chosen_prob[0])):
     #    print(" ".join([vocab.itos[w] for w in words]), end=" ")
-    #    print("%.3f" % prob.item())
+    #    print("%.4f" % prob.item())
     #print("")
 
     new_candidates = []
@@ -367,7 +367,6 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
                 hidden = hidden.transpose(1, 2)
             else:
                 output, hidden = model(block, key, value, key_num=key_num)
-
 
             hidden = hidden.transpose(1, 2)
             new_inf_blocks = inf_blocks.clone()
@@ -628,6 +627,9 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     eval_len += eval_batch_size
 
 
+                #probs = torch.matmul(loss_tensor, torch.triu(loss_tensor.new_ones(loss_tensor.size(0), loss_tensor.size(0))))
+                #ipdb.set_trace()
+
                 # complete unfilled block
                 while ind < args.num_steps:
                     candidates = beam_search(candidates, criterion, vocab, block, 
@@ -841,9 +843,11 @@ def main(args):
                                   epoch * len(train_loader))
                 writer.flush()
 
+                module = model.module if args.multi_gpu else model
+
                 torch.save({
-                    "model_args": model.args,
-                    "model_state_dict": model.state_dict(),
+                    "model_args": module.args,
+                    "model_state_dict": module.state_dict(),
                     "criterion": criterion.state_dict()
                     }, 
                     savepath + 
@@ -851,8 +855,8 @@ def main(args):
 
                 if eval_bleu > best_eval_bleu:
                     torch.save({
-                        "model_args": model.args,
-                        "model_state_dict": model.state_dict(),
+                        "model_args": module.args,
+                        "model_state_dict": module.state_dict(),
                         "criterion": criterion.state_dict()
                         }, 
                         savepath + 
