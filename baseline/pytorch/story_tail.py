@@ -711,7 +711,7 @@ def main(args):
 
                 if eval_ppl < best_eval_ppl:
                     torch.save({
-                        "model_args": module.args,
+                        "model_args": args,
                         "model_state_dict": module.state_dict(),
                         "criterion": criterion.state_dict()
                         }, 
@@ -725,7 +725,7 @@ def main(args):
                 else:
                     if eval_bleu > best_eval_bleu:
                         torch.save({
-                            "model_args": module.args,
+                            "model_args": args,
                             "model_state_dict": module.state_dict(),
                             "criterion": criterion.state_dict()
                             }, 
