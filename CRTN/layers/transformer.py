@@ -261,7 +261,11 @@ class LearnableMultiheadSelfAttention(nn.Module):
                                 nei_BD,
                                 BD_inp.squeeze(1)), 1)
         
-        BD = self._rel_shift(BD)
+        if inf_ind is None:
+            BD = self._rel_shift(BD)
+        else:
+            valid_len = BD.size(1) - (x_len - 1 - inf_ind)
+            BD[:,:valid_len,:,:] = BD.clone()[:,x_len-1-inf_ind:,:,:]
 
 
         attn_score = AC + BD

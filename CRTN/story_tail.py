@@ -145,7 +145,7 @@ def parse_args():
                         help='evaluation steps')
     parser.add_argument('--eval_part', type=float, default=0.1,
                         help='only use a part of validation in eval during training')
-    parser.add_argument('--eval_use_train', action="store_true",
+    parser.add_argument('--eval_on_train', action="store_true",
                         help='use part of training data to do evaluation')
     parser.add_argument('--eval_ppl', action="store_true",
                         help='compute ppl during evaluation')
@@ -356,15 +356,17 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         
         if not eos.eq(False).sum() == eos.size(0):
             if args.farnear:
-                #output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
-                #                                key_num=key_num, inf_ind=ind, 
-                #                                inf_blocks=inf_blocks)
+
                 output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
-                                                key_num=key_num)
-                output = output[ind].unsqueeze(0)
-                update_hidden = hidden.clone()
-                hidden = new_mem.view_as(mem)[:,ind-args.num_steps,:,:].unsqueeze(1)
-                hidden = hidden.transpose(1, 2)
+                                                key_num=key_num, inf_ind=ind, 
+                                                inf_blocks=inf_blocks)
+
+                #output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
+                #                                key_num=key_num)
+                #output = output[ind].unsqueeze(0)
+                #update_hidden = hidden.clone()
+                #hidden = new_mem.view_as(mem)[:,ind-args.num_steps,:,:].unsqueeze(1)
+                #hidden = hidden.transpose(1, 2)
             else:
                 output, hidden = model(block, key, value, key_num=key_num)
 
@@ -373,12 +375,12 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
             new_inf_blocks[:,:,ind,:] = hidden.squeeze(1)
 
             if update:
-                #if args.farnear:
-                #    mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
-                #    total_mem = torch.cat((mem, new_inf_blocks.transpose(1, 2)), 1)
-                #    update_hidden, new_mem = total_mem.split([args.num_steps, 
-                #                                              args.neighbor_len], 
-                #                                              dim=1)
+                if args.farnear:
+                    mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
+                    total_mem = torch.cat((mem, new_inf_blocks.transpose(1, 2)), 1)
+                    update_hidden, new_mem = total_mem.split([args.num_steps, 
+                                                              args.neighbor_len], 
+                                                              dim=1)
                 module, key_num, key, value = update_cache(module, block.size(1), 
                                                           key, value, update_hidden, 
                                                           block, key_num)
@@ -741,7 +743,7 @@ def main(args):
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
         model_args.eval_part = args.eval_part
-        model_args.eval_use_train = args.eval_use_train
+        model_args.eval_on_train = args.eval_on_train
         model_args.eval_ppl = args.eval_ppl
 
         args = model_args
@@ -827,7 +829,7 @@ def main(args):
                 epoch_start_time = time.time()
                 train(model, train_loader, train_valid_loader, criterion, 
                       args, epoch, optimizer, scheduler)
-                if not args.eval_use_train:
+                if not args.eval_on_train:
                     eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
                                                                     model, 
                                                                     valid_loader, 
@@ -912,7 +914,7 @@ def main(args):
         criterion.load_state_dict(eval_checkpoint["criterion"])
 
     if args.eval:
-        if not args.eval_use_train:
+        if not args.eval_on_train:
             best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
                                                                        model, 
                                                                        valid_loader, 
