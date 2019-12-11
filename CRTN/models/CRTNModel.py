@@ -110,12 +110,18 @@ class CRTNModel(nn.Module):
                 new_input = torch.cat((prev, inputs), 0)
                 index_matrix = torch.arange(seq_len, 
                                             device=new_input.device).unsqueeze(0)
-                index_matrix = index_matrix.expand(seq_len, -1)
-                index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) 
+                if inf_ind is None:
+                    index_matrix = index_matrix.expand(seq_len, -1)
+                    index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) 
+                else:
+                    index_matrix = index_matrix + inf_ind + 1
                 index_matrix = index_matrix.view(-1, 1, 1)
                 index_matrix = index_matrix.expand(-1, bsz, nhid)
                 query = torch.gather(new_input, 0, index_matrix)
-                query = query.view(seq_len, seq_len, -1, nhid)
+                if inf_ind is None:
+                    query = query.view(seq_len, seq_len, -1, nhid)
+                else:
+                    query = query.view(1, seq_len, -1, nhid)
             else:
                 if self.args.farnear:
                     prev_value = torch.einsum("nlbh->lbnh", neighbor_mem)
@@ -132,10 +138,12 @@ class CRTNModel(nn.Module):
                                                      indices=prev_indice)
                 if self.args.query_method == "last_l":
                     query = wise_inputs[-1]
-                    query = query.expand(seq_len, seq_len, bsz, nhid)
-                    #query = torch.einsum("lbd,k->klbd",query, 
-                    #                     torch.ones_like(query[:,0,0]))
                     mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
+                    if inf_ind is None:
+                        query = query.expand(seq_len, seq_len, bsz, nhid)
+                    else:
+                        query = query.unsqueeze(0)
+                        mask = mask[inf_ind].unsqueeze(0)
                     if torch.__version__ < "1.2.0":
                         mask = mask.byte()[:,:,None,None]
                     else:
@@ -153,16 +161,22 @@ class CRTNModel(nn.Module):
                     query_base = torch.cat((prev, wise_inputs), 0)
                     index_range = torch.arange(seq_len, 
                                                device=inputs.device).unsqueeze(0)
-                    index_matrix = index_range.expand(seq_len, -1)
-                    index_matrix = (index_matrix.t() + index_matrix + 
-                                    index_matrix.new_ones(seq_len, seq_len)) 
+                    if inf_ind is None:
+                        index_matrix = index_range.expand(seq_len, -1)
+                        index_matrix = (index_matrix.t() + index_matrix + 
+                                        index_matrix.new_ones(seq_len, seq_len)) 
+                    else:
+                        index_matrix = index_range + inf_ind + 1
                     index_matrix = index_matrix.view(-1, 1, 1)
                     index_matrix = index_matrix.expand(-1, query_base.size(1), 
                                                        query_base.size(2))
                     if self.args.farnear:
                         index_matrix = index_matrix + nei_len - seq_len
                     query = torch.gather(query_base, 0, index_matrix)
-                    query = query.view(seq_len, seq_len, -1, nhid)
+                    if inf_ind is None:
+                        query = query.view(seq_len, seq_len, -1, nhid)
+                    else:
+                        query = query.view(1, seq_len, -1, nhid)
                 elif self.args.query_method == "linear":
                     wise_inputs = wise_inputs[-1]
                     prev = prev_value.transpose(1, 2).contiguous()
@@ -171,9 +185,33 @@ class CRTNModel(nn.Module):
                     prev = prev.transpose(0, 1)
                     query_base = torch.cat((prev, wise_inputs), 0)
                     query_base = query_base.transpose(0, 2)
-                    query_base = query_base.expand(seq_len, -1, -1, -1)
+                    mask = torch.triu(query_base.new_ones(
+                                        seq_len, query_base.size(-1)), 
+                                        diagonal=1+query_base.size(-1)-seq_len)
+                    if inf_ind is None:
+                        query_base = query_base.expand(seq_len, -1, -1, -1)
+                    else:
+                        query_base = query_base.unsqueeze(0)
+                        mask = mask[inf_ind].unsqueeze(0)
+                    if torch.__version__ < "1.2.0":
+                        mask = mask.byte()[:,None,None,:]
+                    else:
+                        mask = mask.bool()[:,None,None,:]
+                    query_base = query_base.masked_fill(mask, 0)
                     query = torch.sigmoid(self.shorten(query_base))
                     query = torch.einsum("khbl->klbh", query)
+                elif self.args.query_method == "single_sum":
+                    wise_inputs = wise_inputs[-1][:,None,:,:]
+                    if inf_ind is not None:
+                        wise_inputs = wise_inputs[inf_ind].unsqueeze(0)
+                    query = wise_inputs.expand(-1, seq_len, -1, -1)
+                elif self.args.query_method == "single_linear":
+                    wise_inputs = wise_inputs[-1]
+                    if inf_ind is not None:
+                        wise_inputs = wise_inputs[inf_ind].unsqueeze(0)
+                    query = self.enlarge(wise_inputs)
+                    query = query.view(query.size(0), -1, seq_len, nhid)
+                    query = query.transpose(1, 2)
         else:
             query = self.encoder.embedding(inputs)
             query = query.expand(query.size(0), -1, -1, -1)
