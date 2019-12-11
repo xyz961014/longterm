@@ -203,7 +203,7 @@ def train(model, train_loader, criterion, args, epoch, optimizer, scheduler):
             output, hidden = model(text, key, value, key_num=key_num)
 
 
-        module, key_num, key, value = update_cache(model, args, key, value, 
+        module, key_num, key, value = update_cache(module, args, key, value, 
                                                    hidden, text, key_num)
         #module.cache.set_batch_size(args.batch_size)
         #module.cache.init_key_and_value(key, value)
@@ -285,7 +285,7 @@ def evaluate(model, eval_loader, criterion, args):
             else:
                 output, hidden = model(text, key, value, key_num=key_num)
 
-            module, key_num, key, value = update_cache(model, args, key, value, 
+            module, key_num, key, value = update_cache(module, args, key, value, 
                                                        hidden, text, key_num)
             #module.cache.set_batch_size(args.eval_batch_size)
             #module.cache.init_key_and_value(key, value)
