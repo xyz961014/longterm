@@ -864,6 +864,8 @@ def main(args):
                     savepath + 
                     "/" + args.save + "_" + str(epoch) + ".pt")
 
+                # 0 if lower ppl then save model
+                # 1 if higher bleu then save model
                 if eval_ppl < best_eval_ppl:
                     torch.save({
                         "model_args": module.args,
@@ -873,6 +875,8 @@ def main(args):
                         savepath + 
                         "/" + args.save + "_best" + ".pt")
                     print("save best model for better ppl")
+                    if eval_bleu > best_eval_bleu:
+                        best_eval_bleu = eval_bleu
                     best_eval_ppl = eval_ppl
                     best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
                     # save prediction
@@ -937,16 +941,6 @@ def main(args):
 
     # save prediction
     save_pred(savepath, "test", test_preds, test_trgs)
-    #with open(savepath 
-    #          + "/test_best.pred", "w") as fw:
-    #    for p in test_preds:
-    #        fw.write(p)
-    #        fw.write("\n")
-    #with open(savepath 
-    #          + "/test_best.trg", "w") as fw:
-    #    for t in test_trgs:
-    #        fw.write(t)
-    #        fw.write("\n")
     print('| End of training | test bleu {:5.2f} |'.format(test_bleu * 100))
     print('=' * 89)
 
