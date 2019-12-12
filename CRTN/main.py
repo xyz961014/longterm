@@ -153,14 +153,15 @@ def init_key_num(args, device):
     key_num.transpose_(0, 1)
     return key_num
 
-def update_cache(model, args, key, value, hidden, text, key_num):
-    model.cache.set_batch_size(args.batch_size)
+def update_cache(model, args, key, value, hidden, text, key_num, evaluate=False):
+    batch_size = args.eval_batch_size if evaluate else args.batch_size
+    model.cache.set_batch_size(batch_size)
     model.cache.init_key_and_value(key, value)
     model.cache.detach_memory()
     key_num = model.cache.renew(hidden, text, key_num)
     key, value = (model.cache._get_keys(), 
                   model.cache._get_values().transpose(1, 2))
-    model.cache.set_batch_size(args.batch_size // len(args.devices))
+    model.cache.set_batch_size(batch_size // len(args.devices))
     return model, key_num, key, value
 
 
@@ -286,7 +287,8 @@ def evaluate(model, eval_loader, criterion, args):
                 output, hidden = model(text, key, value, key_num=key_num)
 
             module, key_num, key, value = update_cache(module, args, key, value, 
-                                                       hidden, text, key_num)
+                                                       hidden, text, key_num, 
+                                                       evaluate=True)
             #module.cache.set_batch_size(args.eval_batch_size)
             #module.cache.init_key_and_value(key, value)
             #module.cache.detach_memory()
@@ -307,7 +309,6 @@ def evaluate(model, eval_loader, criterion, args):
 
             if args.adaptive:
                 loss = criterion(output.view(-1, args.nhid), targets.view(-1))
-                ipdb.set_trace()
                 loss = loss.mean()
             else:
                 loss = criterion(output.view(-1, args.vocab_size), targets.view(-1))
