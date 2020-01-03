@@ -504,6 +504,8 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     preds = []
     trgs = []
 
+    module.encoder.embedding.emb_layers[0].weight[vocab.stoi["<pad>"]].zero_()
+
     with torch.no_grad():
         with tqdm(total=total_len) as pbar:
             pbar.set_description("evaluating")
@@ -629,8 +631,8 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     eval_len += eval_batch_size
 
 
-                #probs = torch.matmul(loss_tensor, torch.triu(loss_tensor.new_ones(loss_tensor.size(0), loss_tensor.size(0))))
-                #ipdb.set_trace()
+                probs = torch.matmul(loss_tensor, torch.triu(loss_tensor.new_ones(loss_tensor.size(0), loss_tensor.size(0))))
+                ipdb.set_trace()
 
                 # complete unfilled block
                 while ind < args.num_steps:
@@ -737,7 +739,7 @@ def main(args):
         model_args.devices = args.devices
         model_args.save = args.save
 
-        model_args.batch_size = args.batch_size
+        batch_size = args.batch_size
         model_args.eval_batch_size = args.eval_batch_size
 
         model_args.log_interval = args.log_interval
@@ -770,7 +772,10 @@ def main(args):
         else:
             model = CRTNModel(model_args)
 
+        args.batch_size = batch_size
+
         model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        model.set_batch_size(batch_size)
     else:
         #create model
         if args.demo:

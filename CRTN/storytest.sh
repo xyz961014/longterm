@@ -22,7 +22,6 @@ python story_tail.py \
     --adaptive \
     --vocab_size 25000 \
     --cutoffs 5000 10000 20000 \
-    --no_summary \
     --wise_summary \
     --farnear \
     --eval_steps 500 \
