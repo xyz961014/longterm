@@ -1,15 +1,15 @@
 #!/bin/bash
 
 if [[ $1 == "234" ]]; then
-    data="/data/disk4/private/xyz/datasets/writingpromts/"
+    data="/data/disk4/private/xyz/datasets/writingprompts/medium/"
 elif [[ $1 == "242" ]]; then
-    data="/data/disk5/private/xyz/datasets/writingpromts/"
+    data="/data/disk5/private/xyz/datasets/writingprompts/medium/"
 elif [[ $1 == "243" ]]; then
-    data="/data/disk5/private/xyz/datasets/writingpromts/"
+    data="/data/disk5/private/xyz/datasets/writingprompts/medium/"
 elif [[ $1 == "245" ]]; then
-    data="/data/private/xyz/datasets/writingpromts/"
+    data="/data/private/xyz/datasets/writingprompts/medium/"
 elif [[ $1 == "102" ]]; then
-    data="/data/private/xyz/datasets/writingpromts/"
+    data="/data/private/xyz/datasets/writingprompts/medium/"
 fi
 
 python story_tail.py \
@@ -21,7 +21,7 @@ python story_tail.py \
     --nhead 8 \
     --emsize 240 \
     --nhid 240 \
-    --batch_size 200 \
+    --batch_size 150 \
     --eval_batch_size 200 \
     --num_steps 20 \
     --tied \
@@ -40,7 +40,8 @@ python story_tail.py \
     --farnear \
     --neighbor_len 20 \
     --eval_steps 2000 \
-    --eval_part 0.05 \
+    --eval_part 0.02 \
     --multi_gpu \
+    --eval_ppl \
     ${@:2}
 
