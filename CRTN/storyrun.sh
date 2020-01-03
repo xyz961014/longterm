@@ -29,7 +29,7 @@ python story_tail.py \
     --cache_k 2 \
     --cache_N 5 \
     --seed 1111 \
-    --epochs 5 \
+    --epochs 50 \
     --log-interval 50 \
     --save story_run \
     --adaptive \
