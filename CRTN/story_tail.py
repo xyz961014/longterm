@@ -413,7 +413,7 @@ def train(model, train_loader, valid_loader, criterion,
     start_time = time.time()
     total_loss = 0.
     module = model.module if args.multi_gpu else model
-    module.encoder.embedding.emb_layers[0].weight[vocab.stoi["<pad>"]].zero_()
+    #module.encoder.embedding.emb_layers[0].weight[vocab.stoi["<pad>"]].zero_()
     if torch.cuda.is_available():
         device = torch.device("cuda:" + str(args.devices[0]))
     else:
