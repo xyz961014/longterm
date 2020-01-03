@@ -413,6 +413,7 @@ def train(model, train_loader, valid_loader, criterion,
     start_time = time.time()
     total_loss = 0.
     module = model.module if args.multi_gpu else model
+    module.encoder.embedding.emb_layers[0].weight[vocab.stoi["<pad>"]].zero_()
     if torch.cuda.is_available():
         device = torch.device("cuda:" + str(args.devices[0]))
     else:
@@ -504,7 +505,6 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     preds = []
     trgs = []
 
-    module.encoder.embedding.emb_layers[0].weight[vocab.stoi["<pad>"]].zero_()
 
     with torch.no_grad():
         with tqdm(total=total_len) as pbar:
@@ -631,8 +631,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     eval_len += eval_batch_size
 
 
-                probs = torch.matmul(loss_tensor, torch.triu(loss_tensor.new_ones(loss_tensor.size(0), loss_tensor.size(0))))
-                ipdb.set_trace()
+                #probs = torch.matmul(loss_tensor, torch.triu(loss_tensor.new_ones(loss_tensor.size(0), loss_tensor.size(0))))
 
                 # complete unfilled block
                 while ind < args.num_steps:
