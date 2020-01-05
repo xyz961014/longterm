@@ -33,13 +33,13 @@ python story_tail.py \
     --log-interval 50 \
     --save story_run \
     --adaptive \
-    --vocab_size 100000 \
-    --cutoffs 20000 40000 80000 \
+    --vocab_size 50000 \
+    --cutoffs 10000 20000 30000 \
     --no_summary \
     --wise_summary \
     --farnear \
     --neighbor_len 20 \
-    --eval_steps 2000 \
+    --eval_steps 10000 \
     --eval_part 0.02 \
     --multi_gpu \
     --eval_ppl \

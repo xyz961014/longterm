@@ -71,7 +71,7 @@ def parse_args():
                         help='gradient clipping')
     parser.add_argument('--beam_size', type=int, default=4,
                         help='beam size of beam search when inferencing')
-    parser.add_argument('--decode_alpha', type=float, default=0.0,
+    parser.add_argument('--decode_alpha', type=float, default=0.6,
                         help='length punishment when decoding: ((5+l)/6)^alpha')
     parser.add_argument('--epochs', type=int, default=200,
                         help='upper epoch limit')
@@ -672,7 +672,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     if args.eval_ppl:
         loss_mean = losses / eval_len
         ppl = math.exp(loss_mean)
-        print("ppl on eval: %.2f" % ppl)
+        #print("ppl on eval: %.2f" % ppl)
     else:
         ppl = float("inf")
 
@@ -850,9 +850,11 @@ def main(args):
 
                 print('-' * 89)
                 print('| end of epoch {:3d} | time: {:5.2f}s '
-                      '| valid bleu {:5.2f} |'.format(epoch, 
-                                                      (time.time() - epoch_start_time),
-                                                      eval_bleu * 100))
+                      '| valid bleu {:5.2f} '
+                      '| valid ppl {:5.2f}'.format(epoch, 
+                                                   (time.time() - epoch_start_time),
+                                                   eval_bleu * 100,
+                                                   eval_ppl))
                 print('-' * 89)
                 writer.add_scalar("valid/bleu", eval_bleu, 
                                   epoch * len(train_loader))
@@ -937,7 +939,8 @@ def main(args):
         save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
 
     print('=' * 89)
-    print('| best valid bleu {:5.2f} |'.format(best_eval_bleu * 100))
+    print('| best valid bleu {:5.2f} '
+          '| best valid ppl {:5.2f} |'.format(best_eval_bleu * 100, best_eval_ppl))
     print('=' * 89)
 
     test_bleu, test_ppl,  test_preds, test_trgs = evaluate(model, test_loader, 
@@ -945,7 +948,8 @@ def main(args):
 
     # save prediction
     save_pred(savepath, "test", test_preds, test_trgs)
-    print('| End of training | test bleu {:5.2f} |'.format(test_bleu * 100))
+    print('| End of training | test bleu {:5.2f} '
+          '| test ppl {:5.2f} |'.format(test_bleu * 100, best_eval_ppl))
     print('=' * 89)
 
 
