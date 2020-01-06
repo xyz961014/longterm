@@ -17,7 +17,7 @@ python story_tail.py \
     --adam \
     --lr 25e-5 \
     --nlayers 12 \
-    --dropout 0.1 \
+    --dropout 0.2 \
     --nhead 8 \
     --emsize 240 \
     --nhid 240 \
