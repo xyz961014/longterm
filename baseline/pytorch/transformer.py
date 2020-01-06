@@ -299,7 +299,7 @@ class TransformerLM(nn.Module):
     def init_memory(self, batch_size):
         if self.mem_len > 0:
             param = next(self.parameters())
-            return torch.empty(self.num_layer+1, self.mem_len, batch_size, self.d_model, dtype=param.dtype, device=param.device)
+            return torch.zeros(self.num_layer+1, self.mem_len, batch_size, self.d_model, dtype=param.dtype, device=param.device)
         else:
             return None
 

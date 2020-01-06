@@ -4,7 +4,7 @@ python story_tail.py \
     --adam \
     --lr 0.00025 \
     --nlayers 3 \
-    --dropout 0.1 \
+    --dropout 0.3 \
     --nhead 4 \
     --emsize 100 \
     --nhid 100 \
@@ -24,7 +24,9 @@ python story_tail.py \
     --cutoffs 5000 10000 20000 \
     --wise_summary \
     --farnear \
-    --eval_steps 500 \
+    --neighbor_len 20 \
+    --eval_steps 5000 \
     --eval_part 0.1 \
+    --eval_ppl \
     ${@:1}
 
