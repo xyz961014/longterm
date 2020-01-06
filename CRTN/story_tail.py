@@ -149,6 +149,8 @@ def parse_args():
                         help='use part of training data to do evaluation')
     parser.add_argument('--eval_ppl', action="store_true",
                         help='compute ppl during evaluation')
+    parser.add_argument('--word_loss', action="store_true",
+                        help='output loss of every word, must use in eval_ppl mode')
     parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
     parser.add_argument('--load', type=str, default='',
@@ -576,6 +578,10 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
 
                 # compute ppl of trg
                 if args.eval_ppl:
+
+                    if args.word_loss:
+                        loss_file = open(savepath + "/" + args.save + "_word_loss.txt", "w")
+
                     ppl_block = block.clone()
                     outputs = output.new_zeros(0)
                     trg_len = trg.size(0)
@@ -627,11 +633,20 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                         loss_tensor = criterion(batch_pred, batch_trg, keep_order=True)
                         loss = loss_tensor.mean()
 
+                        if args.word_loss:
+                            words = [vocab.itos[w] for w in batch_trg]
+                            words_str = " ".join(words)
+                            loss_str = " ".join([str(l.item()) for l in loss_tensor])
+                            loss_file.write(words_str)
+                            loss_file.write("\n")
+                            loss_file.write(loss_str)
+                            loss_file.write("\n")
+
                         losses += loss.item()
                     eval_len += eval_batch_size
 
-
-                #probs = torch.matmul(loss_tensor, torch.triu(loss_tensor.new_ones(loss_tensor.size(0), loss_tensor.size(0))))
+                    if args.word_loss:
+                        loss_file.close()
 
                 # complete unfilled block
                 while ind < args.num_steps:
@@ -746,6 +761,7 @@ def main(args):
         model_args.eval_part = args.eval_part
         model_args.eval_on_train = args.eval_on_train
         model_args.eval_ppl = args.eval_ppl
+        model_args.word_loss = args.word_loss
 
         args = model_args
 
