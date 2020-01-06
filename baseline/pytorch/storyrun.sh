@@ -1,15 +1,15 @@
 #!/bin/bash
 
 if [[ $1 == "234" ]]; then
-    data="/data/disk4/private/xyz/datasets/writingpromts/"
+    data="/data/disk4/private/xyz/datasets/writingprompts/medium/"
 elif [[ $1 == "242" ]]; then
-    data="/data/disk5/private/xyz/datasets/writingpromts/"
+    data="/data/disk5/private/xyz/datasets/writingprompts/medium/"
 elif [[ $1 == "243" ]]; then
-    data="/data/disk5/private/xyz/datasets/writingpromts/"
+    data="/data/disk5/private/xyz/datasets/writingprompts/medium/"
 elif [[ $1 == "245" ]]; then
-    data="/data/private/xyz/datasets/writingpromts/"
+    data="/data/private/xyz/datasets/writingprompts/medium/"
 elif [[ $1 == "102" ]]; then
-    data="/data/private/xyz/datasets/writingpromts/"
+    data="/data/private/xyz/datasets/writingprompts/medium/"
 fi
 
 python story_tail.py \
@@ -17,25 +17,26 @@ python story_tail.py \
     --adam \
     --lr 25e-5 \
     --nlayers 12 \
-    --dropout 0.1 \
+    --dropout 0.2 \
     --nhead 8 \
     --emsize 240 \
     --nhid 240 \
-    --batch_size 200 \
+    --batch_size 150 \
     --eval_batch_size 200 \
     --num_steps 20 \
     --mem_len 60 \
     --tied \
     --attn_type 1 \
     --seed 1111 \
-    --epochs 5 \
+    --epochs 50 \
     --log-interval 50 \
     --save baseline_run \
     --adaptive \
-    --vocab_size 100000 \
-    --cutoffs 20000 40000 80000 \
-    --eval_steps 2000 \
-    --eval_part 0.05 \
+    --vocab_size 50000 \
+    --cutoffs 10000 20000 30000 \
+    --eval_steps 10000 \
+    --eval_part 0.02 \
     --multi_gpu \
+    --eval_ppl \
     ${@:2}
 
