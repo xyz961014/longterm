@@ -53,32 +53,44 @@ def main(args):
                     if word in loss_dict.keys():
                         loss_dict[word][0].append(lossb)
                         loss_dict[word][1].append(lossm)
-                        if lossm > lossb:
-                            loss_dict[word][2] -= 1
-                        else:
+                        if lossm < lossb:
                             loss_dict[word][2] += 1
                     else:
                         loss_dict[word] = [[lossb], [lossm]]
-                        if lossm > lossb:
-                            loss_dict[word].append(-1)
-                        else:
+                        if lossm < lossb:
                             loss_dict[word].append(1)
+                        else:
+                            loss_dict[word].append(0)
 
         word_losses = loss_dict.items()
-        word_meanloss = [(x[0], np.mean(x[1][0]), np.mean(x[1][1])) for x in word_losses]
-        word_meanloss = sorted(word_meanloss, key=lambda x: x[1])
+        word_losses = sorted(word_losses, key=lambda x: np.mean(x[1][0]))
+        #word_meanloss = [(x[0], np.mean(x[1][0]), np.mean(x[1][1])) for x in word_losses]
+        #word_meanloss = sorted(word_meanloss, key=lambda x: x[1])
+
         # the smaller, the better
-        word_diffs = [(x[0], np.mean(x[1][1]) - np.mean(x[1][0])) for x in word_losses]
-        word_diffs = sorted(word_diffs, key=lambda x:x[1])
+        #word_diffs = [(x[0], np.mean(x[1][1]) - np.mean(x[1][0])) for x in word_losses]
+        #word_diffs = sorted(word_diffs, key=lambda x:x[1])
         # the bigger, the better
-        word_betters = [(x[0], x[1][2]) for x in word_losses]
-        word_betters = sorted(word_betters, key=lambda x:x[1], reverse=True)
-        for i in tqdm(range(len(word_meanloss))):
-            lossb = np.mean([x[1] for x in word_meanloss[max(0, i-args.smooth_window):min(i+args.smooth_window, len(word_meanloss)-1)]])
-            lossm = np.mean([x[2] for x in word_meanloss[max(0, i-args.smooth_window):min(i+args.smooth_window, len(word_meanloss)-1)]])
-            diff_loss = lossb - lossm
-            vis.line(np.array([[lossb, lossm]]), np.array([lossb]), opts=opts, win="loss", update="append")
-            vis.line(np.array([[diff_loss]]), np.array([lossb]), win="loss diff", update="append")
+        #word_betters = [(x[0], x[1][2]) for x in word_losses]
+        #word_betters = sorted(word_betters, key=lambda x:x[1], reverse=True)
+
+        for i in tqdm(range(len(word_losses) - args.smooth_window + 1)):
+            lossb = np.mean(word_losses[i][1][0])
+            lossb_window = [x[1][0] for x in word_losses[i:i+args.smooth_window]]
+            lossm_window = [x[1][1] for x in word_losses[i:i+args.smooth_window]]
+
+            loss_diff = []
+            model_better, total = 0, 0
+            for lbs, lms in list(zip(lossb_window, lossm_window)):
+                for lb, lm in list(zip(lbs, lms)):
+                    loss_diff.append(lb - lm)
+                    if lb > lm:
+                        model_better += 1
+                total += len(lbs)
+            loss_diff = np.mean(loss_diff)
+            prob_model_better = model_better / total
+            vis.line(np.array([[loss_diff]]), np.array([lossb]), win="loss diff", update="append")
+            vis.line(np.array([[prob_model_better - 0.5]]), np.array([lossb]), win="prob of model better - 0.5", update="append")
 
 
 
