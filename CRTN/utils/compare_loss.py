@@ -4,6 +4,7 @@ import sys
 import ipdb
 import numpy as np
 from pprint import pprint
+from tqdm import tqdm
 import visdom
 vis = visdom.Visdom()
 assert vis.check_connection()
@@ -72,7 +73,7 @@ def main(args):
         # the bigger, the better
         word_betters = [(x[0], x[1][2]) for x in word_losses]
         word_betters = sorted(word_betters, key=lambda x:x[1], reverse=True)
-        for i in range(len(word_meanloss)):
+        for i in tqdm(range(len(word_meanloss))):
             lossb = np.mean([x[1] for x in word_meanloss[max(0, i-args.smooth_window):min(i+args.smooth_window, len(word_meanloss)-1)]])
             lossm = np.mean([x[2] for x in word_meanloss[max(0, i-args.smooth_window):min(i+args.smooth_window, len(word_meanloss)-1)]])
             diff_loss = lossb - lossm
