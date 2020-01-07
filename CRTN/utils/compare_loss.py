@@ -25,9 +25,13 @@ def main(args):
     model_file = open(args.model_loss, "r")
 
     if args.func == 0:
-        opts = {
-                'legend': ['Baseline', 'Model'],
-                'showlegend': True
+        opts_diff = {
+                'legend': ['loss difference'],
+                'showlegend': True,
+               }
+        opts_prob = {
+                'legend': ['prob - 0.5'],
+                'showlegend': True,
                }
         loss_dict = dict()
         while True:
@@ -89,8 +93,8 @@ def main(args):
                 total += len(lbs)
             loss_diff = np.mean(loss_diff)
             prob_model_better = model_better / total
-            vis.line(np.array([[loss_diff]]), np.array([lossb]), win="loss diff", update="append")
-            vis.line(np.array([[prob_model_better - 0.5]]), np.array([lossb]), win="prob of model better - 0.5", update="append")
+            vis.line(np.array([[loss_diff]]), np.array([lossb]), opts=opts_diff, win="loss diff", update="append")
+            vis.line(np.array([[prob_model_better - 0.5]]), np.array([lossb]), opts=opts_prob, win="prob of model better - 0.5", update="append")
 
 
 
