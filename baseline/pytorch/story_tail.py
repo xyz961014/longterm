@@ -30,7 +30,7 @@ from transformer import TransformerLM
 if torch.__version__ < "1.2.0":
     from tensorboardX import SummaryWriter
 else:
-    from torch.utils.tensorboard import Sum            maryWriter
+    from torch.utils.tensorboard import SummaryWriter
                                                        
 import ipdb
 from tqdm import tqdm
