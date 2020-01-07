@@ -77,8 +77,8 @@ def main(args):
             lossb = np.mean([x[1] for x in word_meanloss[max(0, i-args.smooth_window):min(i+args.smooth_window, len(word_meanloss)-1)]])
             lossm = np.mean([x[2] for x in word_meanloss[max(0, i-args.smooth_window):min(i+args.smooth_window, len(word_meanloss)-1)]])
             diff_loss = lossb - lossm
-            vis.line(np.array([[lossb, lossm]]), np.array([i]), opts=opts, win="loss", update="append")
-            vis.line(np.array([[diff_loss]]), np.array([i]), win="loss diff", update="append")
+            vis.line(np.array([[lossb, lossm]]), np.array([lossb]), opts=opts, win="loss", update="append")
+            vis.line(np.array([[diff_loss]]), np.array([lossb]), win="loss diff", update="append")
 
 
 
