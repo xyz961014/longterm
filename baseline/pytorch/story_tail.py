@@ -30,8 +30,8 @@ from transformer import TransformerLM
 if torch.__version__ < "1.2.0":
     from tensorboardX import SummaryWriter
 else:
-    from torch.utils.tensorboard import SummaryWriter
-
+    from torch.utils.tensorboard import Sum            maryWriter
+                                                       
 import ipdb
 from tqdm import tqdm
 
@@ -365,6 +365,8 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     if args.eval_ppl:
         losses = 0.
         eval_len = 0
+        if args.word_loss:
+            loss_file = open(savepath + "/" + args.save + "_word_loss.txt", "w")
 
     
     bleu = 0.
@@ -422,8 +424,6 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                 # compute ppl of trg
                 if args.eval_ppl:
 
-                    if args.word_loss:
-                        loss_file = open(savepath + "/" + args.save + "_word_loss.txt", "w")
 
                     ppl_block = block.clone()
                     outputs = output.new_zeros(0)
@@ -475,8 +475,6 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                         losses += loss.item()
                     eval_len += eval_batch_size
 
-                    if args.word_loss:
-                        loss_file.close()
 
 
 
@@ -517,7 +515,9 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     if args.eval_ppl:
         loss_mean = losses / eval_len
         ppl = math.exp(loss_mean)
-        print("ppl on eval: %.2f" % ppl)
+        #print("ppl on eval: %.2f" % ppl)
+        if args.word_loss:
+            loss_file.close()
     else:
         ppl = float("inf")
 
