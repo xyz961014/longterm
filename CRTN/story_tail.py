@@ -232,6 +232,15 @@ def get_real_ind_and_prob(head_prob, tails, beam_size, padding_idx=1):
     word_prob, word_ind = real_prob.topk(beam_size)
     return word_ind, word_prob
 
+def variance_prob(head_prob, tails):
+    tail_len = len(tails)
+    get_tails = []
+    for i in range(tail_len):
+        base_prob = head_prob[:,-i-1].unsqueeze(1)
+        get_tails.append(tails[i] + base_prob)
+    real_prob = torch.cat((head_prob[:,:-tail_len], *get_tails), 1)
+    var = torch.var(real_prob, 1)
+    return var
 
 def beam_search(candidates, criterion, vocab, block, block_start, ind, model, args, update=False):
     """
@@ -630,16 +639,25 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     for batch, tail_len in enumerate(tail_lens):
                         batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
                         batch_trg = trg[:tail_len,batch]
-                        loss_tensor = criterion(batch_pred, batch_trg, keep_order=True)
+                        loss_tensor = criterion(batch_pred, 
+                                                batch_trg, keep_order=True)
+                        head_prob, tail_probs = criterion(batch_pred, 
+                                                          batch_trg, 
+                                                          keep_order=True,
+                                                          output=True)
+                        variances = variance_prob(head_prob, tail_probs)
                         loss = loss_tensor.mean()
 
                         if args.word_loss:
                             words = [vocab.itos[w] for w in batch_trg]
                             words_str = " ".join(words)
                             loss_str = " ".join([str(l.item()) for l in loss_tensor])
+                            var_str = " ".join([str(l.item()) for l in variances])
                             loss_file.write(words_str)
                             loss_file.write("\n")
                             loss_file.write(loss_str)
+                            loss_file.write("\n")
+                            loss_file.write(var_str)
                             loss_file.write("\n")
 
                         losses += loss.item()

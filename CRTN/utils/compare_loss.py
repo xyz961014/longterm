@@ -16,15 +16,15 @@ def parse_args():
     parser.add_argument("--model_loss", type=str, help="location of model loss")
     parser.add_argument("--smooth_window", type=int, default=50, 
                         help="smooth window")
-    parser.add_argument("--func", type=int, choices=[0], default=0, 
-                        help="function, 0 for stat bag of word loss")
+    parser.add_argument("--func", type=int, choices=[0, 1], default=0, 
+                        help="function, 0 for stat bag of word loss, 1 for observe variance and loss of model")
     return parser.parse_args()
 
 def main(args):
-    base_file = open(args.baseline_loss, "r")
-    model_file = open(args.model_loss, "r")
 
     if args.func == 0:
+        base_file = open(args.baseline_loss, "r")
+        model_file = open(args.model_loss, "r")
         opts_diff = {
                 'legend': ['loss difference'],
                 'showlegend': True,
@@ -37,8 +37,10 @@ def main(args):
         while True:
             base_ref = base_file.readline()
             base_loss = base_file.readline()
+            base_var = base_file.readline()
             model_ref = model_file.readline()
             model_loss = model_file.readline()
+            model_var = model_file.readline()
 
             if base_ref.strip() == "":
                 break
@@ -99,8 +101,33 @@ def main(args):
 
 
 
-    base_file.close()
-    model_file.close()
+        base_file.close()
+        model_file.close()
+    elif args.func == 1:
+        loss_var = []
+        with open(args.model_loss, "r") as model_file:
+            while True:
+                model_ref = model_file.readline()
+                model_loss = model_file.readline()
+                model_var = model_file.readline()
+                
+                if model_ref.strip() == "":
+                    break
+
+                model_loss = model_loss[:-1]
+                model_var = model_var[:-1]
+
+                model_loss = [float(l) for l in model_loss.split()]
+                model_var = [float(l) for l in model_var.split()]
+
+                for l, v in list(zip(model_loss, model_var)):
+                    loss_var.append((l, v))
+            
+            loss_var = sorted(loss_var, key=lambda x:x[0])
+            for i in tqdm(range(len(loss_var) - args.smooth_window + 1)):
+                loss = loss_var[i][0]
+                var = np.mean([x[1] for x in loss_var[i:i+args.smooth_window]])
+                vis.line(np.array([[var]]), np.array([[loss]]), win="loss-variance", update="append")
         
 
 
