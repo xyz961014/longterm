@@ -37,6 +37,7 @@ def main(args):
         while True:
             base_ref = base_file.readline()
             base_loss = base_file.readline()
+            base_var = base_file.readline()
             model_ref = model_file.readline()
             model_loss = model_file.readline()
             model_var = model_file.readline()
