@@ -18,9 +18,9 @@ def parse_args():
     parser.add_argument("--model_loss", type=str, help="location of model loss")
     parser.add_argument("--data", type=str, help="location of data")
     parser.add_argument("--smooth_window", type=int, default=50, 
-                        help="smooth window")
-    parser.add_argument("--loss_window", type=float, default=0.1, 
-                        help="loss window")
+                        help="smooth window DEFAULT 50")
+    parser.add_argument("--loss_window", type=float, default=0.2, 
+                        help="loss window DEFAULT 0.2")
     parser.add_argument("--func", type=int, choices=[0, 1, 2], default=0, 
                         help="function, 0 for stat bag of word loss, 1 for observe variance and loss of model, 2 for observe word freq and word loss, word freq derived from data")
     return parser.parse_args()
@@ -78,6 +78,7 @@ def main(args):
 
         j = 0
         loss_bars = []
+        loss_sum_bars = []
         x_labels = []
         for i in range(round(word_losses[-1][1][0][0] / args.loss_window) + 1):
             if j >= len(word_losses):
@@ -94,28 +95,32 @@ def main(args):
             if len(lossb_window) > 0:
                 loss_diff = np.mean(lossb_window) - np.mean(lossm_window)
                 loss_bars.append(loss_diff)
+                loss_diff_sum = np.sum(lossb_window) - np.sum(lossm_window)
+                loss_sum_bars.append(loss_diff_sum)
             else:
                 loss_bars.append(0.)
+                loss_sum_bars.append(0.)
             x_labels.append(i * args.loss_window)
 
         vis.bar(np.array(loss_bars), np.array(x_labels), win="loss bar")
+        vis.bar(np.array(loss_sum_bars), np.array(x_labels), win="loss sum bar")
 
-        for i in tqdm(range(len(word_losses) - args.smooth_window + 1)):
-            lossb = np.mean(word_losses[i][1][0])
-            lossb_window = [x[1][0] for x in word_losses[i:i+args.smooth_window]]
-            lossm_window = [x[1][1] for x in word_losses[i:i+args.smooth_window]]
+        #for i in tqdm(range(len(word_losses) - args.smooth_window + 1)):
+        #    lossb = np.mean(word_losses[i][1][0])
+        #    lossb_window = [x[1][0] for x in word_losses[i:i+args.smooth_window]]
+        #    lossm_window = [x[1][1] for x in word_losses[i:i+args.smooth_window]]
 
-            loss_diff = []
-            model_better, total = 0, 0
-            for lbs, lms in list(zip(lossb_window, lossm_window)):
-                for lb, lm in list(zip(lbs, lms)):
-                    loss_diff.append(lb - lm)
-                    if lb > lm:
-                        model_better += 1
-                total += len(lbs)
-            loss_diff = np.mean(loss_diff)
-            prob_model_better = model_better / total
-            vis.line(np.array([[loss_diff]]), np.array([lossb]), opts=opts_diff, win="loss diff", update="append")
+        #    loss_diff = []
+        #    model_better, total = 0, 0
+        #    for lbs, lms in list(zip(lossb_window, lossm_window)):
+        #        for lb, lm in list(zip(lbs, lms)):
+        #            loss_diff.append(lb - lm)
+        #            if lb > lm:
+        #                model_better += 1
+        #        total += len(lbs)
+        #    loss_diff = np.mean(loss_diff)
+        #    prob_model_better = model_better / total
+        #    vis.line(np.array([[loss_diff]]), np.array([lossb]), opts=opts_diff, win="loss diff", update="append")
 
 
             
