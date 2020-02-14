@@ -42,6 +42,5 @@ python story_tail.py \
     --eval_steps 10000 \
     --eval_part 0.02 \
     --multi_gpu \
-    --eval_ppl \
     ${@:2}
 

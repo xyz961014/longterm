@@ -147,10 +147,10 @@ def parse_args():
                         help='only use a part of validation in eval during training')
     parser.add_argument('--eval_on_train', action="store_true",
                         help='use part of training data to do evaluation')
-    parser.add_argument('--eval_ppl', action="store_true",
-                        help='compute ppl during evaluation')
+    parser.add_argument('--eval_bleu', action="store_true",
+                        help='compute bleu during evaluation')
     parser.add_argument('--word_loss', action="store_true",
-                        help='output loss of every word, must use in eval_ppl mode')
+                        help='output loss of every word')
     parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
     parser.add_argument('--load', type=str, default='',
@@ -503,11 +503,10 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     else:
         device = torch.device("cpu")
 
-    if args.eval_ppl:
-        losses = 0.
-        eval_len = 0
-        if args.word_loss:
-            loss_file = open(savepath + "/" + args.save + "_word_loss.txt", "w")
+    losses = 0.
+    eval_len = 0
+    if args.word_loss:
+        loss_file = open(savepath + "/" + args.save + "_word_loss.txt", "w")
 
     
     bleu = 0.
@@ -558,21 +557,24 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                                                                    key_num)
 
                 # begin to evaluate
-                hidden = hidden.transpose(1, 2)
 
-                if args.farnear:
-                    mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, args.nhid)
-                    total_mem = torch.cat((hidden, mem), 1)
-                    mem, inf_blocks = total_mem.split([args.neighbor_len, 
-                                                           args.num_steps], 
-                                                           dim=1)
-                inf_blocks = inf_blocks.transpose(1, 2)
+                if args.eval_bleu:
+                    hidden = hidden.transpose(1, 2)
 
-                candidates = [[block.new_ones(eval_batch_size, 0), 
-                              output.new_zeros(eval_batch_size, 1),
-                              block.new_ones(eval_batch_size, 1).bool(),
-                              inf_blocks,
-                              key, value, mem, key_num]]
+                    if args.farnear:
+                        mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, 
+                                          args.nhid)
+                        total_mem = torch.cat((hidden, mem), 1)
+                        mem, inf_blocks = total_mem.split([args.neighbor_len, 
+                                                               args.num_steps], 
+                                                               dim=1)
+                    inf_blocks = inf_blocks.transpose(1, 2)
+
+                    candidates = [[block.new_ones(eval_batch_size, 0), 
+                                  output.new_zeros(eval_batch_size, 1),
+                                  block.new_ones(eval_batch_size, 1).bool(),
+                                  inf_blocks,
+                                  key, value, mem, key_num]]
 
                 # generated index
                 # probability
@@ -584,39 +586,51 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                         break
                 else:
                     ind += 1
-                candidates[0].append(output[ind-1])
                 block_start = ind
 
+                if args.eval_bleu:
+                    candidates[0].append(output[ind-1])
+
                 # compute ppl of trg
-                if args.eval_ppl:
 
+                ppl_block = block.clone()
+                outputs = output.new_zeros(0)
+                trg_len = trg.size(0)
+                tail_lens = []
+                for story in trg.t():
+                    for wid, w in enumerate(story):
+                        if w.item() == vocab.stoi["<eos>"]:
+                            tail_lens.append(wid + 1)
+                            break
+                if trg_len - args.num_steps + ind > 0:
+                    trg_fill, trg_last = trg.split([args.num_steps - ind, 
+                                                    trg_len - args.num_steps + ind])
+                    ppl_block[ind:] = trg_fill
+                    trg_lasts = list(trg_last.split(args.num_steps))
+                    last_trg_len = trg_lasts[-1].size(0)
+                    trg_lasts[-1] = torch.cat((trg_lasts[-1], 
+                                               trg_lasts[-1].new_ones(
+                                                   args.num_steps - last_trg_len, 
+                                                   eval_batch_size)))
+                else:
+                    ppl_block[ind:ind+trg_len] = trg
+                    trg_lasts = []
+                if args.farnear:
+                    output, hidden, mem = model(ppl_block, key, value, 
+                                                neighbor_mem=mem, 
+                                                key_num=key_num)
+                outputs = torch.cat((outputs, output), 0)
 
-                    ppl_block = block.clone()
-                    outputs = output.new_zeros(0)
-                    trg_len = trg.size(0)
-                    tail_lens = []
-                    for story in trg.t():
-                        for wid, w in enumerate(story):
-                            if w.item() == vocab.stoi["<eos>"]:
-                                tail_lens.append(wid + 1)
-                                break
-                    if trg_len - args.num_steps + ind > 0:
-                        trg_fill, trg_last = trg.split([args.num_steps - ind, 
-                                                        trg_len - args.num_steps + ind])
-                        ppl_block[ind:] = trg_fill
-                        trg_lasts = list(trg_last.split(args.num_steps))
-                        last_trg_len = trg_lasts[-1].size(0)
-                        trg_lasts[-1] = torch.cat((trg_lasts[-1], 
-                                                   trg_lasts[-1].new_ones(
-                                                       args.num_steps - last_trg_len, 
-                                                       eval_batch_size)))
-                    else:
-                        ppl_block[ind:ind+trg_len] = trg
-                        trg_lasts = []
-                    if args.farnear:
-                        output, hidden, mem = model(ppl_block, key, value, 
-                                                    neighbor_mem=mem, 
-                                                    key_num=key_num)
+                module, key_num, key, value = update_cache(module, 
+                                                           eval_batch_size, 
+                                                           key, value, hidden, 
+                                                           ppl_block, 
+                                                           key_num)
+                for trg_ppl_block in trg_lasts:
+                    output, hidden, mem = model(trg_ppl_block, key, value, 
+                                                neighbor_mem=mem, 
+                                                key_num=key_num)
+
                     outputs = torch.cat((outputs, output), 0)
 
                     module, key_num, key, value = update_cache(module, 
@@ -624,91 +638,78 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                                                                key, value, hidden, 
                                                                ppl_block, 
                                                                key_num)
-                    for trg_ppl_block in trg_lasts:
-                        output, hidden, mem = model(trg_ppl_block, key, value, 
-                                                    neighbor_mem=mem, 
-                                                    key_num=key_num)
+                for batch, tail_len in enumerate(tail_lens):
+                    batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
+                    batch_trg = trg[:tail_len,batch]
+                    loss_tensor = criterion(batch_pred, 
+                                            batch_trg, keep_order=True)
+                    head_prob, tail_probs = criterion(batch_pred, 
+                                                      batch_trg, 
+                                                      keep_order=True,
+                                                      output=True)
+                    variances = variance_prob(head_prob, tail_probs)
+                    loss = loss_tensor.mean()
 
-                        outputs = torch.cat((outputs, output), 0)
+                    if args.word_loss:
+                        words = [vocab.itos[w] for w in batch_trg]
+                        words_str = " ".join(words)
+                        loss_str = " ".join([str(l.item()) for l in loss_tensor])
+                        var_str = " ".join([str(l.item()) for l in variances])
+                        loss_file.write(words_str)
+                        loss_file.write("\n")
+                        loss_file.write(loss_str)
+                        loss_file.write("\n")
+                        loss_file.write(var_str)
+                        loss_file.write("\n")
 
-                        module, key_num, key, value = update_cache(module, 
-                                                                   eval_batch_size, 
-                                                                   key, value, hidden, 
-                                                                   ppl_block, 
-                                                                   key_num)
-                    for batch, tail_len in enumerate(tail_lens):
-                        batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
-                        batch_trg = trg[:tail_len,batch]
-                        loss_tensor = criterion(batch_pred, 
-                                                batch_trg, keep_order=True)
-                        head_prob, tail_probs = criterion(batch_pred, 
-                                                          batch_trg, 
-                                                          keep_order=True,
-                                                          output=True)
-                        variances = variance_prob(head_prob, tail_probs)
-                        loss = loss_tensor.mean()
+                    losses += loss.item()
+                eval_len += eval_batch_size
 
-                        if args.word_loss:
-                            words = [vocab.itos[w] for w in batch_trg]
-                            words_str = " ".join(words)
-                            loss_str = " ".join([str(l.item()) for l in loss_tensor])
-                            var_str = " ".join([str(l.item()) for l in variances])
-                            loss_file.write(words_str)
-                            loss_file.write("\n")
-                            loss_file.write(loss_str)
-                            loss_file.write("\n")
-                            loss_file.write(var_str)
-                            loss_file.write("\n")
-
-                        losses += loss.item()
-                    eval_len += eval_batch_size
+                # end of ppl
 
 
-                # complete unfilled block
-                while ind < args.num_steps:
-                    candidates = beam_search(candidates, criterion, vocab, block, 
-                                             block_start, ind, model, args,
-                                             ind == args.num_steps - 1)
+                if args.eval_bleu:
+                    # complete unfilled block
+                    while ind < args.num_steps:
+                        candidates = beam_search(candidates, criterion, vocab, block, 
+                                                 block_start, ind, model, args,
+                                                 ind == args.num_steps - 1)
 
-                    ind += 1
+                        ind += 1
 
-                # start new blocks
-                step = 0
-                block_start = 0
-                block = torch.ones_like(block) * vocab.stoi["<pad>"]
-                while step < args.trgmax - args.num_steps:
-                    ind = step % args.num_steps
-                    candidates = beam_search(candidates, criterion, vocab, block, 
-                                             block_start, ind, model, args, 
-                                             ind == args.num_steps - 1)
-                    eos_bool = torch.cat([c[2] for c in candidates], 0)
-                    if eos_bool.equal(torch.zeros_like(eos_bool)):
-                        break
-                    step += 1
+                    # start new blocks
+                    step = 0
+                    block_start = 0
+                    block = torch.ones_like(block) * vocab.stoi["<pad>"]
+                    while step < args.trgmax - args.num_steps:
+                        ind = step % args.num_steps
+                        candidates = beam_search(candidates, criterion, vocab, block, 
+                                                 block_start, ind, model, args, 
+                                                 ind == args.num_steps - 1)
+                        eos_bool = torch.cat([c[2] for c in candidates], 0)
+                        if eos_bool.equal(torch.zeros_like(eos_bool)):
+                            break
+                        step += 1
 
-                final_ind = torch.cat([x[0].unsqueeze(0) for x in candidates], 0)
-                final_prob = torch.cat([x[1] for x in candidates], 1)
-                _, max_ind = final_prob.max(1)
-                max_ind = max_ind.unsqueeze(-1).expand(-1, final_ind.size(-1)).unsqueeze(0)
-                pred_tensor = torch.gather(final_ind, 0, max_ind).squeeze(0).t()
-                b_bleu, b_pred, b_trg = batch_bleu(vocab, pred_tensor, trg)
-                bleu += b_bleu
-                preds += b_pred
-                trgs += b_trg
+                    final_ind = torch.cat([x[0].unsqueeze(0) for x in candidates], 0)
+                    final_prob = torch.cat([x[1] for x in candidates], 1)
+                    _, max_ind = final_prob.max(1)
+                    max_ind = max_ind.unsqueeze(-1).expand(-1, final_ind.size(-1)).unsqueeze(0)
+                    pred_tensor = torch.gather(final_ind, 0, max_ind).squeeze(0).t()
+                    b_bleu, b_pred, b_trg = batch_bleu(vocab, pred_tensor, trg)
+                    bleu += b_bleu
+                    preds += b_pred
+                    trgs += b_trg
 
-                pbar.update(1)
+                    pbar.update(1)
 
     model.set_batch_size(args.batch_size)
 
-    if args.eval_ppl:
-        loss_mean = losses / eval_len
-        ppl = math.exp(loss_mean)
-        if args.word_loss:
-            loss_file.close()
-        #print("ppl on eval: %.2f" % ppl)
-    else:
-        ppl = float("inf")
-
+    loss_mean = losses / eval_len
+    ppl = math.exp(loss_mean)
+    if args.word_loss:
+        loss_file.close()
+    #print("ppl on eval: %.2f" % ppl)
 
     return bleu / len_eval, ppl, preds, trgs
  
@@ -778,7 +779,7 @@ def main(args):
         model_args.eval_steps = args.eval_steps
         model_args.eval_part = args.eval_part
         model_args.eval_on_train = args.eval_on_train
-        model_args.eval_ppl = args.eval_ppl
+        model_args.eval_bleu = args.eval_bleu
         model_args.word_loss = args.word_loss
 
         args = model_args
@@ -889,7 +890,6 @@ def main(args):
                                                    (time.time() - epoch_start_time),
                                                    eval_bleu * 100,
                                                    eval_ppl))
-                print('-' * 89)
                 writer.add_scalar("valid/bleu", eval_bleu, 
                                   epoch * len(train_loader))
                 writer.flush()
@@ -936,6 +936,7 @@ def main(args):
                         # save prediction
                         save_pred(savepath, "eval_best", best_eval_preds, 
                                   best_eval_trgs)
+                print('-' * 89)
 
         except KeyboardInterrupt:
             print('-' * 89)
