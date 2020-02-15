@@ -143,7 +143,7 @@ def parse_args():
                         help='report interval')
     parser.add_argument('--eval_steps', type=int, default=2000, metavar='N',
                         help='evaluation steps')
-    parser.add_argument('--eval_part', type=float, default=0.1,
+    parser.add_argument('--eval_part', type=float, default=1.0,
                         help='only use a part of validation in eval during training')
     parser.add_argument('--eval_on_train', action="store_true",
                         help='use part of training data to do evaluation')
@@ -418,7 +418,7 @@ def save_pred(savepath, name, preds, trgs):
             fw.write("\n")
 
 def train(model, train_loader, valid_loader, criterion, 
-          args, epoch, optimizer, scheduler):
+          args, epoch, optimizer, scheduler, best_eval_ppl):
 
     model.train()
     start_time = time.time()
@@ -486,11 +486,23 @@ def train(model, train_loader, valid_loader, criterion,
             eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(model, valid_loader, 
                                                                   criterion, args, 
                                                                   args.eval_part)
-            print('| eval at step {:3d} | eval bleu {:5.2f} |'.format(batch, 
-                                                                    eval_bleu * 100))
+            print('| eval at step {:3d} | eval bleu {:5.2f} |'
+                  ' eval ppl {:5.2f}'.format(batch, 
+                                             eval_bleu * 100,
+                                             eval_ppl))
             save_pred(savepath, 
                       "eval_" + str(epoch) + "_" + str(batch // args.eval_steps), 
                       eval_preds, eval_trgs)
+            if eval_ppl < best_eval_ppl: 
+                best_eval_ppl = eval_ppl
+                torch.save({
+                    "model_args": module.args,
+                    "model_state_dict": module.state_dict(),
+                    "criterion": criterion.state_dict()
+                    }, 
+                    savepath + "/" + args.save + "_best" + ".pt")
+            print('-' * 60)
+            start_time = time.time()
 
 def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     model.eval()
@@ -576,10 +588,10 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                                   inf_blocks,
                                   key, value, mem, key_num]]
 
-                # generated index
-                # probability
-                # eos
-                # previous input
+                    # generated index
+                    # probability
+                    # eos
+                    # previous input
 
                 for ind in range(args.num_steps):
                     if block[ind][0].item() == 1:
@@ -711,6 +723,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
         loss_file.close()
     #print("ppl on eval: %.2f" % ppl)
 
+    model.train()
     return bleu / len_eval, ppl, preds, trgs
  
 
@@ -866,8 +879,8 @@ def main(args):
             best_eval_preds, best_eval_trgs = [], []
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
-                train(model, train_loader, train_valid_loader, criterion, 
-                      args, epoch, optimizer, scheduler)
+                train(model, train_loader, valid_loader, criterion, 
+                      args, epoch, optimizer, scheduler, best_eval_ppl)
                 if not args.eval_on_train:
                     eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
                                                                     model, 
@@ -958,20 +971,19 @@ def main(args):
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
 
-    if args.eval:
-        if not args.eval_on_train:
-            best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
-                                                                       model, 
-                                                                       valid_loader, 
-                                                                       criterion, 
-                                                                       args)
-        else:
-            best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
-                                                                model, 
-                                                                train_valid_loader, 
-                                                                criterion, args,
-                                                                args.eval_part)
-        save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
+    if not args.eval_on_train:
+        best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
+                                                                   model, 
+                                                                   valid_loader, 
+                                                                   criterion, 
+                                                                   args)
+    else:
+        best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
+                                                            model, 
+                                                            train_valid_loader, 
+                                                            criterion, args,
+                                                            args.eval_part)
+    save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
 
     print('=' * 89)
     print('| best valid bleu {:5.2f} '

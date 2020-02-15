@@ -20,9 +20,7 @@ python story_tail.py \
     --save baseline_demo \
     --adaptive \
     --vocab_size 25000 \
-    --cutoffs 5000 10000 20000 \
+    --cutoffs 5000 10000 15000 \
     --eval_steps 5000 \
-    --eval_part 0.1 \
-    --eval_ppl \
     ${@:1}
 

@@ -108,14 +108,14 @@ def parse_args():
                         help='report interval')
     parser.add_argument('--eval_steps', type=int, default=2000, metavar='N',
                         help='evaluation steps')
-    parser.add_argument('--eval_part', type=float, default=0.1,
+    parser.add_argument('--eval_part', type=float, default=1.0,
                         help='only use a part of validation in eval during training')
     parser.add_argument('--eval_use_train', action="store_true",
                         help='use part of training data to do evaluation')
-    parser.add_argument('--eval_ppl', action="store_true",
-                        help='compute ppl during evaluation')
+    parser.add_argument('--eval_bleu', action="store_true",
+                        help='compute bleu during evaluation')
     parser.add_argument('--word_loss', action="store_true",
-                        help='output loss of every word, must use in eval_ppl mode')
+                        help='output loss of every word')
     parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
     parser.add_argument('--load', type=str, default='',
@@ -299,7 +299,7 @@ def save_pred(savepath, name, preds, trgs):
             fw.write("\n")
 
 def train(model, train_loader, valid_loader, criterion, 
-          args, epoch, optimizer, scheduler):
+          args, epoch, optimizer, scheduler, best_eval_ppl):
 
     model.train()
     start_time = time.time()
@@ -355,11 +355,24 @@ def train(model, train_loader, valid_loader, criterion,
             eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(model, valid_loader, 
                                                                   criterion, args, 
                                                                   args.eval_part)
-            print('| eval at step {:3d} | eval bleu {:5.2f} |'.format(batch, 
-                                                                    eval_bleu * 100))
+            print('| eval at step {:3d} | eval bleu {:5.2f} |'
+                  ' eval ppl {:5.2f}'.format(batch, 
+                                             eval_bleu * 100,
+                                             eval_ppl))
             save_pred(savepath, 
                       "eval_" + str(epoch) + "_" + str(batch // args.eval_steps), 
                       eval_preds, eval_trgs)
+            if eval_ppl < best_eval_ppl:
+                best_eval_ppl = eval_ppl
+                torch.save({
+                    "model_args": args,
+                    "model_state_dict": module.state_dict(),
+                    "criterion": criterion.state_dict()
+                    }, 
+                    savepath + 
+                    "/" + args.save + "_best" + ".pt")
+            print("-" * 60)
+            start_time = time.time()
 
 def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     model.eval()
@@ -372,11 +385,10 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     else:
         device = torch.device("cpu")
 
-    if args.eval_ppl:
-        losses = 0.
-        eval_len = 0
-        if args.word_loss:
-            loss_file = open(savepath + "/" + args.save + "_word_loss.txt", "w")
+    losses = 0.
+    eval_len = 0
+    if args.word_loss:
+        loss_file = open(savepath + "/" + args.save + "_word_loss.txt", "w")
 
     
     bleu = 0.
@@ -413,133 +425,131 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
 
                 # begin to evaluate
 
-                candidates = [[block.new_ones(eval_batch_size, 0), 
-                              output.new_zeros(eval_batch_size, 1),
-                              block.new_ones(eval_batch_size, 1).bool(),
-                              memory]]
+                if args.eval_bleu:
+                    candidates = [[block.new_ones(eval_batch_size, 0), 
+                                  output.new_zeros(eval_batch_size, 1),
+                                  block.new_ones(eval_batch_size, 1).bool(),
+                                  memory]]
 
-                # generated index
-                # probability
-                # eos
-                # previous input
+                    # generated index
+                    # probability
+                    # eos
+                    # previous input
 
                 for ind in range(args.num_steps):
                     if block[ind][0].item() == 1:
                         break
                 else:
                     ind += 1
-                candidates[0].append(output[ind-1])
                 block_start = ind
+                if args.eval_bleu:
+                    candidates[0].append(output[ind-1])
 
                 # compute ppl of trg
-                if args.eval_ppl:
 
+                ppl_block = block.clone()
+                outputs = output.new_zeros(0)
+                trg_len = trg.size(0)
+                tail_lens = []
+                for story in trg.t():
+                    for wid, w in enumerate(story):
+                        if w.item() == vocab.stoi["<eos>"]:
+                            tail_lens.append(wid + 1)
+                            break
+                if trg_len - args.num_steps + ind > 0:
+                    trg_fill, trg_last = trg.split([args.num_steps - ind, 
+                                                    trg_len - args.num_steps + ind])
+                    ppl_block[ind:] = trg_fill
+                    trg_lasts = list(trg_last.split(args.num_steps))
+                    last_trg_len = trg_lasts[-1].size(0)
+                    trg_lasts[-1] = torch.cat((trg_lasts[-1], 
+                                               trg_lasts[-1].new_ones(
+                                                   args.num_steps - last_trg_len, 
+                                                   eval_batch_size)))
+                else:
+                    ppl_block[ind:ind+trg_len] = trg
+                    trg_lasts = []
 
-                    ppl_block = block.clone()
-                    outputs = output.new_zeros(0)
-                    trg_len = trg.size(0)
-                    tail_lens = []
-                    for story in trg.t():
-                        for wid, w in enumerate(story):
-                            if w.item() == vocab.stoi["<eos>"]:
-                                tail_lens.append(wid + 1)
-                                break
-                    if trg_len - args.num_steps + ind > 0:
-                        trg_fill, trg_last = trg.split([args.num_steps - ind, 
-                                                        trg_len - args.num_steps + ind])
-                        ppl_block[ind:] = trg_fill
-                        trg_lasts = list(trg_last.split(args.num_steps))
-                        last_trg_len = trg_lasts[-1].size(0)
-                        trg_lasts[-1] = torch.cat((trg_lasts[-1], 
-                                                   trg_lasts[-1].new_ones(
-                                                       args.num_steps - last_trg_len, 
-                                                       eval_batch_size)))
-                    else:
-                        ppl_block[ind:ind+trg_len] = trg
-                        trg_lasts = []
+                output, memory = model(ppl_block, memory)
 
-                    output, memory = model(ppl_block, memory)
+                outputs = torch.cat((outputs, output), 0)
+
+                for trg_ppl_block in trg_lasts:
+                    output, memory = model(trg_ppl_block, memory)
 
                     outputs = torch.cat((outputs, output), 0)
 
-                    for trg_ppl_block in trg_lasts:
-                        output, memory = model(trg_ppl_block, memory)
+                for batch, tail_len in enumerate(tail_lens):
+                    batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
+                    batch_trg = trg[:tail_len,batch]
+                    loss_tensor = criterion(batch_pred, batch_trg, keep_order=True)
+                    head_prob, tail_probs = criterion(batch_pred, 
+                                                      batch_trg, 
+                                                      keep_order=True,
+                                                      output=True)
+                    variances = variance_prob(head_prob, tail_probs)
 
-                        outputs = torch.cat((outputs, output), 0)
+                    loss = loss_tensor.mean()
+                    
+                    if args.word_loss:
+                        words = [vocab.itos[w] for w in batch_trg]
+                        words_str = " ".join(words)
+                        loss_str = " ".join([str(l.item()) for l in loss_tensor])
+                        var_str = " ".join([str(l.item()) for l in variances])
+                        loss_file.write(words_str)
+                        loss_file.write("\n")
+                        loss_file.write(loss_str)
+                        loss_file.write("\n")
+                        loss_file.write(var_str)
+                        loss_file.write("\n")
 
-                    for batch, tail_len in enumerate(tail_lens):
-                        batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
-                        batch_trg = trg[:tail_len,batch]
-                        loss_tensor = criterion(batch_pred, batch_trg, keep_order=True)
-                        head_prob, tail_probs = criterion(batch_pred, 
-                                                          batch_trg, 
-                                                          keep_order=True,
-                                                          output=True)
-                        variances = variance_prob(head_prob, tail_probs)
+                    losses += loss.item()
+                eval_len += eval_batch_size
 
-                        loss = loss_tensor.mean()
-                        
-                        if args.word_loss:
-                            words = [vocab.itos[w] for w in batch_trg]
-                            words_str = " ".join(words)
-                            loss_str = " ".join([str(l.item()) for l in loss_tensor])
-                            var_str = " ".join([str(l.item()) for l in variances])
-                            loss_file.write(words_str)
-                            loss_file.write("\n")
-                            loss_file.write(loss_str)
-                            loss_file.write("\n")
-                            loss_file.write(var_str)
-                            loss_file.write("\n")
+                # end of computing ppl
 
-                        losses += loss.item()
-                    eval_len += eval_batch_size
+                if args.eval_bleu:
+                    # complete unfilled block
+                    while ind < args.num_steps:
+                        candidates = beam_search(candidates, criterion, vocab, block, 
+                                                 block_start, ind, model, args,
+                                                 ind == args.num_steps - 1)
 
+                        ind += 1
 
+                    # start new blocks
+                    step = 0
+                    block_start = 0
+                    block = torch.ones_like(block) * vocab.stoi["<pad>"]
+                    while step < args.trgmax - args.num_steps:
+                        ind = step % args.num_steps
+                        candidates = beam_search(candidates, criterion, vocab, block, 
+                                                 block_start, ind, model, args, 
+                                                 ind == args.num_steps - 1)
+                        eos_bool = torch.cat([c[2] for c in candidates], 0)
+                        if eos_bool.equal(torch.zeros_like(eos_bool)):
+                            break
+                        step += 1
 
+                    final_ind = torch.cat([x[0].unsqueeze(0) for x in candidates], 0)
+                    final_prob = torch.cat([x[1] for x in candidates], 1)
+                    _, max_ind = final_prob.max(1)
+                    max_ind = max_ind.unsqueeze(-1).expand(-1, final_ind.size(-1)).unsqueeze(0)
+                    pred_tensor = torch.gather(final_ind, 0, max_ind).squeeze(0).t()
+                    b_bleu, b_pred, b_trg = batch_bleu(vocab, pred_tensor, trg)
+                    bleu += b_bleu
+                    preds += b_pred
+                    trgs += b_trg
 
-                # complete unfilled block
-                while ind < args.num_steps:
-                    candidates = beam_search(candidates, criterion, vocab, block, 
-                                             block_start, ind, model, args,
-                                             ind == args.num_steps - 1)
+                    pbar.update(1)
 
-                    ind += 1
+    loss_mean = losses / eval_len
+    ppl = math.exp(loss_mean)
+    #print("ppl on eval: %.2f" % ppl)
+    if args.word_loss:
+        loss_file.close()
 
-                # start new blocks
-                step = 0
-                block_start = 0
-                block = torch.ones_like(block) * vocab.stoi["<pad>"]
-                while step < args.trgmax - args.num_steps:
-                    ind = step % args.num_steps
-                    candidates = beam_search(candidates, criterion, vocab, block, 
-                                             block_start, ind, model, args, 
-                                             ind == args.num_steps - 1)
-                    eos_bool = torch.cat([c[2] for c in candidates], 0)
-                    if eos_bool.equal(torch.zeros_like(eos_bool)):
-                        break
-                    step += 1
-
-                final_ind = torch.cat([x[0].unsqueeze(0) for x in candidates], 0)
-                final_prob = torch.cat([x[1] for x in candidates], 1)
-                _, max_ind = final_prob.max(1)
-                max_ind = max_ind.unsqueeze(-1).expand(-1, final_ind.size(-1)).unsqueeze(0)
-                pred_tensor = torch.gather(final_ind, 0, max_ind).squeeze(0).t()
-                b_bleu, b_pred, b_trg = batch_bleu(vocab, pred_tensor, trg)
-                bleu += b_bleu
-                preds += b_pred
-                trgs += b_trg
-
-                pbar.update(1)
-
-    if args.eval_ppl:
-        loss_mean = losses / eval_len
-        ppl = math.exp(loss_mean)
-        #print("ppl on eval: %.2f" % ppl)
-        if args.word_loss:
-            loss_file.close()
-    else:
-        ppl = float("inf")
-
+    model.train()
     return bleu / len_eval, ppl, preds, trgs
  
 
@@ -714,8 +724,8 @@ def main(args):
             best_eval_preds, best_eval_trgs = [], []
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
-                train(model, train_loader, train_valid_loader, criterion, 
-                      args, epoch, optimizer, scheduler)
+                train(model, train_loader, valid_loader, criterion, 
+                      args, epoch, optimizer, scheduler, best_eval_ppl)
                 if not args.eval_use_train:
                     eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(model, 
                                                                           valid_loader,                                                                          criterion, 
@@ -803,20 +813,19 @@ def main(args):
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
 
-    if args.eval:
-        if not args.eval_use_train:
-            best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
-                                                                       model, 
-                                                                       valid_loader, 
-                                                                       criterion, 
-                                                                       args)
-        else:
-            best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
-                                                                model, 
-                                                                train_valid_loader, 
-                                                                criterion, args,
-                                                                args.eval_part)
-        save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
+    if not args.eval_use_train:
+        best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
+                                                                   model, 
+                                                                   valid_loader, 
+                                                                   criterion, 
+                                                                   args)
+    else:
+        best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
+                                                            model, 
+                                                            train_valid_loader, 
+                                                            criterion, args,
+                                                            args.eval_part)
+    save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
 
     print('=' * 89)
     print('| best valid bleu {:5.2f} '

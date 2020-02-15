@@ -39,8 +39,7 @@ python story_tail.py \
     --wise_summary \
     --farnear \
     --neighbor_len 20 \
-    --eval_steps 10000 \
-    --eval_part 0.02 \
+    --eval_steps 2500 \
     --multi_gpu \
     ${@:2}
 

@@ -26,6 +26,5 @@ python story_tail.py \
     --farnear \
     --neighbor_len 20 \
     --eval_steps 5000 \
-    --eval_part 0.1 \
     ${@:1}
 

@@ -34,9 +34,7 @@ python story_tail.py \
     --adaptive \
     --vocab_size 50000 \
     --cutoffs 10000 20000 30000 \
-    --eval_steps 10000 \
-    --eval_part 0.02 \
+    --eval_steps 2500 \
     --multi_gpu \
-    --eval_ppl \
     ${@:2}
 
