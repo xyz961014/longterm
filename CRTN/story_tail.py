@@ -713,7 +713,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     preds += b_pred
                     trgs += b_trg
 
-                    pbar.update(1)
+                pbar.update(1)
 
     model.set_batch_size(args.batch_size)
 
