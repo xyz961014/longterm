@@ -503,6 +503,8 @@ def train(model, train_loader, valid_loader, criterion,
                     savepath + "/" + args.save + "_best" + ".pt")
             print('-' * 60)
             start_time = time.time()
+    
+    return best_eval_ppl
 
 def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     model.eval()
@@ -879,8 +881,9 @@ def main(args):
             best_eval_preds, best_eval_trgs = [], []
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
-                train(model, train_loader, valid_loader, criterion, 
-                      args, epoch, optimizer, scheduler, best_eval_ppl)
+                best_eval_ppl = train(model, train_loader, valid_loader, criterion, 
+                                      args, epoch, optimizer, scheduler, 
+                                      best_eval_ppl)
                 if not args.eval_on_train:
                     eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
                                                                     model, 
