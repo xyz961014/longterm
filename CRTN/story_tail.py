@@ -451,7 +451,8 @@ def train(model, train_loader, valid_loader, criterion,
         else:
             output, hidden = model(text, key, value, key_num=key_num)
 
-        module, key_num, key, value = update_cache(module, args.batch_size, key, value,                                                   hidden, text, key_num)
+        module, key_num, key, value = update_cache(module, args.batch_size, 
+                                                   key, value, hidden, text, key_num)
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), target.reshape(-1))
@@ -483,7 +484,8 @@ def train(model, train_loader, valid_loader, criterion,
             start_time = time.time()
 
         if batch % args.eval_steps == 0 and batch > 0:
-            eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(model, valid_loader, 
+            eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(model, 
+                                                                  valid_loader, 
                                                                   criterion, args, 
                                                                   args.eval_part)
             print('| eval at step {:3d} | eval bleu {:5.2f} |'
@@ -566,7 +568,8 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     if i < len(srcs) - 1:
                         module, key_num, key, value = update_cache(module, 
                                                                    eval_batch_size, 
-                                                                   key, value, hidden, 
+                                                                   key, value, 
+                                                                   hidden, 
                                                                    block, 
                                                                    key_num)
 
@@ -923,6 +926,7 @@ def main(args):
                 # 0 if lower ppl then save model
                 # 1 if higher bleu then save model
                 if eval_ppl < best_eval_ppl:
+                    best_eval_ppl = eval_ppl
                     torch.save({
                         "model_args": module.args,
                         "model_state_dict": module.state_dict(),
@@ -933,7 +937,6 @@ def main(args):
                     print("save best model for better ppl")
                     if eval_bleu > best_eval_bleu:
                         best_eval_bleu = eval_bleu
-                    best_eval_ppl = eval_ppl
                     best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
                     # save prediction
                     save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)

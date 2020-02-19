@@ -64,7 +64,7 @@ class Cache(nn.Module):
                     for i in range(args.cache_N)
         })
 
-        self.init_keys(args.init_std)
+        #self.init_keys(args.init_std)
 
         self.attn = DotProductAttention()
         if not args.no_summary:
@@ -184,7 +184,7 @@ class Cache(nn.Module):
                             for i in range(self.N)
             })
 
-        self.init_keys(self.args.init_std)
+        #self.init_keys(self.args.init_std)
 
         self.to(device)
 
