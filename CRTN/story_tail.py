@@ -720,7 +720,6 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
 
                 pbar.update(1)
 
-    model.set_batch_size(args.batch_size)
 
     loss_mean = losses / eval_len
     ppl = math.exp(loss_mean)
@@ -729,6 +728,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     #print("ppl on eval: %.2f" % ppl)
 
     model.train()
+    model.set_batch_size(args.batch_size)
     return bleu / len_eval, ppl, preds, trgs
  
 
@@ -879,7 +879,7 @@ def main(args):
 
     if not args.eval:
         try:
-            best_eval_bleu = -float("inf")
+            best_eval_bleu = 0.
             best_eval_ppl = float("inf")
             best_eval_preds, best_eval_trgs = [], []
             for epoch in range(1, args.epochs+1):
