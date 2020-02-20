@@ -99,10 +99,10 @@ class Cache(nn.Module):
         if self.demo:
             self.words = self.words.to(device)
 
-    def init_keys(self, seed=0):
+    def init_keys(self, seed=0, init_std=1.0):
         torch.manual_seed(seed)
         for i in range(self.mem_start, self.mem_end + 1):
-            nn.init.normal_(getattr(self, "key" + str(i)))
+            nn.init.normal_(getattr(self, "key" + str(i)), std=init_std)
 
     def _get_keys(self):
         keys = [getattr(self, "key" + str(i)) 
