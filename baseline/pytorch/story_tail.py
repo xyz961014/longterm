@@ -23,7 +23,7 @@ from nltk.translate.bleu_score import sentence_bleu
 #import torch.distributed as dist
 #from torch.nn.parallel import DistributedDataParallel
 
-from CRTN.data.wp_loader import WPDataset
+from CRTN.data.tail_loader import TailDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from transformer import TransformerLM
 
@@ -580,7 +580,7 @@ def main(args):
     print("Loading data from %s" % args.data)
     datatime_begin = time.time()
 
-    corpus = WPDataset(args.data, args.vocab_size, args.num_steps)
+    corpus = TailDataset(args.data, args.vocab_size, args.num_steps)
     args.vocab_size = len(corpus.TRG.vocab.itos)
     
     train_loader = corpus.get_train_loader(args.batch_size)
