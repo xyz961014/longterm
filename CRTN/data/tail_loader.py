@@ -10,7 +10,7 @@ from nltk import sent_tokenize
 
 
 
-class WPDataset(object):
+class TailDataset(object):
     def __init__(self, path, vocab_size, num_steps):
         self.vocab_size = vocab_size
         self.num_steps = num_steps
@@ -70,7 +70,7 @@ class WPDataset(object):
 if __name__ == "__main__":
     path = "/home/xyz/Documents/Dataset/writingpromts/toy/"
     start_time = time.time()
-    dataloader = WPDataset(path, 10000, 20)
+    dataloader = TailDataset(path, 10000, 20)
     print("load time: %.2f s" % (time.time() - start_time))
     ta = dataloader.get_train_loader(12, device="cuda:0")
     va = dataloader.get_train_valid_loader(50)

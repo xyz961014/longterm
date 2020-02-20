@@ -7,7 +7,7 @@ from pprint import pprint
 from tqdm import tqdm
 import visdom
 sys.path.append("..")
-from data.wp_loader import WPDataset
+from data.tail_loader import TailDataset
 vis = visdom.Visdom()
 assert vis.check_connection()
 
@@ -157,7 +157,7 @@ def main(args):
                 vis.line(np.array([[var]]), np.array([[loss]]), win="loss-variance", update="append")
     elif args.func == 2:
         freq_loss = []
-        corpus = WPDataset(args.data, 1e6, 50)
+        corpus = TailDataset(args.data, 1e6, 50)
         vocab = corpus.TEXT.vocab
         with open(args.model_loss, "r") as model_file:
             while True:
