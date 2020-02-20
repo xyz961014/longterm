@@ -100,7 +100,11 @@ class Cache(nn.Module):
             self.words = self.words.to(device)
 
     def init_keys(self, seed=0, init_std=1.0):
-        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+        else:
+            torch.manual_seed(seed)
+
         for i in range(self.mem_start, self.mem_end + 1):
             nn.init.normal_(getattr(self, "key" + str(i)), std=init_std)
 
@@ -114,15 +118,17 @@ class Cache(nn.Module):
     def init_key_and_value(self, key, value):
         if key is not None:
             for i in range(self.mem_start, self.mem_end + 1):
-                idx = torch.tensor(i).to(key.device)
-                getattr(self, 
-                        "key" + str(i)).copy_(key.index_select(0, idx).squeeze(0))
+                setattr(self, "key" + str(i), key[i])
+                #idx = torch.tensor(i).to(key.device)
+                #getattr(self, 
+                #        "key" + str(i)).copy_(key.index_select(0, idx).squeeze(0))
         if value is not None:
             value = value.transpose(1, 2)
             for i in range(self.mem_start, self.mem_end + 1):
-                idx = torch.tensor(i).to(value.device)
-                getattr(self, 
-                        "value" + str(i)).copy_(value.index_select(0, idx).squeeze(0))
+                setattr(self, "value" + str(i), value[i])
+                #idx = torch.tensor(i).to(value.device)
+                #getattr(self, 
+                #        "value" + str(i)).copy_(value.index_select(0, idx).squeeze(0))
 
     def _get_values(self):
         values = [getattr(self, "value" + str(i)) 
@@ -144,17 +150,25 @@ class Cache(nn.Module):
 
     def set_batch_size(self, batch_size):
         self.batch_size = batch_size
-        device = self._get_keys().device 
+        device = self.key0.device 
 
         self.mem_start = 0
         self.mem_end = self.args.cache_N - 1
 
+
+        keys = torch.zeros(self.args.cache_N, batch_size, self.dk, device=device)
+        values = torch.zeros(self.args.cache_N, self.args.num_steps, batch_size, 
+                             (self.args.nlayers + 1) * self.args.nhid, device=device)
         for i in range(self.mem_start, self.mem_end + 1):
-            setattr(self, "key" + str(i), torch.zeros(batch_size, self.dk))
-            setattr(self, "value" + str(i), torch.zeros(self.args.num_steps,
-                                                         batch_size,
-                                                         ((self.args.nlayers + 1) 
-                                                         * self.args.nhid)))
+            setattr(self, "key" + str(i), keys[i])
+            setattr(self, "value" + str(i), values[i])
+            #setattr(self, "key" + str(i), torch.zeros(batch_size, self.dk,
+            #                                          device=device))
+            #setattr(self, "value" + str(i), torch.zeros(self.args.num_steps,
+            #                                             batch_size,
+            #                                             ((self.args.nlayers + 1) 
+            #                                             * self.args.nhid),
+            #                                             device=device))
         #self.keys.clear()
         #self.values.clear()
         #self.keys.update({
@@ -186,8 +200,6 @@ class Cache(nn.Module):
             })
 
         self.init_keys(self.args.seed, self.args.init_std)
-
-        self.to(device)
 
     def forward(self, query):
 
