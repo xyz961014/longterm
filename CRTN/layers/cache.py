@@ -100,10 +100,10 @@ class Cache(nn.Module):
             self.words = self.words.to(device)
 
     def init_keys(self, seed=0, init_std=1.0):
-        if torch.cuda.is_available():
-            torch.cuda.manual_seed_all(seed)
-        else:
-            torch.manual_seed(seed)
+        #if torch.cuda.is_available():
+        #    torch.cuda.manual_seed_all(seed)
+        #else:
+        #    torch.manual_seed(seed)
 
         for i in range(self.mem_start, self.mem_end + 1):
             nn.init.normal_(getattr(self, "key" + str(i)), std=init_std)
@@ -199,7 +199,7 @@ class Cache(nn.Module):
                             for i in range(self.N)
             })
 
-        self.init_keys(self.args.seed, self.args.init_std)
+        #self.init_keys(self.args.seed, self.args.init_std)
 
     def forward(self, query):
 

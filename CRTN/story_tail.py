@@ -575,16 +575,16 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
 
                 # begin to evaluate
 
-                if args.eval_bleu:
-                    hidden = hidden.transpose(1, 2)
+                hidden = hidden.transpose(1, 2)
 
-                    if args.farnear:
-                        mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, 
-                                          args.nhid)
-                        total_mem = torch.cat((hidden, mem), 1)
-                        mem, inf_blocks = total_mem.split([args.neighbor_len, 
-                                                               args.num_steps], 
-                                                               dim=1)
+                if args.farnear:
+                    mem = mem.reshape(args.nlayers+1, args.neighbor_len, -1, 
+                                      args.nhid)
+                    total_mem = torch.cat((hidden, mem), 1)
+                    mem, inf_blocks = total_mem.split([args.neighbor_len, 
+                                                           args.num_steps], 
+                                                           dim=1)
+                if args.eval_bleu:
                     inf_blocks = inf_blocks.transpose(1, 2)
 
                     candidates = [[block.new_ones(eval_batch_size, 0), 
