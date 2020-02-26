@@ -547,7 +547,6 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                 eval_batch_size = src.size(1)
                 len_eval += eval_batch_size
                 srcs = src.split(module.args.num_steps)
-                ipdb.set_trace()
 
                 model.set_batch_size(eval_batch_size)
                 key_num = init_key_num(args, device, True)
