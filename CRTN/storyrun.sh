@@ -18,16 +18,18 @@ python story_tail.py \
     --lr 25e-5 \
     --nlayers 12 \
     --dropout 0.2 \
+    --d_ff 1024 \
     --nhead 8 \
-    --emsize 240 \
-    --nhid 240 \
+    --emsize 256 \
+    --nhid 256 \
     --batch_size 150 \
     --eval_batch_size 200 \
     --num_steps 20 \
+    --neighbor_len 20 \
+    --cache_N 5 \
+    --cache_k 2 \
     --tied \
     --attn_type 1 \
-    --cache_k 2 \
-    --cache_N 5 \
     --seed 1111 \
     --epochs 50 \
     --log-interval 50 \
@@ -38,8 +40,7 @@ python story_tail.py \
     --no_summary \
     --wise_summary \
     --farnear \
-    --neighbor_len 20 \
-    --eval_steps 2500 \
+    --eval_steps 3000 \
     --multi_gpu \
     ${@:2}
 

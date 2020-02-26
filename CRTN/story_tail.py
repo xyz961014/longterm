@@ -23,7 +23,7 @@ from nltk.translate.bleu_score import sentence_bleu
 #import torch.distributed as dist
 #from torch.nn.parallel import DistributedDataParallel
 
-from data.tail_loader import TailDataset
+from data.tail_loader import TailDataset, ROCDataset
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
 from models.CRTNModel import CRTNModel
 
@@ -52,17 +52,17 @@ def parse_args():
                         help='size of vocabulary, excluding special chars')
     parser.add_argument('--trgmax', type=int, default=100,
                         help='max len of generated tail')
-    parser.add_argument('--emsize', type=int, default=240,
+    parser.add_argument('--emsize', type=int, default=256,
                         help='size of word embeddings')
-    parser.add_argument('--nhid', type=int, default=240,
+    parser.add_argument('--nhid', type=int, default=256,
                         help='number of hidden units per layer')
     parser.add_argument('--nlayers', type=int, default=3,
                         help='number of layers')
     parser.add_argument('--nhead', type=int, default=8,
                         help='number of heads')
-    parser.add_argument('--d_ff', type=int, default=1300,
+    parser.add_argument('--d_ff', type=int, default=1024,
                         help='dimension of feed-forward')
-    parser.add_argument('--lr', type=float, default=27e-5,
+    parser.add_argument('--lr', type=float, default=25e-5,
                         help='initial learning rate')
     parser.add_argument('--scheduler', type=str, default='cosine', 
                         choices=['cosine', 'constant'],
@@ -73,15 +73,15 @@ def parse_args():
                         help='beam size of beam search when inferencing')
     parser.add_argument('--decode_alpha', type=float, default=0.6,
                         help='length punishment when decoding: ((5+l)/6)^alpha')
-    parser.add_argument('--epochs', type=int, default=200,
+    parser.add_argument('--epochs', type=int, default=50,
                         help='upper epoch limit')
-    parser.add_argument('--batch_size', type=int, default=50, metavar='N',
+    parser.add_argument('--batch_size', type=int, default=50,
                         help='batch size')
     parser.add_argument('--eval_batch_size', type=int, default=10, 
                         help='eval batch size')
-    parser.add_argument('--num_steps', type=int, default=70,
+    parser.add_argument('--num_steps', type=int, default=50,
                         help='sequence length')
-    parser.add_argument('--dropout', type=float, default=0.45,
+    parser.add_argument('--dropout', type=float, default=0.5,
                         help='dropout applied to layers (0 = no dropout)')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
@@ -91,8 +91,8 @@ def parse_args():
                         help='attention type, 0 for vaswani; 1 for transformer-xl')
     parser.add_argument("--cache_N", type=int, default=5, 
                         help="size of Cache, default: 5")
-    parser.add_argument("--cache_dk", type=int, default=240, 
-                        help="dimension of key, default: 240")
+    parser.add_argument("--cache_dk", type=int, default=256, 
+                        help="dimension of key, default: 256")
     parser.add_argument("--cache_k", type=int, default=3, 
                         help="select top k values, default: 3")
     parser.add_argument('--multi_gpu', action="store_true",
@@ -100,7 +100,7 @@ def parse_args():
     parser.add_argument('--adaptive', action="store_true",
                         help='use adaptive embedding and softmax')
     parser.add_argument('--cutoffs', type=int, 
-                        default=[20000, 40000, 80000], nargs="+",
+                        default=[20000, 40000, 60000], nargs="+",
                         help='cutoffs for adaptive embedding')
     parser.add_argument('--no_summary', action="store_true",
                         help='use the output of the transformer layer as key')
@@ -121,7 +121,7 @@ def parse_args():
     parser.add_argument('--farnear', action="store_true",
                         help='split history into two parts,'
                         ' near to compute query and attention; far to be queried')
-    parser.add_argument("--neighbor_len", type=int, default=50,
+    parser.add_argument("--neighbor_len", type=int, default=20,
                         help="length of near neighbor; only use in farnear mode")
     parser.add_argument('--p_discard', action="store_true",
                         help='discard segment according to a computed posibility')
@@ -151,6 +151,8 @@ def parse_args():
                         help='compute bleu during evaluation')
     parser.add_argument('--word_loss', action="store_true",
                         help='output loss of every word')
+    parser.add_argument('--rocstories', action="store_true",
+                        help='choose ROCStories task')
     parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
     parser.add_argument('--load', type=str, default='',
@@ -545,6 +547,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                 eval_batch_size = src.size(1)
                 len_eval += eval_batch_size
                 srcs = src.split(module.args.num_steps)
+                ipdb.set_trace()
 
                 model.set_batch_size(eval_batch_size)
                 key_num = init_key_num(args, device, True)
@@ -597,6 +600,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     # probability
                     # eos
                     # previous input
+
 
                 for ind in range(args.num_steps):
                     if block[ind][0].item() == 1:
@@ -730,6 +734,9 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     model.train()
     model.set_batch_size(args.batch_size)
     return bleu / len_eval, ppl, preds, trgs
+
+def roc_evaluate(models, data_loader, criterion, args):
+    pass
  
 
 def main(args):
@@ -757,13 +764,22 @@ def main(args):
     print("Loading data from %s" % args.data)
     datatime_begin = time.time()
 
-    corpus = TailDataset(args.data, args.vocab_size, args.num_steps)
-    args.vocab_size = len(corpus.TRG.vocab.itos)
     
-    train_loader = corpus.get_train_loader(args.batch_size)
-    train_valid_loader = corpus.get_train_valid_loader(args.eval_batch_size)
-    valid_loader = corpus.get_valid_loader(args.eval_batch_size)
-    test_loader = corpus.get_test_loader(args.eval_batch_size)
+    if args.rocstories:
+        rocdata = ROCDataset(args.data, args.vocab_size, args.num_steps)
+        args.vocab_size = len(rocdata.TRG.vocab.itos)
+        train_loader = rocdata.get_train_loader(args.batch_size)
+        valid_loader = rocdata.get_valid_loader(args.eval_batch_size)
+        test_loader = rocdata.get_test_loader(args.eval_batch_size)
+        dicriminate_loader = rocdata.get_discriminate_loader(args.eval_batch_size)
+    else:
+        corpus = TailDataset(args.data, args.vocab_size, args.num_steps)
+        args.vocab_size = len(corpus.TRG.vocab.itos)
+
+        train_loader = corpus.get_train_loader(args.batch_size)
+        train_valid_loader = corpus.get_train_valid_loader(args.eval_batch_size)
+        valid_loader = corpus.get_valid_loader(args.eval_batch_size)
+        test_loader = corpus.get_test_loader(args.eval_batch_size)
 
 
     datatime_end = time.time()
@@ -887,18 +903,19 @@ def main(args):
                 best_eval_ppl = train(model, train_loader, valid_loader, criterion, 
                                       args, epoch, optimizer, scheduler, 
                                       best_eval_ppl)
-                if not args.eval_on_train:
+                if args.eval_on_train:
+                    eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
+                                                                   model, 
+                                                                   train_valid_loader,
+                                                                   criterion, 
+                                                                   args,
+                                                                   args.eval_part)
+                else:
                     eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
                                                                     model, 
                                                                     valid_loader, 
                                                                     criterion, 
                                                                     args)
-                else:
-                    eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
-                                                                    model, 
-                                                                    train_valid_loader,                                                                    criterion, 
-                                                                    args,
-                                                                    args.eval_part)
 
                 save_pred(savepath, "eval_" + str(epoch), eval_preds, eval_trgs)
 
@@ -977,27 +994,38 @@ def main(args):
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
 
-    if not args.eval_on_train:
+    if args.eval_on_train:
         best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
-                                                                   model, 
-                                                                   valid_loader, 
-                                                                   criterion, 
-                                                                   args)
+                                                       model, 
+                                                       train_valid_loader,
+                                                       criterion, 
+                                                       args,
+                                                       args.eval_part)
     else:
         best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
-                                                            model, 
-                                                            train_valid_loader, 
-                                                            criterion, args,
-                                                            args.eval_part)
+                                                        model, 
+                                                        valid_loader, 
+                                                        criterion, 
+                                                        args)
+
     save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
+
+    print("=" * 89)
+    print("experiment name: {}".format(args.save))
+    print("saved in: {}".format(os.path.abspath(savepath)))
 
     print('=' * 89)
     print('| best valid bleu {:5.2f} '
           '| best valid ppl {:5.2f} |'.format(best_eval_bleu * 100, best_eval_ppl))
     print('=' * 89)
 
-    test_bleu, test_ppl,  test_preds, test_trgs = evaluate(model, test_loader, 
-                                                           criterion, args)
+    if args.rocstories:
+        test_accuracy = roc_evaluate(model, dicriminate_loader, criterion, args) 
+
+    test_bleu, test_ppl, test_preds, test_trgs = evaluate(model, 
+                                                          test_loader, 
+                                                          criterion, 
+                                                          args)
 
     # save prediction
     save_pred(savepath, "test", test_preds, test_trgs)

@@ -4,6 +4,7 @@ import time
 import torch
 from torchtext import data
 from torchtext import datasets
+import pandas as pd
 import ipdb
 import time
 from nltk import sent_tokenize
@@ -12,6 +13,7 @@ from nltk import sent_tokenize
 
 class TailDataset(object):
     def __init__(self, path, vocab_size, num_steps):
+        super().__init__()
         self.vocab_size = vocab_size
         self.num_steps = num_steps
 
@@ -66,26 +68,73 @@ class TailDataset(object):
                                    train=False, shuffle=False, sort=False,
                                    **kwargs)
 
+class ROCDataset(object):
+    def __init__(self, path, vocab_size, num_steps):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.num_steps = num_steps
+
+        def complete(num_steps, data, vocab):
+            com_len = -len(data[0]) % num_steps
+            com_list = [vocab.stoi["<pad>"]] * (com_len - 1)
+            if com_len > 0:
+                com_list = [vocab.stoi["<eos>"]] + com_list
+            for i in range(len(data)):
+                data[i] += com_list
+            return data
+
+        self.TEXT = data.Field(sequential=True, pad_first=True,
+                               postprocessing=lambda x, y: complete(num_steps, x, y))
+        self.TRG = data.Field(sequential=True, eos_token="<eos>")
+        self.LABEL = data.Field(sequential=False, use_vocab=False, is_target=True)
+
+        fields = [self.TEXT, self.TRG]
+        exts = [".text", ".tgt"]
+        
+        self.train_dataset = datasets.LanguageModelingDataset(path + "train.txt", 
+                                                              self.TRG)
+        self.valid_dataset = datasets.TranslationDataset(path + "valid", exts, fields)
+        self.test_dataset = datasets.TranslationDataset(path + "test", exts, fields)
+
+        csv_fields = [("InputStoryid", None)] + [("InputSentence" + str(i), self.TRG) for i in range(1, 5)] + [("RandomFifthSentenceQuiz" + str(i), self.TRG) for i in [1, 2]] + [("AnswerRightEnding", self.LABEL)]
+        self.discriminate_data = data.TabularDataset(path + "test.csv", "csv", 
+                                                     csv_fields, skip_header=True)
+
+        self.TRG.build_vocab(self.train_dataset, max_size=vocab_size)
+        self.TEXT.vocab = self.TRG.vocab
+
+
+    def get_train_loader(self, batch_size, **kwargs):
+        return data.BPTTIterator(self.train_dataset, batch_size, self.num_steps, 
+                                 **kwargs)
+
+    def get_valid_loader(self, batch_size, **kwargs):
+        return data.BucketIterator(self.valid_dataset, batch_size, 
+                                   train=False, shuffle=False, sort=False,
+                                   **kwargs)
+
+    def get_test_loader(self, batch_size, **kwargs):
+        return data.BucketIterator(self.test_dataset, batch_size, 
+                                   train=False, shuffle=False, sort=False,
+                                   **kwargs)
+        
+    def get_discriminate_loader(self, batch_size, **kwargs):
+        return data.BucketIterator(self.discriminate_data, batch_size, 
+                                   train=False, shuffle=False, sort=False,
+                                   **kwargs)
 
 if __name__ == "__main__":
-    path = "/home/xyz/Documents/Dataset/writingpromts/toy/"
+    path = "/home/xyz/Documents/Dataset/ROCStories/"
     start_time = time.time()
-    dataloader = TailDataset(path, 10000, 20)
+    dataloader = ROCDataset(path, 100000, 20)
     print("load time: %.2f s" % (time.time() - start_time))
-    ta = dataloader.get_train_loader(12, device="cuda:0")
-    va = dataloader.get_train_valid_loader(50)
+    ta = dataloader.get_train_loader(12)
+    da = dataloader.get_discriminate_loader(12)
     vocab = dataloader.TRG.vocab
     device = torch.device("cuda:0")
-    for data in ta:
+    for data in da:
+        ipdb.set_trace()
         text, trg = data.text, data.target
         textlist = text[:,0].tolist()
-    va.dataset.fields["trg"].eos_token = "<eos>"
-    for i, data in enumerate(va):
-        src, trg = data.src.to(device), data.trg.to(device)
-        ipdb.set_trace()
-    while True:
-        tait = next(ta.__iter__())
-        vait = next(va.__iter__())
-        src, tgt = vait.src[:,0].tolist(), vait.trg[:,0].tolist()
 
         ipdb.set_trace()
