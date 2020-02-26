@@ -18,9 +18,10 @@ python story_tail.py \
     --lr 25e-5 \
     --nlayers 12 \
     --dropout 0.2 \
+    --d_ff 1024 \
     --nhead 8 \
-    --emsize 240 \
-    --nhid 240 \
+    --emsize 256 \
+    --nhid 256 \
     --batch_size 150 \
     --eval_batch_size 200 \
     --num_steps 20 \
@@ -34,7 +35,7 @@ python story_tail.py \
     --adaptive \
     --vocab_size 50000 \
     --cutoffs 10000 20000 30000 \
-    --eval_steps 2500 \
+    --eval_steps 3000 \
     --multi_gpu \
     ${@:2}
 

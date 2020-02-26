@@ -40,6 +40,7 @@ python story_tail.py \
     --no_summary \
     --wise_summary \
     --farnear \
+    --query_method single_sum \
     --eval_steps 3000 \
     --multi_gpu \
     ${@:2}

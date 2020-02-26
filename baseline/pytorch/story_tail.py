@@ -50,9 +50,9 @@ def parse_args():
                         help='size of vocabulary, excluding special chars')
     parser.add_argument('--trgmax', type=int, default=100,
                         help='max len of generated tail')
-    parser.add_argument('--emsize', type=int, default=240,
+    parser.add_argument('--emsize', type=int, default=256,
                         help='size of word embeddings')
-    parser.add_argument('--nhid', type=int, default=240,
+    parser.add_argument('--nhid', type=int, default=256,
                         help='number of hidden units per layer')
     parser.add_argument('--nlayers', type=int, default=3,
                         help='number of layers')
@@ -60,9 +60,9 @@ def parse_args():
                         help='number of heads')
     parser.add_argument('--mem_len', type=int, default=20,
                         help='length of memory')
-    parser.add_argument('--d_ff', type=int, default=1300,
+    parser.add_argument('--d_ff', type=int, default=1024,
                         help='dimension of feed-forward')
-    parser.add_argument('--lr', type=float, default=27e-5,
+    parser.add_argument('--lr', type=float, default=25e-5,
                         help='initial learning rate')
     parser.add_argument('--scheduler', type=str, default='cosine', 
                         choices=['cosine', 'constant'],
@@ -73,15 +73,15 @@ def parse_args():
                         help='beam size of beam search when inferencing')
     parser.add_argument('--decode_alpha', type=float, default=0.0,
                         help='length punishment when decoding: ((5+l)/6)^alpha')
-    parser.add_argument('--epochs', type=int, default=200,
+    parser.add_argument('--epochs', type=int, default=100,
                         help='upper epoch limit')
     parser.add_argument('--batch_size', type=int, default=50, metavar='N',
                         help='batch size')
     parser.add_argument('--eval_batch_size', type=int, default=10, 
                         help='eval batch size')
-    parser.add_argument('--num_steps', type=int, default=70,
+    parser.add_argument('--num_steps', type=int, default=50,
                         help='sequence length')
-    parser.add_argument('--dropout', type=float, default=0.45,
+    parser.add_argument('--dropout', type=float, default=0.5,
                         help='dropout applied to layers (0 = no dropout)')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
@@ -94,7 +94,7 @@ def parse_args():
     parser.add_argument('--adaptive', action="store_true",
                         help='use adaptive embedding and softmax')
     parser.add_argument('--cutoffs', type=int, 
-                        default=[20000, 40000, 80000], nargs="+",
+                        default=[20000, 40000, 60000], nargs="+",
                         help='cutoffs for adaptive embedding')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
