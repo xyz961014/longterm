@@ -23,7 +23,7 @@ from nltk.translate.bleu_score import sentence_bleu
 #import torch.distributed as dist
 #from torch.nn.parallel import DistributedDataParallel
 
-from CRTN.data.tail_loader import TailDataset
+from CRTN.data.tail_loader import TailDataset, ROCDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from transformer import TransformerLM
 
@@ -110,12 +110,14 @@ def parse_args():
                         help='evaluation steps')
     parser.add_argument('--eval_part', type=float, default=1.0,
                         help='only use a part of validation in eval during training')
-    parser.add_argument('--eval_use_train', action="store_true",
+    parser.add_argument('--eval_on_train', action="store_true",
                         help='use part of training data to do evaluation')
     parser.add_argument('--eval_bleu', action="store_true",
                         help='compute bleu during evaluation')
     parser.add_argument('--word_loss', action="store_true",
                         help='output loss of every word')
+    parser.add_argument('--rocstories', action="store_true",
+                        help='choose ROCStories task')
     parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
     parser.add_argument('--load', type=str, default='',
@@ -554,6 +556,114 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     model.train()
     return bleu / len_eval, ppl, preds, trgs
  
+def roc_evaluate(model, eval_loader, criterion, args):
+    model.eval()
+    module = model.module if args.multi_gpu else model
+
+    if torch.cuda.is_available():
+        device = torch.device("cuda:" + str(args.devices[0]))
+    else:
+        device = torch.device("cpu")
+
+    vocab = eval_loader.dataset.fields["InputText"].vocab
+    pad_idx = vocab.stoi["<pad>"]
+    total_len = len(eval_loader)
+    len_eval = 0
+    corrects = []
+
+    with torch.no_grad():
+        with tqdm(total=total_len) as pbar:
+            pbar.set_description("testing")
+
+            for batch, data in enumerate(eval_loader):
+                (src, ans1, ans2), ansidx = data
+                src, ans1, ans2 = src.to(device), ans1.to(device), ans2.to(device)
+                ansidx = ansidx.to(device)
+                eval_batch_size = src.size(1)
+                len_eval += eval_batch_size
+                srcs = src.split(module.num_steps)
+
+                memory = None
+                pred = []
+
+                # load history
+                for i, block in enumerate(srcs):
+                    if i < len(srcs) - 1:
+                        output, memory = model(block, memory)
+                    else:
+                        output, new_memory = model(block, memory)
+
+                # begin to evaluate
+
+                for ind in range(args.num_steps):
+                    if block[ind][0].item() == pad_idx:
+                        break
+                else:
+                    ind += 1
+                block_start = ind
+
+
+                # compute ppl of cands
+
+                losses = []
+                for trg in [ans1, ans2]:
+                    ppl_block = block.clone()
+                    memory_clone = memory.clone()
+                    outputs = output.new_zeros(0)
+                    trg_len = trg.size(0)
+                    tail_lens = []
+                    loss_list = []
+                    for story in trg.t():
+                        for wid, w in enumerate(story):
+                            if w.item() == vocab.stoi["<eos>"]:
+                                tail_lens.append(wid + 1)
+                                break
+                    if trg_len - args.num_steps + ind > 0:
+                        trg_fill, trg_last = trg.split(
+                                [args.num_steps - ind, 
+                                 trg_len - args.num_steps + ind])
+                        ppl_block[ind:] = trg_fill
+                        trg_lasts = list(trg_last.split(args.num_steps))
+                        last_trg_len = trg_lasts[-1].size(0)
+                        trg_lasts[-1] = torch.cat((trg_lasts[-1], 
+                                                   trg_lasts[-1].new_ones(
+                                                       args.num_steps - last_trg_len, 
+                                                       eval_batch_size)))
+                    else:
+                        ppl_block[ind:ind+trg_len] = trg
+                        trg_lasts = []
+
+                    output, memory_clone = model(ppl_block, memory_clone)
+
+                    outputs = torch.cat((outputs, output), 0)
+
+                    for trg_ppl_block in trg_lasts:
+                        output, memory_clone = model(trg_ppl_block, memory_clone)
+
+                        outputs = torch.cat((outputs, output), 0)
+
+                    for batch, tail_len in enumerate(tail_lens):
+                        batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
+                        batch_trg = trg[:tail_len,batch]
+                        loss_tensor = criterion(batch_pred, 
+                                                batch_trg, 
+                                                keep_order=True)
+                        loss_list.append(loss_tensor.mean().unsqueeze(0))
+                    losses.append(torch.cat(loss_list, 0))
+
+                predict = losses[0].gt(losses[1]) + 1
+                correct = predict.eq(ansidx)
+
+                corrects.append(correct)
+
+                pbar.update(1)
+
+        corrects = torch.cat(corrects, 0)
+        accuracy = corrects.sum().item() / len_eval
+
+    return accuracy
+
+
 
 def main(args):
     np.random.seed(args.seed)
@@ -580,13 +690,22 @@ def main(args):
     print("Loading data from %s" % args.data)
     datatime_begin = time.time()
 
-    corpus = TailDataset(args.data, args.vocab_size, args.num_steps)
-    args.vocab_size = len(corpus.TRG.vocab.itos)
-    
-    train_loader = corpus.get_train_loader(args.batch_size)
-    train_valid_loader = corpus.get_train_valid_loader(args.eval_batch_size)
-    valid_loader = corpus.get_valid_loader(args.eval_batch_size)
-    test_loader = corpus.get_test_loader(args.eval_batch_size)
+    if args.rocstories:
+        rocdata = ROCDataset(args.data, args.vocab_size, args.num_steps)
+        args.vocab_size = len(rocdata.TRG.vocab.itos)
+        train_loader = rocdata.get_train_loader(args.batch_size)
+        valid_loader = rocdata.get_valid_loader(args.eval_batch_size)
+        test_loader = rocdata.get_test_loader(args.eval_batch_size)
+        dicriminate_loader = rocdata.get_discriminate_loader(args.eval_batch_size)
+    else:
+        corpus = TailDataset(args.data, args.vocab_size, args.num_steps)
+        args.vocab_size = len(corpus.TRG.vocab.itos)
+
+        train_loader = corpus.get_train_loader(args.batch_size)
+        train_valid_loader = corpus.get_train_valid_loader(args.eval_batch_size)
+        valid_loader = corpus.get_valid_loader(args.eval_batch_size)
+        test_loader = corpus.get_test_loader(args.eval_batch_size)
+
 
 
     datatime_end = time.time()
@@ -726,17 +845,23 @@ def main(args):
             best_eval_preds, best_eval_trgs = [], []
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
-                best_eval_ppl = train(model, train_loader, valid_loader, criterion, 
-                                      args, epoch, optimizer, scheduler, best_eval_ppl)
-                if not args.eval_use_train:
-                    eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(model, 
-                                                                          valid_loader,                                                                          criterion, 
-                                                                          args)
+                best_eval_ppl = train(model, train_loader, 
+                                      valid_loader, criterion, 
+                                      args, epoch, optimizer, 
+                                      scheduler, best_eval_ppl)
+                if args.eval_on_train:
+                    eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
+                                                                   model, 
+                                                                   train_valid_loader,
+                                                                   criterion, 
+                                                                   args,
+                                                                   args.eval_part)
                 else:
                     eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
                                                                     model, 
-                                                                    train_valid_loader,                                                                    criterion, args,
-                                                                    args.eval_part)
+                                                                    valid_loader, 
+                                                                    criterion, 
+                                                                    args)
 
                 save_pred(savepath, "eval_" + str(epoch), eval_preds, eval_trgs)
 
@@ -814,32 +939,45 @@ def main(args):
 
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
-
-    if not args.eval_use_train:
+        
+    if args.eval_on_train:
         best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
-                                                                   model, 
-                                                                   valid_loader, 
-                                                                   criterion, 
-                                                                   args)
+                                                       model, 
+                                                       train_valid_loader,
+                                                       criterion, 
+                                                       args,
+                                                       args.eval_part)
     else:
         best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
-                                                            model, 
-                                                            train_valid_loader, 
-                                                            criterion, args,
-                                                            args.eval_part)
+                                                        model, 
+                                                        valid_loader, 
+                                                        criterion, 
+                                                        args)
+
     save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
 
+    print("=" * 89)
+    print("experiment name: {}".format(args.save))
+    print("saved in: {}".format(os.path.abspath(savepath)))
+
     print('=' * 89)
-    print('| best valid bleu {:5.2f} '
+    print('| End of training | best valid bleu {:5.2f} '
           '| bset valid ppl {:5.2f}'.format(best_eval_bleu * 100, best_eval_ppl))
     print('=' * 89)
 
-    test_bleu, test_ppl, test_preds, test_trgs = evaluate(model, test_loader, 
-                                                          criterion, args)
+    if args.rocstories:
+        test_accuracy = roc_evaluate(model, dicriminate_loader, criterion, args) 
+        print('| ROCStories test accuracy {:5.2f} % |'.format(test_accuracy * 100,))
+        print('=' * 89)
+
+    test_bleu, test_ppl, test_preds, test_trgs = evaluate(model, 
+                                                          test_loader, 
+                                                          criterion, 
+                                                          args)
 
     # save prediction
     save_pred(savepath, "test", test_preds, test_trgs)
-    print('| End of training | test bleu {:5.2f} '
+    print('| test bleu {:5.2f} '
           '| test ppl {:5.2f} |'.format(test_bleu * 100, test_ppl))
     print('=' * 89)
 

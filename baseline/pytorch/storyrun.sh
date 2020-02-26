@@ -36,6 +36,7 @@ python story_tail.py \
     --vocab_size 50000 \
     --cutoffs 10000 20000 30000 \
     --eval_steps 3000 \
+    --log-interval 100 \
     --multi_gpu \
     ${@:2}
 

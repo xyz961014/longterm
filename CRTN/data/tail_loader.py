@@ -7,9 +7,18 @@ from torchtext import datasets
 import pandas as pd
 import ipdb
 import time
-from nltk import sent_tokenize
+from nltk import tokenize, sent_tokenize
 
 
+def process_sents(sents):
+    text = ""
+    for sent in sents:
+        line = " ".join(tokenize.word_tokenize(sent))
+        line = sent_tokenize(line)
+        if not text.strip() == "":
+            text += " <eos> "
+        text += " ".join(line)
+    return text
 
 class TailDataset(object):
     def __init__(self, path, vocab_size, num_steps):
@@ -96,9 +105,10 @@ class ROCDataset(object):
         self.valid_dataset = datasets.TranslationDataset(path + "valid", exts, fields)
         self.test_dataset = datasets.TranslationDataset(path + "test", exts, fields)
 
-        csv_fields = [("InputStoryid", None)] + [("InputSentence" + str(i), self.TRG) for i in range(1, 5)] + [("RandomFifthSentenceQuiz" + str(i), self.TRG) for i in [1, 2]] + [("AnswerRightEnding", self.LABEL)]
-        self.discriminate_data = data.TabularDataset(path + "test.csv", "csv", 
-                                                     csv_fields, skip_header=True)
+        csv_fields = [("InputText", self.TEXT), ("AnswerCandidate1", self.TRG), ("AnswerCandidate2", self.TRG), ("RightAnswer", self.LABEL)]
+        #self.discriminate_data = data.TabularDataset(path + "test.csv", "csv", 
+        #                                             csv_fields, skip_header=True)
+        self.discriminate_data = self.build_discriminate_dataset(path, csv_fields)
 
         self.TRG.build_vocab(self.train_dataset, max_size=vocab_size)
         self.TEXT.vocab = self.TRG.vocab
@@ -117,6 +127,20 @@ class ROCDataset(object):
         return data.BucketIterator(self.test_dataset, batch_size, 
                                    train=False, shuffle=False, sort=False,
                                    **kwargs)
+
+    def build_discriminate_dataset(self, path, fields):
+        csv_file = pd.read_csv(path + "test.csv")
+        examples = []
+        for idx, story in csv_file.iterrows():
+            sents = story.to_list()
+            inputtext = process_sents(sents[1:5])
+            cand1 = process_sents([sents[5]])
+            cand2 = process_sents([sents[6]])
+            label = sents[-1]
+            example = data.Example.fromlist([inputtext, cand1, cand2, label], fields)
+            examples.append(example)
+
+        return data.Dataset(examples, fields)
         
     def get_discriminate_loader(self, batch_size, **kwargs):
         return data.BucketIterator(self.discriminate_data, batch_size, 
@@ -124,7 +148,7 @@ class ROCDataset(object):
                                    **kwargs)
 
 if __name__ == "__main__":
-    path = "/home/xyz/Documents/Dataset/ROCStories/"
+    path = "/home/xyz/Documents/Dataset/ROCStories/toy/"
     start_time = time.time()
     dataloader = ROCDataset(path, 100000, 20)
     print("load time: %.2f s" % (time.time() - start_time))
