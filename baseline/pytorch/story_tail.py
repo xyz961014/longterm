@@ -738,7 +738,7 @@ def main(args):
         model_args.eval_steps = args.eval_steps
         model_args.eval_part = args.eval_part
         model_args.eval_on_train = args.eval_on_train
-        model_args.eval_ppl = args.eval_ppl
+        model_args.eval_bleu = args.eval_bleu
         model_args.word_loss = args.word_loss
         model_args.rocstories = args.rocstories
 
