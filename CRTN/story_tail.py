@@ -1165,7 +1165,8 @@ def main(args):
     eval_checkpoint = torch.load(best_model, map_location=devices[0])
     model_state_dict = eval_checkpoint["model_state_dict"]
 
-    model.load_state_dict(model_state_dict)
+    module = model.module if args.multi_gpu else model
+    module.load_state_dict(model_state_dict)
 
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
