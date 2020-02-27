@@ -661,6 +661,7 @@ def roc_evaluate(model, eval_loader, criterion, args):
         corrects = torch.cat(corrects, 0)
         accuracy = corrects.sum().item() / len_eval
 
+    model.train()
     return accuracy
 
 
@@ -736,9 +737,10 @@ def main(args):
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
         model_args.eval_part = args.eval_part
-        model_args.eval_use_train = args.eval_use_train
+        model_args.eval_on_train = args.eval_on_train
         model_args.eval_ppl = args.eval_ppl
         model_args.word_loss = args.word_loss
+        model_args.rocstories = args.rocstories
 
         args = model_args
 
@@ -933,13 +935,16 @@ def main(args):
 
     eval_checkpoint = torch.load(best_model, map_location=devices[0])
     model_state_dict = eval_checkpoint["model_state_dict"]
-    keys = model_state_dict.copy().keys()
 
-    model.load_state_dict(model_state_dict, strict=False)
+    model.load_state_dict(model_state_dict)
 
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
         
+    print("=" * 89)
+    print("experiment name: {}".format(args.save))
+    print("saved in: {}".format(os.path.abspath(savepath)))
+
     if args.eval_on_train:
         best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
                                                        model, 
@@ -955,10 +960,6 @@ def main(args):
                                                         args)
 
     save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
-
-    print("=" * 89)
-    print("experiment name: {}".format(args.save))
-    print("saved in: {}".format(os.path.abspath(savepath)))
 
     print('=' * 89)
     print('| End of training | best valid bleu {:5.2f} '

@@ -507,7 +507,8 @@ def train(model, train_loader, valid_loader, criterion,
         if batch % args.eval_steps == 0 and batch > 0:
             eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(model, 
                                                                   valid_loader, 
-                                                                  criterion, args, 
+                                                                  criterion, 
+                                                                  args, 
                                                                   args.eval_part)
             print('| eval at step {:3d} | eval bleu {:5.2f} |'
                   ' eval ppl {:5.2f}'.format(batch, 
@@ -523,7 +524,8 @@ def train(model, train_loader, valid_loader, criterion,
                     "model_state_dict": module.state_dict(),
                     "criterion": criterion.state_dict()
                     }, 
-                    savepath + "/" + args.save + "_best" + ".pt")
+                    savepath + "/" + args.save + "_best.pt")
+                print("save best model for better ppl")
             print('-' * 60)
             start_time = time.time()
     
@@ -910,6 +912,8 @@ def roc_evaluate(model, eval_loader, criterion, args):
         corrects = torch.cat(corrects, 0)
         accuracy = corrects.sum().item() / len_eval
 
+    model.train()
+    model.set_batch_size(args.batch_size)
     return accuracy
 
 
@@ -989,6 +993,7 @@ def main(args):
         model_args.eval_on_train = args.eval_on_train
         model_args.eval_bleu = args.eval_bleu
         model_args.word_loss = args.word_loss
+        model_args.rocstories = args.rocstories
 
         args = model_args
 
@@ -1123,8 +1128,7 @@ def main(args):
                         "model_state_dict": module.state_dict(),
                         "criterion": criterion.state_dict()
                         }, 
-                        savepath + 
-                        "/" + args.save + "_best" + ".pt")
+                        savepath + "/" + args.save + "_best.pt")
                     print("save best model for better ppl")
                     if eval_bleu > best_eval_bleu:
                         best_eval_bleu = eval_bleu
@@ -1138,8 +1142,7 @@ def main(args):
                             "model_state_dict": module.state_dict(),
                             "criterion": criterion.state_dict()
                             }, 
-                            savepath + 
-                            "/" + args.save + "_best" + ".pt")
+                            savepath + "/" + args.save + "_best.pt")
                         print("save best model for better bleu")
                         best_eval_bleu = eval_bleu
                         best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
@@ -1161,12 +1164,15 @@ def main(args):
 
     eval_checkpoint = torch.load(best_model, map_location=devices[0])
     model_state_dict = eval_checkpoint["model_state_dict"]
-    keys = model_state_dict.copy().keys()
 
-    model.load_state_dict(model_state_dict, strict=False)
+    model.load_state_dict(model_state_dict)
 
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
+
+    print("=" * 89)
+    print("experiment name: {}".format(args.save))
+    print("saved in: {}".format(os.path.abspath(savepath)))
 
     if args.eval_on_train:
         best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
@@ -1184,9 +1190,6 @@ def main(args):
 
     save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
 
-    print("=" * 89)
-    print("experiment name: {}".format(args.save))
-    print("saved in: {}".format(os.path.abspath(savepath)))
 
     print('=' * 89)
     print('| End of training | best valid bleu {:5.2f} '
@@ -1195,7 +1198,7 @@ def main(args):
 
     if args.rocstories:
         test_accuracy = roc_evaluate(model, dicriminate_loader, criterion, args) 
-        print('| ROCStories test accuracy {:5.2f} % |'.format(test_accuracy * 100,))
+        print('| ROCStories test accuracy {:5.2f} % |'.format(test_accuracy * 100))
         print('=' * 89)
 
     test_bleu, test_ppl, test_preds, test_trgs = evaluate(model, 
