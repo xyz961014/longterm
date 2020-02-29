@@ -7,6 +7,7 @@ import argparse
 import copy
 #ignore future warning from tensorboard
 import warnings
+import pickle as pkl
 warnings.filterwarnings("ignore")
 
 sys.path.append("../..")
@@ -25,6 +26,7 @@ from nltk.translate.bleu_score import sentence_bleu
 
 from CRTN.data.tail_loader import TailDataset, ROCDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
+from CRTN.utils.visual import TargetText
 from transformer import TransformerLM
 
 if torch.__version__ < "1.2.0":
@@ -38,7 +40,7 @@ from tqdm import tqdm
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str,
-                        default='/home/xyz/Documents/Dataset/writingpromts/toy/',
+                        default='/home/xyz/Documents/Dataset/writingprompts/toy/',
                         help='location of the data corpus')
     parser.add_argument('--eval', action='store_true',
                         help='skip training')
@@ -354,7 +356,8 @@ def train(model, train_loader, valid_loader, criterion,
             start_time = time.time()
 
         if batch % args.eval_steps == 0 and batch > 0:
-            eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(model, valid_loader, 
+            eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(model, 
+                                                                  valid_loader, 
                                                                   criterion, args, 
                                                                   args.eval_part)
             print('| eval at step {:3d} | eval bleu {:5.2f} |'
@@ -392,7 +395,8 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     losses = 0.
     eval_len = 0
     if args.word_loss:
-        loss_file = open(savepath + "/" + args.save + "_word_loss.txt", "w")
+        loss_file = open(savepath + "/" + args.save + "_word_loss.pkl", "wb")
+        loss_obj = TargetText()
 
     
     bleu = 0.
@@ -487,25 +491,21 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
                     batch_trg = trg[:tail_len,batch]
                     loss_tensor = criterion(batch_pred, batch_trg, keep_order=True)
-                    head_prob, tail_probs = criterion(batch_pred, 
-                                                      batch_trg, 
-                                                      keep_order=True,
-                                                      output=True)
-                    variances = variance_prob(head_prob, tail_probs)
 
                     loss = loss_tensor.mean()
                     
                     if args.word_loss:
+                        head_prob, tail_probs = criterion(batch_pred, 
+                                                          batch_trg, 
+                                                          keep_order=True,
+                                                          output=True)
+                        variances = variance_prob(head_prob, tail_probs)
+                        variances = [v.item() for v in variances]
                         words = [vocab.itos[w] for w in batch_trg]
-                        words_str = " ".join(words)
-                        loss_str = " ".join([str(l.item()) for l in loss_tensor])
-                        var_str = " ".join([str(l.item()) for l in variances])
-                        loss_file.write(words_str)
-                        loss_file.write("\n")
-                        loss_file.write(loss_str)
-                        loss_file.write("\n")
-                        loss_file.write(var_str)
-                        loss_file.write("\n")
+                        word_loss = [l.item() for l in loss_tensor] 
+                        loss_obj.add_words(words)
+                        loss_obj.add_variances(variances)
+                        loss_obj.add_losss(word_loss)
 
                     losses += loss.item()
                 eval_len += eval_batch_size
@@ -551,6 +551,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     ppl = math.exp(loss_mean)
     #print("ppl on eval: %.2f" % ppl)
     if args.word_loss:
+        pkl.dump(loss_obj, loss_file)
         loss_file.close()
 
     model.train()

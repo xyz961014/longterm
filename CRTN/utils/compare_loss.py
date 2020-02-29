@@ -3,11 +3,14 @@ import os
 import sys
 import ipdb
 import numpy as np
+import pickle as pkl
 from pprint import pprint
 from tqdm import tqdm
 import visdom
 sys.path.append("..")
+sys.path.append("../..")
 from data.tail_loader import TailDataset
+from CRTN.utils.visual import TargetText
 vis = visdom.Visdom()
 assert vis.check_connection()
 
@@ -16,20 +19,23 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline_loss", type=str, help="location of baseline loss")
     parser.add_argument("--model_loss", type=str, help="location of model loss")
-    parser.add_argument("--data", type=str, help="location of data")
+    parser.add_argument("--data", type=str, help="location of data",
+                        default="~/Documents/Dataset/writingprompts/medium/")
     parser.add_argument("--smooth_window", type=int, default=50, 
                         help="smooth window DEFAULT 50")
     parser.add_argument("--loss_window", type=float, default=0.2, 
                         help="loss window DEFAULT 0.2")
-    parser.add_argument("--func", type=int, choices=[0, 1, 2], default=0, 
-                        help="function, 0 for stat bag of word loss, 1 for observe variance and loss of model, 2 for observe word freq and word loss, word freq derived from data")
+    parser.add_argument("--func", type=int, choices=[0, 1, 2, 3], default=0, 
+                        help="function, 0 for stat bag of word loss, 1 for observe variance and loss of model, 2 for observe word freq and word loss, word freq derived from data, 3 for freq window ppl evaluation")
     return parser.parse_args()
 
 def main(args):
 
     if args.func == 0:
-        base_file = open(args.baseline_loss, "r")
-        model_file = open(args.model_loss, "r")
+        with open(args.baseline_loss, "rb") as base_file:
+            base_obj = pkl.load(base_file)
+        with open(args.model_loss, "rb") as model_file:
+            model_obj = pkl.load(model_file)
         opts_diff = {
                 'legend': ['loss difference'],
                 'showlegend': True,
@@ -39,39 +45,22 @@ def main(args):
                 'showlegend': True,
                }
         loss_dict = dict()
-        while True:
-            base_ref = base_file.readline()
-            base_loss = base_file.readline()
-            base_var = base_file.readline()
-            model_ref = model_file.readline()
-            model_loss = model_file.readline()
-            model_var = model_file.readline()
-
-            if base_ref.strip() == "":
-                break
-
-            # remove \n
-            base_ref = base_ref.strip()
-            base_loss = base_loss.strip()
-            model_ref = model_ref.strip()
-            model_loss = model_loss.strip()
-
-            if base_ref == model_ref:
-                base_ref = base_ref.split()
-                base_loss = [float(l) for l in base_loss.split()]
-                model_loss = [float(l) for l in model_loss.split()]
-                for word, lossb, lossm in list(zip(base_ref, base_loss, model_loss)):
-                    if word in loss_dict.keys():
-                        loss_dict[word][0].append(lossb)
-                        loss_dict[word][1].append(lossm)
-                        if lossm < lossb:
-                            loss_dict[word][2] += 1
+        for i in range(len(base_obj)):
+            if base_obj.words[i] == model_obj.words[i]:
+                word = base_obj.words[i]
+                lossb = base_obj.loss[i]
+                lossm = model_obj.loss[i]
+                if word in loss_dict.keys():
+                    loss_dict[word][0].append(lossb)
+                    loss_dict[word][1].append(lossm)
+                    if lossm < lossb:
+                        loss_dict[word][2] += 1
+                else:
+                    loss_dict[word] = [[lossb], [lossm]]
+                    if lossm < lossb:
+                        loss_dict[word].append(1)
                     else:
-                        loss_dict[word] = [[lossb], [lossm]]
-                        if lossm < lossb:
-                            loss_dict[word].append(1)
-                        else:
-                            loss_dict[word].append(0)
+                        loss_dict[word].append(0)
 
         word_losses = loss_dict.items()
         word_losses = sorted(word_losses, key=lambda x: np.mean(x[1][0]))
@@ -132,56 +121,36 @@ def main(args):
         model_file.close()
     elif args.func == 1:
         loss_var = []
-        with open(args.model_loss, "r") as model_file:
-            while True:
-                model_ref = model_file.readline()
-                model_loss = model_file.readline()
-                model_var = model_file.readline()
-                
-                if model_ref.strip() == "":
-                    break
+        with open(args.model_loss, "rb") as model_file:
+            model_obj = pkl.load(model_file)
 
-                model_loss = model_loss.strip()
-                model_var = model_var.strip()
-
-                model_loss = [float(l) for l in model_loss.split()]
-                model_var = [float(l) for l in model_var.split()]
-
-                for l, v in list(zip(model_loss, model_var)):
-                    loss_var.append((l, v))
+            loss_var = list(zip(model_obj.loss, model_obj.var))
             
             loss_var = sorted(loss_var, key=lambda x:x[0])
             for i in tqdm(range(len(loss_var) - args.smooth_window + 1)):
                 loss = loss_var[i][0]
                 var = np.mean([x[1] for x in loss_var[i:i+args.smooth_window]])
-                vis.line(np.array([[var]]), np.array([[loss]]), win="loss-variance", update="append")
+                vis.line(np.array([[var]]), np.array([[loss]]), 
+                         win="loss-variance", update="append")
     elif args.func == 2:
         freq_loss = []
         corpus = TailDataset(args.data, 1e6, 50)
         vocab = corpus.TEXT.vocab
-        with open(args.model_loss, "r") as model_file:
-            while True:
-                model_ref = model_file.readline()
-                model_loss = model_file.readline()
-                model_var = model_file.readline()
-                
-                if model_ref.strip() == "":
-                    break
+        with open(args.model_loss, "rb") as model_file:
+            model_obj = pkl.load(model_file)
 
-                model_ref = model_ref.strip()
-                model_loss = model_loss.strip()
-
-                model_ref = model_ref.split()
-                model_loss = [float(l) for l in model_loss.split()]
-
-                for l, r in list(zip(model_loss, model_ref)):
-                    freq_loss.append((r, vocab.freqs[r], l))
+            for l, r in list(zip(model_obj.loss, model_obj.words)):
+                freq_loss.append((r, vocab.freqs[r], l))
             
             freq_loss = sorted(freq_loss, key=lambda x:x[1])
             for i in tqdm(range(0, len(freq_loss) - args.smooth_window + 1)):
                 freq = freq_loss[i][1]
                 loss = np.mean([x[2] for x in freq_loss[i:i+args.smooth_window]])
-                vis.line(np.array([[loss]]), np.array([[freq]]), win="freq-loss", update="append")
+                vis.line(np.array([[loss]]), np.array([[freq]]), 
+                         win="freq-loss", update="append")
+    elif args.func == 3:
+        # freq window ppl
+        pass
 
 
 if __name__ == "__main__":

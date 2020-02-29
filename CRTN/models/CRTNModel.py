@@ -81,7 +81,7 @@ class CRTNModel(nn.Module):
 
         if self.args.wise_summary:
             if self.args.query_method == "vanilla":
-                _, wise_inputs, _ = self.encoder(inputs)
+                near_output, wise_inputs, _ = self.encoder(inputs)
                 query = wise_inputs[-1]
                 mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
                 if inf_ind is None:
@@ -95,6 +95,7 @@ class CRTNModel(nn.Module):
                     mask = mask.bool()[:,:,None,None]
                 query = query.masked_fill(mask, 0)
             elif self.args.query_method == "fixed_length":
+                # abandoned
                 if self.args.farnear:
                     if self.args.neighbor_len < self.args.num_steps:
                         raise ValueError("neighbor_len < num_steps, "
@@ -127,15 +128,16 @@ class CRTNModel(nn.Module):
                     prev_value = torch.einsum("nlbh->lbnh", neighbor_mem)
                     prev_value = prev_value.reshape(1, self.args.neighbor_len, bsz, 
                                                     (self.args.nlayers+1) * nhid)
-                    _, wise_inputs, _ = self.encoder(inputs, 
-                                                     neighbor_mem=neighbor_mem)
+                    near_output, wise_inputs, _ = self.encoder(inputs, 
+                                                        neighbor_mem=neighbor_mem)
                 else:
                     prev_value = self.cache._get_values()[-1]
                     prev_value.unsqueeze_(0)
                     prev_indice = torch.zeros_like(inputs).view(-1)
                     prev_indice.unsqueeze_(0)
-                    _, wise_inputs, _ = self.encoder(inputs, values=prev_value,
-                                                     indices=prev_indice)
+                    near_output, wise_inputs, _ = self.encoder(inputs, 
+                                                                values=prev_value,
+                                                                indices=prev_indice)
                 if self.args.query_method == "last_l":
                     query = wise_inputs[-1]
                     mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
@@ -259,7 +261,10 @@ class CRTNModel(nn.Module):
         hidden = hidden.transpose(1, 2)
 
         if self.args.farnear:
-            return output, hidden, neighbor_mem
+            if self.args.compare_farnear:
+                return output, hidden, neighbor_mem, near_output
+            else:
+                return output, hidden, neighbor_mem
         else:
             return output, hidden
 

@@ -393,7 +393,8 @@ class TransformerLM(nn.Module):
                                                init_std=init_std)
         else:
             if args.tied:
-                self.embedding = nn.Embedding(vocab_size, d_embedding, 
+                self.embedding = nn.Embedding(vocab_size, 
+                                              d_embedding, 
                                               padding_idx=1).from_pretrained(
                                                       self.decoder.weight)
                 self.embedding.weight = self.decoder.weight

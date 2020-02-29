@@ -7,6 +7,7 @@ import argparse
 import copy
 #ignore future warning from tensorboard
 import warnings
+import pickle as pkl
 warnings.filterwarnings("ignore")
 
 sys.path.append("..")
@@ -25,6 +26,7 @@ from nltk.translate.bleu_score import sentence_bleu
 
 from data.tail_loader import TailDataset, ROCDataset
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
+from utils.visual import TargetText
 from models.CRTNModel import CRTNModel
 
 if torch.__version__ < "1.2.0":
@@ -38,7 +40,7 @@ from tqdm import tqdm
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data', type=str,
-                        default='/home/xyz/Documents/Dataset/writingpromts/toy/',
+                        default='/home/xyz/Documents/Dataset/writingprompts/toy/',
                         help='location of the data corpus')
     parser.add_argument('--eval', action='store_true',
                         help='skip training')
@@ -151,6 +153,8 @@ def parse_args():
                         help='compute bleu during evaluation')
     parser.add_argument('--word_loss', action="store_true",
                         help='output loss of every word')
+    parser.add_argument('--compare_farnear', action="store_true",
+                        help='compare loss between far and near')
     parser.add_argument('--rocstories', action="store_true",
                         help='choose ROCStories task')
     parser.add_argument('--save', type=str, default='model',
@@ -467,8 +471,13 @@ def train(model, train_loader, valid_loader, criterion,
         if args.farnear:
             if mem is not None:
                 mem = mem.detach()
-            output, hidden, mem = model(text, key, value, neighbor_mem=mem, 
-                                                          key_num=key_num)
+            if args.compare_farnear:
+                output, hidden, mem, _ = model(text, key, value, 
+                                               neighbor_mem=mem, 
+                                               key_num=key_num)
+            else:
+                output, hidden, mem = model(text, key, value, neighbor_mem=mem, 
+                                                              key_num=key_num)
         else:
             output, hidden = model(text, key, value, key_num=key_num)
 
@@ -505,11 +514,15 @@ def train(model, train_loader, valid_loader, criterion,
             start_time = time.time()
 
         if batch % args.eval_steps == 0 and batch > 0:
-            eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(model, 
-                                                                  valid_loader, 
-                                                                  criterion, 
-                                                                  args, 
-                                                                  args.eval_part)
+            (eval_bleu, 
+             eval_ppl, 
+             eval_preds, 
+             eval_trgs,
+             eval_nearppl) = evaluate(model, 
+                                      valid_loader, 
+                                      criterion, 
+                                      args, 
+                                      args.eval_part)
             print('| eval at step {:3d} | eval bleu {:5.2f} |'
                   ' eval ppl {:5.2f}'.format(batch, 
                                              eval_bleu * 100,
@@ -543,8 +556,10 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
         device = torch.device("cpu")
 
     losses = 0.
+    near_losses = 0.
     if args.word_loss:
-        loss_file = open(savepath + "/" + args.save + "_word_loss.txt", "w")
+        loss_file = open(savepath + "/" + args.save + "_word_loss.pkl", "wb")
+        loss_obj = TargetText()
 
     
     bleu = 0.
@@ -582,9 +597,17 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     if args.farnear:
                         if mem is not None:
                             mem = mem.detach()
-                        output, hidden, mem = model(block, key, value, 
-                                                    neighbor_mem=mem, 
-                                                    key_num=key_num)
+                        
+                        if args.compare_farnear:
+                            output, hidden, mem, near_output = model(block, 
+                                                                     key, 
+                                                                     value, 
+                                                                     neighbor_mem=mem,
+                                                                     key_num=key_num)
+                        else:
+                            output, hidden, mem = model(block, key, value, 
+                                                        neighbor_mem=mem, 
+                                                        key_num=key_num)
                     else:
                         output, hidden = model(block, key, value, key_num=key_num)
 
@@ -638,6 +661,9 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                 outputs = output.new_zeros(0)
                 trg_len = trg.size(0)
                 tail_lens = []
+                if args.compare_farnear:
+                    near_outputs = output.new_zeros(0)
+
                 for story in trg.t():
                     for wid, w in enumerate(story):
                         if w.item() == vocab.stoi["<eos>"]:
@@ -657,9 +683,17 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     ppl_block[ind:ind+trg_len] = trg
                     trg_lasts = []
                 if args.farnear:
-                    output, hidden, mem = model(ppl_block, key, value, 
-                                                neighbor_mem=mem, 
-                                                key_num=key_num)
+                    if args.compare_farnear:
+                        output, hidden, mem, near_output = model(ppl_block, 
+                                                                 key, 
+                                                                 value, 
+                                                                 neighbor_mem=mem, 
+                                                                 key_num=key_num)
+                        near_outputs = torch.cat((near_outputs, near_output), 0)
+                    else:
+                        output, hidden, mem = model(ppl_block, key, value, 
+                                                    neighbor_mem=mem, 
+                                                    key_num=key_num)
                 outputs = torch.cat((outputs, output), 0)
 
                 module, key_num, key, value = update_cache(module, 
@@ -668,9 +702,17 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                                                            ppl_block, 
                                                            key_num)
                 for trg_ppl_block in trg_lasts:
-                    output, hidden, mem = model(trg_ppl_block, key, value, 
-                                                neighbor_mem=mem, 
-                                                key_num=key_num)
+                    if args.compare_farnear:
+                        output, hidden, mem, near_output = model(trg_ppl_block, 
+                                                                 key, 
+                                                                 value, 
+                                                                 neighbor_mem=mem, 
+                                                                 key_num=key_num)
+                        near_outputs = torch.cat((near_outputs, near_output), 0)
+                    else:
+                        output, hidden, mem = model(trg_ppl_block, key, value, 
+                                                    neighbor_mem=mem, 
+                                                    key_num=key_num)
 
                     outputs = torch.cat((outputs, output), 0)
 
@@ -682,29 +724,38 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                 for batch, tail_len in enumerate(tail_lens):
                     batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
                     batch_trg = trg[:tail_len,batch]
+                    if args.compare_farnear:
+                        near_batch_pred = near_outputs[ind-1:ind+tail_len-1,batch,:]
+                        near_loss_tensor = criterion(near_batch_pred, 
+                                                     batch_trg, 
+                                                     keep_order=True)
+                        near_loss = near_loss_tensor.mean()
+                        near_losses += near_loss.item()
                     loss_tensor = criterion(batch_pred, 
                                             batch_trg, 
                                             keep_order=True)
-                    head_prob, tail_probs = criterion(batch_pred, 
-                                                      batch_trg, 
-                                                      keep_order=True,
-                                                      output=True)
-                    variances = variance_prob(head_prob, tail_probs)
                     loss = loss_tensor.mean()
+                    losses += loss.item()
 
                     if args.word_loss:
-                        words = [vocab.itos[w] for w in batch_trg]
-                        words_str = " ".join(words)
-                        loss_str = " ".join([str(l.item()) for l in loss_tensor])
-                        var_str = " ".join([str(l.item()) for l in variances])
-                        loss_file.write(words_str)
-                        loss_file.write("\n")
-                        loss_file.write(loss_str)
-                        loss_file.write("\n")
-                        loss_file.write(var_str)
-                        loss_file.write("\n")
+                        head_prob, tail_probs = criterion(batch_pred, 
+                                                          batch_trg, 
+                                                          keep_order=True,
+                                                          output=True)
+                        variances = variance_prob(head_prob, tail_probs)
+                        variances = [v.item() for v in variances]
 
-                    losses += loss.item()
+                        words = [vocab.itos[w] for w in batch_trg]    
+                        word_loss = [l.item() for l in loss_tensor    ] 
+                        if args.compare_farnear:
+                            near_word_loss = [l.item() for l in near_loss_tensor] 
+                        else:
+                            near_word_loss = []
+                        loss_obj.add_words(words)
+                        loss_obj.add_losss(word_loss)
+                        loss_obj.add_variances(variances)
+                        loss_obj.add_near_losss(near_word_loss)
+
 
                 # end of ppl
 
@@ -747,13 +798,15 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
 
     loss_mean = losses / len_eval
     ppl = math.exp(loss_mean)
+    near_loss_mean = near_losses / len_eval
+    near_ppl = math.exp(near_loss_mean)
     if args.word_loss:
+        pkl.dump(loss_obj, loss_file)
         loss_file.close()
-    #print("ppl on eval: %.2f" % ppl)
 
     model.train()
     model.set_batch_size(args.batch_size)
-    return bleu / len_eval, ppl, preds, trgs
+    return bleu / len_eval, ppl, preds, trgs, near_ppl
 
 def roc_evaluate(model, eval_loader, criterion, args):
     model.eval()
@@ -993,6 +1046,7 @@ def main(args):
         model_args.eval_on_train = args.eval_on_train
         model_args.eval_bleu = args.eval_bleu
         model_args.word_loss = args.word_loss
+        model_args.compare_farnear = args.compare_farnear
         model_args.rocstories = args.rocstories
 
         args = model_args
@@ -1082,29 +1136,37 @@ def main(args):
                 best_eval_ppl = train(model, train_loader, valid_loader, criterion, 
                                       args, epoch, optimizer, scheduler, 
                                       best_eval_ppl)
+
                 if args.eval_on_train:
-                    eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
-                                                                   model, 
-                                                                   train_valid_loader,
-                                                                   criterion, 
-                                                                   args,
-                                                                   args.eval_part)
+                    (eval_bleu, 
+                     eval_ppl, 
+                     eval_preds, 
+                     eval_trgs,
+                     eval_nearppl) = evaluate(model, 
+                                              train_valid_loader,
+                                              criterion, 
+                                              args,
+                                              args.eval_part)
                 else:
-                    eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
-                                                                    model, 
-                                                                    valid_loader, 
-                                                                    criterion, 
-                                                                    args)
+                    (eval_bleu, 
+                     eval_ppl, 
+                     eval_preds, 
+                     eval_trgs,
+                     eval_nearppl) = evaluate(model, valid_loader, criterion, args)
 
                 save_pred(savepath, "eval_" + str(epoch), eval_preds, eval_trgs)
 
                 print('-' * 89)
-                print('| end of epoch {:3d} | time: {:5.2f}s '
-                      '| valid bleu {:5.2f} '
-                      '| valid ppl {:5.2f} '.format(epoch, 
-                                                   (time.time() - epoch_start_time),
-                                                   eval_bleu * 100,
-                                                   eval_ppl))
+                print('| end of epoch {:3d}'
+                      ' | time: {:5.2f}s '.format(epoch,
+                                                  time.time() - epoch_start_time),
+                      end="")
+                print('| valid ppl {:5.2f} '.format(eval_ppl), end="")
+                if args.compare_farnear:
+                    print('| valid near ppl {:5.2f} '.format(eval_nearppl))
+                if args.eval_bleu:
+                    print('| valid bleu {:5.2f} '.format(eval_bleu * 100))
+
                 writer.add_scalar("valid/bleu", eval_bleu, 
                                   epoch * len(train_loader))
                 writer.flush()
@@ -1176,25 +1238,32 @@ def main(args):
     print("saved in: {}".format(os.path.abspath(savepath)))
 
     if args.eval_on_train:
-        best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
-                                                       model, 
-                                                       train_valid_loader,
-                                                       criterion, 
-                                                       args,
-                                                       args.eval_part)
+        (best_eval_bleu, 
+         best_eval_ppl, 
+         best_eval_preds, 
+         best_eval_trgs,
+         best_eval_nearppl) = evaluate(model, 
+                                       train_valid_loader,
+                                       criterion, 
+                                       args,
+                                       args.eval_part)
     else:
-        best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
-                                                        model, 
-                                                        valid_loader, 
-                                                        criterion, 
-                                                        args)
+        (best_eval_bleu, 
+         best_eval_ppl, 
+         best_eval_preds, 
+         best_eval_trgs,
+         best_eval_nearppl) = evaluate(model, valid_loader, criterion, args)
 
     save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
 
-
     print('=' * 89)
-    print('| End of training | best valid bleu {:5.2f} '
-          '| best valid ppl {:5.2f} |'.format(best_eval_bleu * 100, best_eval_ppl))
+    print('| End of training '
+          '| best valid ppl {:5.2f} '.format(best_eval_ppl), end="")
+    if args.compare_farnear:
+        print('| best valid near ppl {:5.2f} '.format(best_eval_nearppl))
+    if args.eval_bleu:
+        print('| best valid bleu {:5.2f} '.format(best_eval_bleu * 100))
+
     print('=' * 89)
 
     if args.rocstories:
@@ -1202,15 +1271,19 @@ def main(args):
         print('| ROCStories test accuracy {:5.2f} % |'.format(test_accuracy * 100))
         print('=' * 89)
 
-    test_bleu, test_ppl, test_preds, test_trgs = evaluate(model, 
-                                                          test_loader, 
-                                                          criterion, 
-                                                          args)
+    (test_bleu, 
+     test_ppl, 
+     test_preds, 
+     test_trgs, 
+     test_nearppl) = evaluate(model, test_loader, criterion, args)
 
     # save prediction
     save_pred(savepath, "test", test_preds, test_trgs)
-    print('| test bleu {:5.2f} '
-          '| test ppl {:5.2f} |'.format(test_bleu * 100, test_ppl))
+    print('| test ppl {:5.2f} '.format(test_ppl), end="")
+    if args.compare_farnear:
+        print('| test near ppl {:5.2f} '.format(test_nearppl))
+    if args.eval_bleu:
+        print('| test bleu {:5.2f} '.format(test_bleu * 100))
     print('=' * 89)
 
 
