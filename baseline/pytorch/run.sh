@@ -3,7 +3,7 @@
 python xl_lm.py \
     --datasets ptb \
     --adam \
-    --epochs 100 \
+    --epochs 200 \
     --lr 25e-5 \
     --dropout 0.4 \
     --nlayers 12 \

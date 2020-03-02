@@ -164,7 +164,7 @@ def train(model, train_loader, valid_loader, criterion,
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
-            print('| epoch {:1d} | {:5d}/{:5d} batches | lr {:02.2f} | '
+            print('| epoch {:1d} | {:5d}/{:5d} batches | lr {:02.2e} | '
                     'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
                 epoch, batch, len(train_loader), 
                 optimizer.state_dict()["param_groups"][0]["lr"],
