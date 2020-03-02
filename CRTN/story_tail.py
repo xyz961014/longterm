@@ -472,9 +472,10 @@ def train(model, train_loader, valid_loader, criterion,
             if mem is not None:
                 mem = mem.detach()
             if args.compare_farnear:
-                output, hidden, mem, _ = model(text, key, value, 
-                                               neighbor_mem=mem, 
-                                               key_num=key_num)
+                output, hidden, mem, near_output = model(text, key, value, 
+                                                         neighbor_mem=mem, 
+                                                         key_num=key_num)
+                output = near_output
             else:
                 output, hidden, mem = model(text, key, value, neighbor_mem=mem, 
                                                               key_num=key_num)

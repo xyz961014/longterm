@@ -25,6 +25,8 @@ def parse_args():
                         help="smooth window DEFAULT 50")
     parser.add_argument("--loss_window", type=float, default=0.2, 
                         help="loss window DEFAULT 0.2")
+    parser.add_argument("--ppl_window", type=int, default=[10, 100, 1000, 10000], 
+                        nargs="+", help="ppl windows")
     parser.add_argument("--func", type=int, choices=[0, 1, 2, 3], default=0, 
                         help="function, 0 for stat bag of word loss, 1 for observe variance and loss of model, 2 for observe word freq and word loss, word freq derived from data, 3 for freq window ppl evaluation")
     return parser.parse_args()
@@ -150,7 +152,8 @@ def main(args):
                          win="freq-loss", update="append")
     elif args.func == 3:
         # freq window ppl
-        pass
+        ppl_windows = args.ppl_window
+        ipdb.set_trace()
 
 
 if __name__ == "__main__":
