@@ -1,21 +1,7 @@
 #!/bin/bash
 
-if [[ $1 == "234" ]]; then
-    data="/data/disk4/private/xyz/datasets/ptb_sample/"
-elif [[ $1 == "242" ]]; then
-    data="/data/disk5/private/xyz/datasets/ptb_sample/"
-elif [[ $1 == "243" ]]; then
-    data="/data/disk5/private/xyz/datasets/ptb_sample/"
-elif [[ $1 == "245" ]]; then
-    data="/data/private/xyz/datasets/ptb_sample/"
-elif [[ $1 == "102" ]]; then
-    data="/data/private/xyz/datasets/ptb_sample/"
-elif [[ $1 == "local" ]]; then
-    data="/home/xyz/Documents/Dataset/ptb_sample/"
-fi
 
 python main.py \
-    --data "${data}" \
     --datasets ptb \
     --adam \
     --epochs 100 \
@@ -26,8 +12,8 @@ python main.py \
     --nhead 8 \
     --emsize 256 \
     --nhid 256 \
-    --batch_size 100 \
-    --eval_batch_size 100 \
+    --batch_size 200 \
+    --eval_batch_size 200 \
     --num_steps 20 \
     --neighbor_len 20 \
     --cache_k 2 \
@@ -43,5 +29,5 @@ python main.py \
     --eval_steps 3000 \
     --log-interval 50 \
     --multi_gpu \
-    ${@:2}
+    ${@:1}
 
