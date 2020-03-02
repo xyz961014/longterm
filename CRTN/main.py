@@ -396,7 +396,7 @@ def main(args):
 
     if args.load:
         # Load Model
-        checkpoint = torch.load(args.load, map_loaction=devices[0])
+        checkpoint = torch.load(args.load, map_location=devices[0])
         model_args = checkpoint["model_args"]
 
         model_args.data = args.data
@@ -544,7 +544,7 @@ def main(args):
     else:
         best_model = savepath + "/" + args.save + "_best.pt"
 
-    eval_checkpoint = torch.load(best_model, map_loaction=devices[0])
+    eval_checkpoint = torch.load(best_model, map_location=devices[0])
     model_state_dict = eval_checkpoint["model_state_dict"]
 
     module = model.module if args.multi_gpu else model
