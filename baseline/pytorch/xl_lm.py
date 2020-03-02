@@ -214,6 +214,7 @@ def evaluate(model, eval_loader, criterion, args):
             for i, data in enumerate(eval_loader):
                 text, targets = data.text, data.target
                 if not text.size(0) == args.num_steps:
+                    pbar.update(1)
                     continue
                 text, targets = text.to(device), targets.to(device)
                 eval_batch_size = text.size(1)
