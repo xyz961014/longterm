@@ -475,7 +475,6 @@ def train(model, train_loader, valid_loader, criterion,
                 output, hidden, mem, near_output = model(text, key, value, 
                                                          neighbor_mem=mem, 
                                                          key_num=key_num)
-                output = near_output
             else:
                 output, hidden, mem = model(text, key, value, neighbor_mem=mem, 
                                                               key_num=key_num)
@@ -561,6 +560,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     if args.word_loss:
         loss_file = open(savepath + "/" + args.save + "_word_loss.pkl", "wb")
         loss_obj = TargetText()
+        loss_obj.clear()
 
     
     bleu = 0.
@@ -747,7 +747,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                         variances = [v.item() for v in variances]
 
                         words = [vocab.itos[w] for w in batch_trg]    
-                        word_loss = [l.item() for l in loss_tensor    ] 
+                        word_loss = [l.item() for l in loss_tensor] 
                         if args.compare_farnear:
                             near_word_loss = [l.item() for l in near_loss_tensor] 
                         else:
@@ -1262,6 +1262,8 @@ def main(args):
           '| best valid ppl {:5.2f} '.format(best_eval_ppl), end="")
     if args.compare_farnear:
         print('| best valid near ppl {:5.2f} '.format(best_eval_nearppl))
+    else:
+        print("")
     if args.eval_bleu:
         print('| best valid bleu {:5.2f} '.format(best_eval_bleu * 100))
 
@@ -1283,6 +1285,8 @@ def main(args):
     print('| test ppl {:5.2f} '.format(test_ppl), end="")
     if args.compare_farnear:
         print('| test near ppl {:5.2f} '.format(test_nearppl))
+    else:
+        print("")
     if args.eval_bleu:
         print('| test bleu {:5.2f} '.format(test_bleu * 100))
     print('=' * 89)

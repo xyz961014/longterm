@@ -20,7 +20,7 @@ def parse_args():
     parser.add_argument("--baseline_loss", type=str, help="location of baseline loss")
     parser.add_argument("--model_loss", type=str, help="location of model loss")
     parser.add_argument("--data", type=str, help="location of data",
-                        default="~/Documents/Dataset/writingprompts/medium/")
+                        default="/home/xyz/Documents/Dataset/writingprompts/medium/")
     parser.add_argument("--smooth_window", type=int, default=50, 
                         help="smooth window DEFAULT 50")
     parser.add_argument("--loss_window", type=float, default=0.2, 
@@ -93,8 +93,10 @@ def main(args):
                 loss_sum_bars.append(0.)
             x_labels.append(i * args.loss_window)
 
-        vis.bar(np.array(loss_bars), np.array(x_labels), win="loss bar")
-        vis.bar(np.array(loss_sum_bars), np.array(x_labels), win="loss sum bar")
+        vis.bar(np.array(loss_bars), np.array(x_labels), win="loss bar",
+                opts={"title": "loss difference"})
+        vis.bar(np.array(loss_sum_bars), np.array(x_labels), win="loss sum bar",
+                opts={"title": "loss sum difference"})
 
         #for i in tqdm(range(len(word_losses) - args.smooth_window + 1)):
         #    lossb = np.mean(word_losses[i][1][0])
@@ -152,8 +154,64 @@ def main(args):
                          win="freq-loss", update="append")
     elif args.func == 3:
         # freq window ppl
+        opts = {
+                "title": "freq window ppl",
+                "legend": ["baseline", "model"],
+                "stacked": False
+                }
         ppl_windows = args.ppl_window
-        ipdb.set_trace()
+        ppl_windows = [0] + ppl_windows
+        corpus = TailDataset(args.data, 1e6, 50)
+        vocab = corpus.TEXT.vocab
+
+        freq_loss = []
+        base_freq_loss = []
+        freq_labels = []
+        for i in range(len(ppl_windows)):
+            freq_loss.append([])
+            base_freq_loss.append([])
+            if i < len(ppl_windows) - 1:
+                freq_labels.append("{}-{}".format(ppl_windows[i], ppl_windows[i+1]))
+            else:
+                freq_labels.append("{}-".format(ppl_windows[i]))
+
+        def freq_window(freq, ppl_windows):
+            for idx, ppl in enumerate(ppl_windows):
+                if freq < ppl:
+                    return idx - 1
+            else:
+                return len(ppl_windows) - 1
+
+        def list_ppl(x):
+            if len(x) > 0:
+                return np.exp(np.mean(x))
+            else:
+                return 0
+
+        with open(args.model_loss, "rb") as model_file:
+            model_obj = pkl.load(model_file)
+        with open(args.baseline_loss, "rb") as base_file:
+            base_obj = pkl.load(base_file)
+
+
+        for i in tqdm(range(len(base_obj))):
+            if base_obj.words[i] == model_obj.words[i]:
+                word = base_obj.words[i]
+                lossb = base_obj.loss[i]
+                lossm = model_obj.loss[i]
+                freq = vocab.freqs[word]
+                if freq > 0:
+                    freq_idx = freq_window(freq, ppl_windows)
+                    freq_loss[freq_idx].append(lossm)
+                    base_freq_loss[freq_idx].append(lossb)
+
+        freq_ppl = list(map(lambda x: list_ppl(x), freq_loss))
+        base_freq_ppl = list(map(lambda x: list_ppl(x), base_freq_loss))
+        
+        bar_array = np.array(base_freq_ppl + freq_ppl).reshape(2, len(freq_ppl)).transpose()
+
+        vis.bar(np.array(bar_array), np.array(freq_labels), 
+                win="freq window ppl", opts=opts)
 
 
 if __name__ == "__main__":

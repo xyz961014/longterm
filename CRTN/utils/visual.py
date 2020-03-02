@@ -24,5 +24,11 @@ class TargetText(object):
         for near_loss in near_losss:
             self.near_loss.append(near_loss)
 
+    def clear(self):
+        self.words = []
+        self.loss = []
+        self.var = []
+        self.near_loss = []
+
     def __len__(self):
         return len(self.words)

@@ -397,6 +397,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     if args.word_loss:
         loss_file = open(savepath + "/" + args.save + "_word_loss.pkl", "wb")
         loss_obj = TargetText()
+        loss_obj.clear()
 
     
     bleu = 0.
@@ -551,6 +552,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     ppl = math.exp(loss_mean)
     #print("ppl on eval: %.2f" % ppl)
     if args.word_loss:
+        print(len(loss_obj))
         pkl.dump(loss_obj, loss_file)
         loss_file.close()
 
