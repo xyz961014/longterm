@@ -2,9 +2,9 @@ import time
 from datetime import datetime
 import os
 import sys
-import re
 import argparse
-import copy
+from tqdm import tqdm
+
 #ignore future warning from tensorboard
 import warnings
 import pickle as pkl
@@ -18,7 +18,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import torchtext
 from nltk.translate.bleu_score import sentence_bleu
 
 #import torch.distributed as dist
@@ -35,7 +34,6 @@ else:
     from torch.utils.tensorboard import SummaryWriter
 
 import ipdb
-from tqdm import tqdm
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -545,31 +543,31 @@ def train(model, train_loader, valid_loader, criterion,
     return best_eval_ppl
 
 def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
-    model.eval()
+    model.eval()                        
     module = model.module if args.multi_gpu else model
-    # add eos token
+    # add eos token                     
     eval_loader.dataset.fields["trg"].eos_token = "<eos>"
-
-    if torch.cuda.is_available():
+                                        
+    if torch.cuda.is_available():       
         device = torch.device("cuda:" + str(args.devices[0]))
-    else:
-        device = torch.device("cpu")
-
-    losses = 0.
-    near_losses = 0.
-    if args.word_loss:
+    else:                               
+        device = torch.device("cpu")    
+                                        
+    losses = 0.                         
+    near_losses = 0.                    
+    if args.word_loss:                  
         loss_file = open(savepath + "/" + args.save + "_word_loss.pkl", "wb")
-        loss_obj = TargetText()
-        loss_obj.clear()
-
-    
-    bleu = 0.
-    len_eval = 0
+        loss_obj = TargetText()         
+        loss_obj.clear()                
+                                        
+                                        
+    bleu = 0.                           
+    len_eval = 0                        
     total_len = math.ceil(len(eval_loader) * eval_part)
-
+                                        
     vocab = eval_loader.dataset.fields["trg"].vocab
-    pad_idx = vocab.stoi["<pad>"]
-    preds = []
+    pad_idx = vocab.stoi["<pad>"]       
+    preds = []                          
     trgs = []
 
 
@@ -1260,6 +1258,7 @@ def main(args):
     print('=' * 89)
     print('| End of training '
           '| best valid ppl {:5.2f} '.format(best_eval_ppl), end="")
+
     if args.compare_farnear:
         print('| best valid near ppl {:5.2f} '.format(best_eval_nearppl))
     else:
@@ -1290,8 +1289,6 @@ def main(args):
     if args.eval_bleu:
         print('| test bleu {:5.2f} '.format(test_bleu * 100))
     print('=' * 89)
-
-
 
 
 if __name__ == "__main__":

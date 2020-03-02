@@ -11,7 +11,7 @@ sys.path.append("..")
 sys.path.append("../..")
 from data.tail_loader import TailDataset
 from CRTN.utils.visual import TargetText
-vis = visdom.Visdom()
+vis = visdom.Visdom(env="xyz")
 assert vis.check_connection()
 
 

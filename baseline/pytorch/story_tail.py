@@ -2,9 +2,9 @@ import time
 from datetime import datetime
 import os
 import sys
-import re
 import argparse
-import copy
+from tqdm import tqdm
+
 #ignore future warning from tensorboard
 import warnings
 import pickle as pkl
@@ -18,7 +18,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-import torchtext
 from nltk.translate.bleu_score import sentence_bleu
 
 #import torch.distributed as dist
@@ -35,7 +34,6 @@ else:
     from torch.utils.tensorboard import SummaryWriter
                                                        
 import ipdb
-from tqdm import tqdm
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -318,9 +316,10 @@ def train(model, train_loader, valid_loader, criterion,
     
 
     for batch, data in enumerate(train_loader):
-        text, target = data.text.to(device), data.target.to(device)
+        text, target = data.text, data.target
         if not text.size(0) == args.num_steps:
             continue
+        text, target = text.to(device), target.to(device)
 
         model.zero_grad()
         
@@ -350,7 +349,7 @@ def train(model, train_loader, valid_loader, criterion,
                 optimizer.state_dict()["param_groups"][0]["lr"],
                 elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
             writer.add_scalar("train/ppl", math.exp(cur_loss), 
-                                batch + (epoch - 1) * len(train_loader))
+                              batch + (epoch - 1) * len(train_loader))
             writer.flush()
             total_loss = 0.
             start_time = time.time()
@@ -393,7 +392,6 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
         device = torch.device("cpu")
 
     losses = 0.
-    eval_len = 0
     if args.word_loss:
         loss_file = open(savepath + "/" + args.save + "_word_loss.pkl", "wb")
         loss_obj = TargetText()
@@ -509,7 +507,6 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                         loss_obj.add_losss(word_loss)
 
                     losses += loss.item()
-                eval_len += eval_batch_size
 
                 # end of computing ppl
 
@@ -548,7 +545,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
 
                 pbar.update(1)
 
-    loss_mean = losses / eval_len
+    loss_mean = losses / len_eval
     ppl = math.exp(loss_mean)
     #print("ppl on eval: %.2f" % ppl)
     if args.word_loss:
@@ -782,7 +779,7 @@ def main(args):
 
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
-        #create model
+        # create model
         model = TransformerLM(
                     vocab_size=args.vocab_size,
                     num_layer=args.nlayers,

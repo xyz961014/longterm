@@ -1,28 +1,24 @@
 #!/bin/bash
 
-if [[ $1 == "234" ]]; then
-    data="/data/disk4/private/xyz/datasets/ptb_sample"
-elif [[ $1 == "local" ]]; then
-    data="/home/xyz/Documents/Dataset/ptb_sample"
-fi
-python lm.py \
-    --data "${data}" \
+python xl_lm.py \
     --adam \
+    --datasets ptb \
+    --epochs 50 \
     --lr 0.00025 \
-    --tied \
+    --dropout 0.1 \
+    --nlayers 3 \
+    --nhead 4 \
     --emsize 100 \
     --nhid 100 \
-    --nhead 4 \
-    --nlayers 3 \
-    --d_ff 1000 \
-    --num_steps 40 \
-    --mem_len 40 \
-    --epochs 50 \
-    --batch_size 60 \
-    --dropout 0.1 \
+    --batch_size 50 \
+    --eval_batch_size 50 \
+    --num_steps 20 \
+    --mem_len 60 \
+    --tied \
     --attn_type 1 \
-    --adaptive \
-    --div_val 2 \
     --seed 1111 \
-    --log-interval 100 \
-    ${@:2}
+    --adaptive \
+    --log-interval 50 \
+    --multi_gpu \
+    --save base_demo \
+    ${@:1}

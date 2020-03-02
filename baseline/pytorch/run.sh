@@ -9,22 +9,27 @@ elif [[ $1 == "245" ]]; then
 elif [[ $1 == "local" ]]; then
     data="/home/xyz/Documents/Dataset/ptb_sample"
 fi
-python lm.py \
+python xl_lm.py \
     --data "${data}" \
+    --datasets ptb \
     --adam \
-    --lr 27e-5 \
-    --tied \
-    --emsize 240 \
-    --nhid 240 \
+    --epochs 100 \
+    --lr 25e-5 \
+    --dropout 0.4 \
+    --nlayers 12 \
+    --d_ff 1024 \
     --nhead 8 \
-    --nlayers 15 \
-    --d_ff 1300 \
-    --num_steps 70 \
-    --mem_len 210 \
-    --epochs 200 \
-    --batch_size 50 \
-    --dropout 0.45 \
+    --emsize 256 \
+    --nhid 256 \
+    --batch_size 100 \
+    --eval_batch_size 100 \
+    --num_steps 20 \
+    --mem_len 60 \
+    --tied \
     --attn_type 1 \
-    --adaptive \
     --seed 1111 \
+    --adaptive \
+    --eval_steps 3000 \
+    --log-interval 50 \
+    --multi_gpu \
     ${@:2}

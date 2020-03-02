@@ -11,6 +11,7 @@ import re
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
+from torchtext import data, datasets
 
 UNK_token = 0  # Unknown word token
 PAD_token = 1  # Used for padding short sentences
@@ -193,6 +194,36 @@ class textDataset(Dataset):
             sample = self.transform(sample)
 
         return sample
+
+class TextDataset(object):
+    def __init__(self, path, vocab_size, num_steps):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.num_steps = num_steps
+        
+        self.TEXT = data.Field(sequential=True)
+
+        self.train_dataset = datasets.LanguageModelingDataset(path + "train.txt", 
+                                                              self.TEXT)
+        self.valid_dataset = datasets.LanguageModelingDataset(path + "valid.txt", 
+                                                              self.TEXT)
+        self.test_dataset = datasets.LanguageModelingDataset(path + "test.txt", 
+                                                             self.TEXT)
+        self.TEXT.build_vocab(self.train_dataset, max_size=vocab_size)
+
+    def get_train_loader(self, batch_size, **kwargs):
+        return data.BPTTIterator(self.train_dataset, batch_size, self.num_steps,
+                                 **kwargs)
+
+    def get_valid_loader(self, batch_size, **kwargs):
+        return data.BPTTIterator(self.valid_dataset, batch_size, self.num_steps,
+                                 train=False, shuffle=False, sort=False,
+                                 **kwargs)
+
+    def get_test_loader(self, batch_size, **kwargs):
+        return data.BPTTIterator(self.test_dataset, batch_size, self.num_steps,
+                                 train=False, shuffle=False, sort=False,
+                                 **kwargs)
 
 
 def main():

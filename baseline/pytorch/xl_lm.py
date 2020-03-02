@@ -10,7 +10,7 @@ import warnings
 import pickle as pkl
 warnings.filterwarnings("ignore")
 
-sys.path.append("..")
+sys.path.append("../..")
 
 import numpy as np
 import math
@@ -22,16 +22,17 @@ import torchtext
 
 from torch.utils.data import DataLoader
 
-from data.dataloader import TextDataset
-from utils.adaptive import ProjectedAdaptiveLogSoftmax
-from utils.visual import TargetText
-from models.CRTNModel import CRTNModel
+from CRTN.data.dataloader import TextDataset
+from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
+from CRTN.utils.visual import TargetText
+from transformer import TransformerLM
 
-if torch.__version__ < "1.2.0":
-    from tensorboardX import SummaryWriter
-else:
-    from torch.utils.tensorboard import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
+
 import ipdb
+
+device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -44,8 +45,6 @@ def parse_args():
                         help='skip training')
     parser.add_argument('--demo', action='store_true',
                         help='demo mode')
-    parser.add_argument('--stat', action='store_true',
-                        help='stat memory choices')
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
     parser.add_argument('--emsize', type=int, default=256,
@@ -58,6 +57,8 @@ def parse_args():
                         help='number of heads')
     parser.add_argument('--d_ff', type=int, default=1024,
                         help='dimension of feed-forward')
+    parser.add_argument('--mem_len', type=int, default=60,
+                        help='length of memory')
     parser.add_argument('--lr', type=float, default=25e-5,
                         help='initial learning rate')
     parser.add_argument('--scheduler', type=str, default='cosine', 
@@ -79,16 +80,12 @@ def parse_args():
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--tied', action="store_true",
                         help='tied embedding weights')
-    parser.add_argument('--attn_type', type=int, default=1, choices=[0, 1],
+    parser.add_argument('--attn_type', type=int, default=0, choices=[0, 1],
                         help='attention type, 0 for vaswani;1 for transformer-xl')
-    parser.add_argument("--cache_N", type=int, default=5, 
-                        help="size of Cache, default: 5")
-    parser.add_argument("--cache_dk", type=int, default=240, 
-                        help="dimension of key, default: 240")
-    parser.add_argument("--cache_k", type=int, default=3, 
-                        help="select top k values, default: 3")
     parser.add_argument('--multi_gpu', action="store_true",
                         help='enable multiple gpus')
+    parser.add_argument('--devices', type=int, default=[0], nargs="+",
+                        help='device list')
     parser.add_argument('--adaptive', action="store_true",
                         help='use adaptive embedding and softmax')
     parser.add_argument('--vocab_size', type=int, default=10000,
@@ -96,60 +93,25 @@ def parse_args():
     parser.add_argument('--cutoffs', type=int, 
                         default=[2000, 4000, 6000], nargs="+",
                         help='cutoffs for adaptive embedding')
-    parser.add_argument('--no_summary', action="store_true",
-                        help='use the output of the transformer layer as key')
-    parser.add_argument('--wise_summary', action="store_true",
-                        help='use encoder function(transformer-xl) to summary the key')
-    parser.add_argument('--max_pooling', action="store_true",
-                        help='use max pooling to justice importance' 
-                        'of segments in the cache')
-    parser.add_argument('--query_method', type=str, default='vanilla', 
-                        choices=['fixed_length', 'last_l', 'middle_l', 
-                                 'linear', 'single_linear', 'single_sum', 'vanilla'],
-                        help='query method to use. vanilla indicates just use '
-                        'current segment to query, other methods link previous '
-                        'segment. last_l and middle_l only work in wise_summary '
-                        'mode')
-    parser.add_argument('--not_weighted', action="store_true",
-                        help='use not-weighted values directly as memory')
-    parser.add_argument('--farnear', action="store_true",
-                        help='split history into two parts,'
-                        ' near to compute query and attention; far to be queried')
-    parser.add_argument("--neighbor_len", type=int, default=50,
-                        help="length of near neighbor; only use in farnear mode")
-    parser.add_argument('--p_discard', action="store_true",
-                        help='discard segment according to a computed posibility')
-    parser.add_argument('--merge', action="store_true",
-                        help='merge history instead of discarding')
-    parser.add_argument('--merge_shift', action="store_true",
-                        help='shift positioning encoding when merge')
-    parser.add_argument("--merge_alpha", type=float, default=0.5,
-                        help="ratio of retaining old information when merging")
-    parser.add_argument('--real_pos', action="store_true",
-                        help='compute position encoding according to realtime pos')
     parser.add_argument('--div_val', type=int, default=1,
                         help='divident value for adaptive input and softmax')
     parser.add_argument('--seed', type=int, default=1111,
                         help='random seed')
-    parser.add_argument('--devices', type=int, default=[0], nargs="+",
-                        help='device list')
     parser.add_argument('--log-interval', type=int, default=50, metavar='N',
                         help='report interval')
-    parser.add_argument('--save', type=str, default='model',
-                        help='path to save the final model')
     parser.add_argument('--eval_steps', type=int, default=2000, metavar='N',
                         help='evaluation steps')
+    parser.add_argument('--save', type=str, default='model',
+                        help='path to save the final model')
     parser.add_argument('--word_loss', action="store_true",
                         help='output loss of every word')
-    parser.add_argument('--compare_farnear', action="store_true",
-                        help='compare loss between far and near')
     parser.add_argument('--load', type=str, default='',
                         help='path to load the model')
     args = parser.parse_args()
     return args
 
 class DataParallel(nn.DataParallel):
-    def __init__(self, module, device_ids=None, output_device=None, dim=0,
+    def __init__(self, module, device_ids=None, output_device=None, dim=0, 
                  find_unused_parameters=True):
         super().__init__(module, device_ids, output_device, dim)
 
@@ -158,27 +120,6 @@ class DataParallel(nn.DataParallel):
         self.module.set_batch_size(batch_size)
         self.batch_size = batch_size
 
-def init_key_num(args, device, evaluate=False):
-    batch_size = args.eval_batch_size if evaluate else args.batch_size
-    key_num = torch.arange(args.cache_N, 0, -1, 
-                           dtype=torch.float,
-                           device=device)
-    key_num = key_num.expand(batch_size, -1)
-    key_num.transpose_(0, 1)
-    return key_num
-
-def update_cache(model, batch_size, key, value, hidden, text, key_num):
-    
-    hidden = hidden.transpose(1, 2)
-
-    model.cache.set_batch_size(batch_size)
-    model.cache.init_key_and_value(key, value)
-    model.cache.detach_memory()
-    key_num = model.cache.renew(hidden, text, key_num)
-    key, value = (model.cache._get_keys(), 
-                  model.cache._get_values().transpose(1, 2))
-    model.cache.set_batch_size(batch_size // len(model.args.devices))
-    return model, key_num, key, value
 
 
 def train(model, train_loader, valid_loader, criterion, 
@@ -188,43 +129,28 @@ def train(model, train_loader, valid_loader, criterion,
     start_time = time.time()
     total_loss = 0.
     module = model.module if args.multi_gpu else model
-
     if torch.cuda.is_available():
-        device = torch.device("cuda:" + str(module.args.devices[0]))
+        device = torch.device("cuda:" + str(args.devices[0]))
     else:
         device = torch.device("cpu")
-    
-    key = None
-    value = None
-    if args.farnear:
-        mem = None
-    key_num = init_key_num(args, device)
+
+    memory = None
 
     for batch, data in enumerate(train_loader):
         text, targets = data.text, data.target
         if not text.size(0) == args.num_steps:
             continue
         text, targets = text.to(device), targets.to(device)
+
         model.zero_grad()
-        
-        if args.farnear:
-            if mem is not None:
-                mem = mem.detach()
-            output, hidden, mem = model(text, key, value, 
-                                        neighbor_mem=mem, 
-                                        key_num=key_num)
-        else:
-            output, hidden = model(text, key, value, key_num=key_num)
 
-
-        module, key_num, key, value = update_cache(module, args.batch_size, 
-                                                   key, value, hidden, text, key_num)
+        output, memory = model(text, memory)
 
         if args.adaptive:
-            loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))
+            loss = criterion(output.view(-1, args.nhid), targets.view(-1))
             loss = loss.mean()
         else:
-            loss = criterion(output.reshape(-1, args.vocab_size), targets.reshape(-1))
+            loss = criterion(output.view(-1, args.vocab_size), targets.view(-1))
         loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
@@ -238,13 +164,13 @@ def train(model, train_loader, valid_loader, criterion,
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
-            print('| epoch {:1d} | {:5d}/{:5d} batches | lr {:02.2e} | '
-                  'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
+            print('| epoch {:1d} | {:5d}/{:5d} batches | lr {:02.2f} | '
+                    'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
                 epoch, batch, len(train_loader), 
                 optimizer.state_dict()["param_groups"][0]["lr"],
                 elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
             writer.add_scalar("train/ppl", math.exp(cur_loss), 
-                                batch + (epoch - 1) * len(train_loader))
+                              batch + (epoch - 1) * len(train_loader))
             writer.flush()
             total_loss = 0.
             start_time = time.time()
@@ -255,7 +181,7 @@ def train(model, train_loader, valid_loader, criterion,
             if eval_ppl < best_eval_ppl: 
                 best_eval_ppl = eval_ppl
                 torch.save({
-                    "model_args": module.args,
+                    "model_args": args,
                     "model_state_dict": module.state_dict(),
                     "criterion": criterion.state_dict()
                     }, 
@@ -267,71 +193,46 @@ def train(model, train_loader, valid_loader, criterion,
     return best_eval_ppl
 
 
+
 def evaluate(model, eval_loader, criterion, args):
 
     model.eval()
     module = model.module if args.multi_gpu else model
 
     if torch.cuda.is_available():
-        device = torch.device("cuda:" + str(module.args.devices[0]))
+        device = torch.device("cuda:" + str(args.devices[0]))
     else:
         device = torch.device("cpu")
-    
+
     total_loss = 0.
     len_eval = 0
     total_len = len(eval_loader)
-    key = None                  
-    value = None                
-    if args.farnear:            
-        mem = None              
-    key_num = init_key_num(args, device, True)
-                               
-    with torch.no_grad():      
+    memory = None
+
+    with torch.no_grad():
         with tqdm(total=total_len) as pbar:
-            pbar.set_description("evaluating")
-                               
-            for batch, data in enumerate(eval_loader):
+            for i, data in enumerate(eval_loader):
                 text, targets = data.text, data.target
                 if not text.size(0) == args.num_steps:
                     continue
                 text, targets = text.to(device), targets.to(device)
                 eval_batch_size = text.size(1)
                 len_eval += eval_batch_size
-                model.set_batch_size(eval_batch_size)
-                               
-                               
-                if args.farnear:
-                    if mem is not None:
-                        mem = mem.detach()
-                    output, hidden, mem = model(text, key, value, 
-                                                neighbor_mem=mem, 
-                                                key_num=key_num)
-                else:
-                    output, hidden = model(text, key, value, key_num=key_num)
 
-                module, key_num, key, value = update_cache(module, 
-                                                           eval_batch_size, 
-                                                           key, value, 
-                                                           hidden, 
-                                                           text, 
-                                                           key_num)
+                output, memory = model(text, memory)
 
                 if args.adaptive:
                     loss = criterion(output.view(-1, args.nhid), targets.view(-1))
                     loss = loss.sum()
                 else:
-                    loss = criterion(output.view(-1, args.vocab_size), 
-                                     targets.view(-1))
+                    loss = criterion(output.view(-1, args.vocab_size), targets.view(-1))
 
                 total_loss += loss.item()
                 pbar.update(1)
 
-
     ppl = math.exp(total_loss / (len_eval * args.num_steps))
-    model.set_batch_size(args.batch_size)
     model.train()
     return ppl
-
 
 
 def main(args):
@@ -350,12 +251,8 @@ def main(args):
     if args.adaptive:
         args.tie_projs = [False] + [True] * 3
 
-    if args.demo:
-        args.batch_size = 1
-        args.eval_batch_size = 1
-
     ### Load Data ###
-
+ 
     datatime_begin = time.time()
     
     if args.datasets == "ptb":
@@ -395,12 +292,11 @@ def main(args):
 
     if args.load:
         # Load Model
-        checkpoint = torch.load(args.load, map_loaction=devices[0])
+        checkpoint = torch.load(args.load, map_location=devices[0])
         model_args = checkpoint["model_args"]
 
-        model_args.data = args.data
         model_args.demo = args.demo
-        model_args.stat = args.stat
+        model_args.data = args.data
         model_args.eval = args.eval
         model_args.load = args.load
         model_args.adam = args.adam
@@ -412,20 +308,14 @@ def main(args):
         model_args.devices = args.devices
         model_args.save = args.save
 
-        if args.demo:
-            batch_size = 1
-            model_args.eval_batch_size = 1
-        else:
-            batch_size = args.batch_size
-            model_args.eval_batch_size = args.eval_batch_size
+        model_args.batch_size = args.batch_size
+        model_args.eval_batch_size = args.eval_batch_size
 
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
         model_args.word_loss = args.word_loss
 
         args = model_args
-        
-    args.mem_len = args.cache_k * args.num_steps
 
     #Print Params
     for argk, argv in args.__dict__.items():
@@ -438,25 +328,47 @@ def main(args):
     else:
         print("TRAINING......")
 
-
     if args.load:
-        # load state_dict
 
-        if args.demo:
-            model = CRTNModel(model_args, corpus=corpus)
-        else:
-            model = CRTNModel(model_args)
+        model = TransformerLM(
+                vocab_size=model_args.vocab_size,
+                num_layer=model_args.nlayers,
+                num_head=model_args.nhead,
+                d_model=model_args.nhid,
+                d_head=model_args.nhid // model_args.nhead,
+                d_ff=model_args.d_ff,
+                d_embedding=model_args.emsize,
+                tied_weights=model_args.tied,
+                num_steps=args.num_steps,
+                mem_len=model_args.mem_len,
+                attn_type=model_args.attn_type,
+                init_std=model_args.init_std,
+                adaptive=model_args.adaptive,
+                div_val=model_args.div_val,
+                cutoffs=model_args.cutoffs,
+                dropout=model_args.dropout)
 
-        args.batch_size = batch_size
-
-        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
-        model.set_batch_size(batch_size)
+        model.load_state_dict(checkpoint["model_state_dict"])
     else:
-        #create model
-        if args.demo:
-            model = CRTNModel(args, corpus=corpus)
-        else:
-            model = CRTNModel(args)
+        # create model
+        model = TransformerLM(
+                vocab_size=args.vocab_size,
+                num_layer=args.nlayers,
+                num_head=args.nhead,
+                d_model=args.nhid,
+                d_head=args.nhid // args.nhead,
+                d_ff=args.d_ff,
+                d_embedding=args.emsize,
+                tied_weights=args.tied,
+                num_steps=args.num_steps,
+                mem_len=args.mem_len,
+                attn_type=args.attn_type,
+                init_std=args.init_std,
+                adaptive=args.adaptive,
+                div_val=args.div_val,
+                cutoffs=args.cutoffs,
+                dropout=args.dropout)
+
 
     
     if args.adaptive:
@@ -468,22 +380,20 @@ def main(args):
                                                 init_std=args.init_std) 
         if args.tied:
             for i in range(len(criterion.out_layers)):
-                criterion.out_layers[i].weight = model.encoder.embedding.emb_layers[i].weight
+                criterion.out_layers[i].weight = model.embedding.emb_layers[i].weight
 
         if args.tie_projs:
             for i, tie_proj in enumerate(args.tie_projs):
                 if tie_proj and args.div_val == 1 and args.nhid != args.emsize:
-                    criterion.out_projs[i] = model.encoder.embedding.emb_projs[0]
+                    criterion.out_projs[i] = model.embedding.emb_projs[0]
                 elif tie_proj and args.div_val != 1:
-                    criterion.out_projs[i] = model.encoder.embedding.emb_projs[i]
-        if args.load:
-            criterion.load_state_dict(checkpoint["criterion"])
+                    criterion.out_projs[i] = model.embedding.emb_projs[i]
 
     else:
         criterion = nn.CrossEntropyLoss()
-
-    model.to(devices[0])
-    criterion.to(devices[0])
+        
+    model = model.to(devices[0])
+    criterion = criterion.to(devices[0])
     if args.multi_gpu:
         model = DataParallel(model, device_ids=devices, dim=1)
 
@@ -506,9 +416,10 @@ def main(args):
             best_eval_ppl = float('inf')
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
-                best_eval_ppl = train(model, train_loader, valid_loader, 
-                                      criterion, args, epoch, optimizer, scheduler,
-                                      best_eval_ppl)
+                best_eval_ppl = train(model, train_loader, 
+                                      valid_loader, criterion, 
+                                      args, epoch, optimizer, 
+                                      scheduler, best_eval_ppl)
                 eval_ppl = evaluate(model, valid_loader, criterion, args)
                 print('-' * 89)
                 print('| end of epoch {:3d} | time: {:5.2f}s | '
@@ -516,6 +427,7 @@ def main(args):
                                                    (time.time() - epoch_start_time),
                                                    eval_ppl))
                 print('-' * 89)
+
                 writer.add_scalar("valid/ppl", eval_ppl, 
                                   epoch * len(train_loader))
                 writer.flush()
@@ -525,25 +437,25 @@ def main(args):
                 if eval_ppl < best_eval_ppl:
                     best_eval_ppl = eval_ppl
                     torch.save({
-                        "model_args": module.args,
+                        "model_args": args,
                         "model_state_dict": module.state_dict(),
                         "criterion": criterion.state_dict()
                         }, 
                         savepath + "/" + args.save + "_best.pt")
-                    print("save best model")
+                print("save best model")
 
         except KeyboardInterrupt:
             print('-' * 89)
             print('Exiting from training early')
 
-    ### Reload the best model
+    ### Reload best model
 
     if args.eval:
         best_model = args.load
     else:
         best_model = savepath + "/" + args.save + "_best.pt"
 
-    eval_checkpoint = torch.load(best_model, map_loaction=devices[0])
+    eval_checkpoint = torch.load(best_model, map_location=devices[0])
     model_state_dict = eval_checkpoint["model_state_dict"]
 
     module = model.module if args.multi_gpu else model
@@ -566,10 +478,10 @@ def main(args):
     print('=' * 89)
 
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
     args = parse_args()
-    savepath = "../../../experiment/crtn/save/"
+    savepath = "../../../../experiment/crtn/save/"
     timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
     savepath += args.save + timestr
     

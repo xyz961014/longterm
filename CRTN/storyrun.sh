@@ -32,7 +32,6 @@ python story_tail.py \
     --attn_type 1 \
     --seed 1111 \
     --epochs 50 \
-    --log-interval 50 \
     --save story_run \
     --adaptive \
     --vocab_size 50000 \
