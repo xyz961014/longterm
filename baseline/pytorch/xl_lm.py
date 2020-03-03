@@ -215,6 +215,7 @@ def evaluate(model, eval_loader, criterion, args):
         vocab = eval_loader.dataset.fields["text"].vocab 
         loss_file = open(savepath + "/" + args.save + "_word_loss.pkl", "wb")
         loss_obj = TargetText()         
+        loss_obj.clear()
 
     with torch.no_grad():
         with tqdm(total=total_len) as pbar:
