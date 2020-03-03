@@ -214,7 +214,8 @@ def evaluate(model, eval_loader, criterion, args):
     if args.word_loss:                  
         vocab = eval_loader.dataset.fields["text"].vocab 
         loss_file = open(savepath + "/" + args.save + "_word_loss.pkl", "wb")
-        loss_obj = TargetText()         
+        loss_obj = TargetText(batch_size=args.eval_batch_size,
+                              num_steps=args.num_steps)         
         loss_obj.clear()
 
     with torch.no_grad():

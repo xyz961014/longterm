@@ -27,9 +27,18 @@ def parse_args():
                         help="loss window DEFAULT 0.2")
     parser.add_argument("--ppl_window", type=int, default=[10, 100, 1000, 10000], 
                         nargs="+", help="ppl windows")
-    parser.add_argument("--func", type=int, choices=[0, 1, 2, 3], default=0, 
-                        help="function, 0 for stat bag of word loss, 1 for observe variance and loss of model, 2 for observe word freq and word loss, word freq derived from data, 3 for freq window ppl evaluation")
+    parser.add_argument("--seg_len", type=int, default=0, 
+                        help="seg len to show ppl DEFAULT baseline num_steps")
+    parser.add_argument("--func", type=int, choices=[0, 1, 2, 3, 4], default=0, 
+                        help="function, 0 for stat bag of word loss, 1 for observe variance and loss of model, 2 for observe word freq and word loss, word freq derived from data, 3 for freq window ppl evaluation, 4 for segment ppl evaluation")
     return parser.parse_args()
+
+def list_ppl(x):
+    if len(x) > 0:
+        return np.exp(np.mean(x))
+    else:
+        return 0
+
 
 def main(args):
 
@@ -182,12 +191,6 @@ def main(args):
             else:
                 return len(ppl_windows) - 1
 
-        def list_ppl(x):
-            if len(x) > 0:
-                return np.exp(np.mean(x))
-            else:
-                return 0
-
         with open(args.model_loss, "rb") as model_file:
             model_obj = pkl.load(model_file)
         with open(args.baseline_loss, "rb") as base_file:
@@ -212,6 +215,41 @@ def main(args):
 
         vis.bar(np.array(bar_array), np.array(freq_labels), 
                 win="freq window ppl", opts=opts)
+
+    elif args.func == 4:
+        # seg ppl
+        opts = {
+                "title": "seg ppl",
+                'legend': ["baseline", "model"],
+                'showlegend': True,
+               }
+
+        with open(args.model_loss, "rb") as model_file:
+            model_obj = pkl.load(model_file)
+        with open(args.baseline_loss, "rb") as base_file:
+            base_obj = pkl.load(base_file)
+
+        if model_obj.batch_size == base_obj.batch_size:
+
+            if args.seg_len == 0:
+                seg_len = base_obj.num_steps
+            else:
+                seg_len = args.seg_len
+            base_loss = base_obj.arranged_loss().reshape(-1, base_obj.batch_size)
+            model_loss = model_obj.arranged_loss().reshape(-1, model_obj.batch_size)
+
+            base_segs = []
+            model_segs = []
+            for i in tqdm(range(0, base_loss.shape[0], seg_len)):
+                base_segs.append(base_loss[i:i+seg_len,:])
+                model_segs.append(model_loss[i:i+seg_len,:])
+            base_ppls = list(map(lambda x: list_ppl(x), base_segs))
+            model_ppls = list(map(lambda x: list_ppl(x), model_segs))
+
+            line_array = np.array(base_ppls + model_ppls).reshape(2, len(model_ppls)).transpose()
+            vis.line(line_array, np.arange(len(base_ppls)), opts=opts)
+        else:
+            print("model and baseline do not share same batch_size")
 
 
 if __name__ == "__main__":
