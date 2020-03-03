@@ -64,6 +64,8 @@ def parse_args():
                         help='dimension of feed-forward')
     parser.add_argument('--lr', type=float, default=25e-5,
                         help='initial learning rate')
+    parser.add_argument('--weight_decay', type=float, default=1e-5,
+                        help='weight decay')
     parser.add_argument('--scheduler', type=str, default='cosine', 
                         choices=['cosine', 'constant'],
                         help='lr scheduler to use')
@@ -827,9 +829,11 @@ def main(args):
         model = DataParallel(model, device_ids=devices, dim=1)
 
     if args.adam:
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr,
+                               weight_decay=args.weight_decay)
     else:
-        optimizer = optim.SGD(model.parameters(), lr=args.lr)
+        optimizer = optim.SGD(model.parameters(), lr=args.lr,
+                              weight_decay=args.weight_decay)
     
     if args.scheduler == "cosine":
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 

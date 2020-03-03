@@ -10,6 +10,7 @@ import visdom
 sys.path.append("..")
 sys.path.append("../..")
 from data.tail_loader import TailDataset
+from data.dataloader import TextDataset
 from CRTN.utils.visual import TargetText
 vis = visdom.Visdom(env="xyz")
 assert vis.check_connection()
@@ -170,7 +171,7 @@ def main(args):
                 }
         ppl_windows = args.ppl_window
         ppl_windows = [0] + ppl_windows
-        corpus = TailDataset(args.data, 1e6, 50)
+        corpus = TextDataset(args.data, 1e6, 50)
         vocab = corpus.TEXT.vocab
 
         freq_loss = []
