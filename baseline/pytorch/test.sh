@@ -10,8 +10,8 @@ python xl_lm.py \
     --nhead 4 \
     --emsize 100 \
     --nhid 100 \
-    --batch_size 50 \
-    --eval_batch_size 50 \
+    --batch_size 200 \
+    --eval_batch_size 200 \
     --num_steps 20 \
     --mem_len 60 \
     --tied \

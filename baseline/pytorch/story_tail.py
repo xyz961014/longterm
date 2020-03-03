@@ -416,7 +416,6 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     break
                 src, trg = data.src.to(device), data.trg.to(device)
                 eval_batch_size = src.size(1)
-                len_eval += eval_batch_size
                 srcs = src.split(module.num_steps)
 
                 memory = None
@@ -490,8 +489,10 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
                     batch_trg = trg[:tail_len,batch]
                     loss_tensor = criterion(batch_pred, batch_trg, keep_order=True)
+                    len_eval += tail_len
 
-                    loss = loss_tensor.mean()
+                    loss = loss_tensor.sum()
+                    losses += loss.item()
                     
                     if args.word_loss:
                         head_prob, tail_probs = criterion(batch_pred, 
@@ -506,9 +507,8 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                         loss_obj.add_variances(variances)
                         loss_obj.add_losss(word_loss)
 
-                    losses += loss.item()
 
-                # end of computing ppl
+                # end of ppl
 
                 if args.eval_bleu:
                     # complete unfilled block

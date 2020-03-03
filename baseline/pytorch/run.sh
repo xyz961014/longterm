@@ -22,4 +22,5 @@ python xl_lm.py \
     --eval_steps 3000 \
     --log-interval 50 \
     --multi_gpu \
+    --save base \
     ${@:1}

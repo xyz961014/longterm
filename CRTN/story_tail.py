@@ -255,25 +255,6 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         nlayers representation of predicted words block
         key
         valueoutput, memory = model(ppl_block, memory)
-
-                outputs = torch.cat((outputs, output), 0)
-
-                for trg_ppl_block in trg_lasts:
-                    output, memory = model(trg_ppl_block, memory)
-
-                    outputs = torch.cat((outputs, output), 0)
-
-                for batch, tail_len in enumerate(tail_lens):
-                    batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
-                    batch_trg = trg[:tail_len,batch]
-                    loss_tensor = criterion(batch_pred, batch_trg, keep_order=True)
-                    head_prob, tail_probs = criterion(batch_pred, 
-                                                      batch_trg, 
-                                                      keep_order=True,
-                                                      output=True)
-                    variances = variance_prob(head_prob, tail_probs)
-
-
         neighbor_mem
         key_num
         output of prediction of word
@@ -580,7 +561,6 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                     break
                 src, trg = data.src.to(device), data.trg.to(device)
                 eval_batch_size = src.size(1)
-                len_eval += eval_batch_size
                 srcs = src.split(module.args.num_steps)
 
                 model.set_batch_size(eval_batch_size)
@@ -728,12 +708,13 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
                         near_loss_tensor = criterion(near_batch_pred, 
                                                      batch_trg, 
                                                      keep_order=True)
-                        near_loss = near_loss_tensor.mean()
+                        near_loss = near_loss_tensor.sum()
                         near_losses += near_loss.item()
                     loss_tensor = criterion(batch_pred, 
                                             batch_trg, 
                                             keep_order=True)
-                    loss = loss_tensor.mean()
+                    len_eval += tail_len
+                    loss = loss_tensor.sum()
                     losses += loss.item()
 
                     if args.word_loss:

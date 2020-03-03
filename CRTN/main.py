@@ -60,6 +60,8 @@ def parse_args():
                         help='dimension of feed-forward')
     parser.add_argument('--lr', type=float, default=25e-5,
                         help='initial learning rate')
+    parser.add_argument('--weight_decay', type=float, default=0.001,
+                        help='weight decay')
     parser.add_argument('--scheduler', type=str, default='cosine', 
                         choices=['cosine', 'constant'],
                         help='lr scheduler to use')
@@ -285,6 +287,12 @@ def evaluate(model, eval_loader, criterion, args):
     if args.farnear:            
         mem = None              
     key_num = init_key_num(args, device, True)
+
+    if args.word_loss:                  
+        vocab = eval_loader.dataset.fields["text"].vocab 
+        loss_file = open(savepath + "/" + args.save + "_word_loss.pkl", "wb")
+        loss_obj = TargetText()         
+        loss_obj.clear()                
                                
     with torch.no_grad():      
         with tqdm(total=total_len) as pbar:
@@ -297,7 +305,7 @@ def evaluate(model, eval_loader, criterion, args):
                     continue
                 text, targets = text.to(device), targets.to(device)
                 eval_batch_size = text.size(1)
-                len_eval += eval_batch_size
+                len_eval += targets.view(-1).size(0)
                 model.set_batch_size(eval_batch_size)
                                
                                
@@ -318,17 +326,29 @@ def evaluate(model, eval_loader, criterion, args):
                                                            key_num)
 
                 if args.adaptive:
-                    loss = criterion(output.view(-1, args.nhid), targets.view(-1))
-                    loss = loss.sum()
+                    loss_tensor = criterion(output.view(-1, args.nhid), 
+                                            targets.view(-1),
+                                            keep_order=True)
+                    loss = loss_tensor.sum()
                 else:
                     loss = criterion(output.view(-1, args.vocab_size), 
                                      targets.view(-1))
 
                 total_loss += loss.item()
+
+                if args.word_loss:
+                    words = [vocab.itos[w] for w in targets.view(-1)]
+                    word_loss = [l.item() for l in loss_tensor]
+                    loss_obj.add_words(words)
+                    loss_obj.add_losss(word_loss)
+
                 pbar.update(1)
 
+    if args.word_loss:
+        pkl.dump(loss_obj, loss_file)
+        loss_file.close()
 
-    ppl = math.exp(total_loss / (len_eval * args.num_steps))
+    ppl = math.exp(total_loss / len_eval)
     model.set_batch_size(args.batch_size)
     model.train()
     return ppl
@@ -489,9 +509,11 @@ def main(args):
         model = DataParallel(model, device_ids=devices, dim=1)
 
     if args.adam:
-        optimizer = optim.Adam(model.parameters(), lr=args.lr)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr, 
+                               weight_decay=args.weight_decay)
     else:
-        optimizer = optim.SGD(model.parameters(), lr=args.lr)
+        optimizer = optim.SGD(model.parameters(), lr=args.lr,
+                              weight_decay=args.weight_decay)
     
     if args.scheduler == "cosine":
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 
