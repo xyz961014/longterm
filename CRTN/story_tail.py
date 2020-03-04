@@ -196,6 +196,7 @@ def batch_division(batch_size, rank=0, world_size=None):
     elif rank == world_size - 1:
         return batch_div * rank, batch_size
 
+
 class DataParallel(nn.DataParallel):
     def __init__(self, module, device_ids=None, output_device=None, dim=0, 
                  find_unused_parameters=True):
@@ -591,8 +592,6 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
     preds = []                          
     trgs = []
 
-    if args.distributed:
-        batch_start, batch_end = batch_division(args.eval_batch_size, args.rank)
 
 
     with torch.no_grad():
@@ -603,18 +602,20 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
             for batch, data in enumerate(eval_loader):
                 if batch >= total_len:
                     break
-                if args.distributed:
-                    (src, trg) = (data.src[:,batch_start:batch_end].to(device), 
-                                  data.trg[:,batch_start:batch_end].to(device))
-                else:
-                    src, trg = data.src.to(device), data.trg.to(device)
-                eval_batch_size = src.size(1)
-                srcs = src.split(module.args.num_steps)
+
+                eval_batch_size = data.trg.size(1)
+                model.set_batch_size(eval_batch_size)
 
                 if args.distributed:
-                    model.set_batch_size(args.eval_batch_size)
+                    batch_start, batch_end = batch_division(eval_batch_size, 
+                                                            args.rank)
+                    src, trg = (data.src[:,batch_start:batch_end].to(device), 
+                                data.trg[:,batch_start:batch_end].to(device))
                 else:
-                    model.set_batch_size(eval_batch_size)
+                    src, trg = data.src.to(device), data.trg.to(device)
+
+
+                srcs = src.split(module.args.num_steps)
                 key_num = init_key_num(args, device, True)
                 key = None
                 value = None
@@ -1013,8 +1014,9 @@ def main(args):
         torch.cuda.manual_seed_all(args.seed)
         devices = [torch.device("cuda:" + str(i)) for i in args.devices]
 
-        args.batch_size = len(devices) * (args.batch_size // len(devices))
-        args.eval_batch_size = len(devices) * (args.eval_batch_size // len(devices))
+        if not args.distributed:
+            args.batch_size = len(devices) * (args.batch_size // len(devices))
+            args.eval_batch_size = len(devices) * (args.eval_batch_size // len(devices))
     else:
         devices = [torch.device("cpu")]
 
