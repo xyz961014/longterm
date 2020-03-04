@@ -616,7 +616,7 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                     src, trg = data.src.to(device), data.trg.to(device)
 
 
-                eval_batch_size = trg.size(2)
+                eval_batch_size = trg.size(1)
                 srcs = src.split(module.args.num_steps)
                 key_num = init_key_num(args, device, True)
                 key = None
