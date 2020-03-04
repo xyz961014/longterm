@@ -546,7 +546,7 @@ def train(model, train_loader, valid_loader, criterion,
                   ' eval ppl {:5.2f}'.format(batch, 
                                              eval_bleu * 100,
                                              eval_ppl))
-            save_pred(savepath, 
+            save_pred(args.savepath, 
                       "eval_" + str(epoch) + "_" + str(batch // args.eval_steps), 
                       eval_preds, eval_trgs)
             if eval_ppl < best_eval_ppl: 
@@ -556,7 +556,7 @@ def train(model, train_loader, valid_loader, criterion,
                     "model_state_dict": module.state_dict(),
                     "criterion": criterion.state_dict()
                     }, 
-                    savepath + "/" + args.save + "_best.pt")
+                    args.savepath + "/" + args.save + "_best.pt")
                 print("save best model for better ppl")
             print('-' * 60)
             start_time = time.time()
@@ -592,7 +592,7 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
     trgs = []
 
     if args.distributed:
-        batch_start, batch_end = batch_division(args.batch_size, args.rank)
+        batch_start, batch_end = batch_division(args.eval_batch_size, args.rank)
 
 
     with torch.no_grad():
@@ -611,7 +611,10 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                 eval_batch_size = src.size(1)
                 srcs = src.split(module.args.num_steps)
 
-                model.set_batch_size(eval_batch_size)
+                if args.distributed:
+                    model.set_batch_size(args.eval_batch_size)
+                else:
+                    model.set_batch_size(eval_batch_size)
                 key_num = init_key_num(args, device, True)
                 key = None
                 value = None
