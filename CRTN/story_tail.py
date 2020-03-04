@@ -194,7 +194,7 @@ def batch_division(batch_size, rank=0, world_size=None):
     if rank < world_size - 1:
         return batch_div * rank, batch_div * (rank + 1)
     elif rank == world_size - 1:
-        return batch_size * rank, batch_size
+        return batch_div * rank, batch_size
 
 class DataParallel(nn.DataParallel):
     def __init__(self, module, device_ids=None, output_device=None, dim=0, 
