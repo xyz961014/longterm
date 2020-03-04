@@ -148,17 +148,17 @@ class ROCDataset(object):
                                    **kwargs)
 
 if __name__ == "__main__":
-    path = "/home/xyz/Documents/Dataset/ROCStories/toy/"
+    path = "/home/xyz/Documents/Dataset/writingprompts/"
     start_time = time.time()
-    dataloader = ROCDataset(path, 100000, 20)
+    dataloader = TailDataset(path, 1e6, 20)
     print("load time: %.2f s" % (time.time() - start_time))
     ta = dataloader.get_train_loader(12)
-    da = dataloader.get_discriminate_loader(12)
     vocab = dataloader.TRG.vocab
+    print(len(vocab.itos))
     device = torch.device("cuda:0")
-    for data in da:
-        ipdb.set_trace()
-        text, trg = data.text, data.target
-        textlist = text[:,0].tolist()
+    #for data in da:
+    #    ipdb.set_trace()
+    #    text, trg = data.text, data.target
+    #    textlist = text[:,0].tolist()
 
-        ipdb.set_trace()
+    #    ipdb.set_trace()

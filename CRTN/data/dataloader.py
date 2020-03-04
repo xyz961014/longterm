@@ -227,15 +227,15 @@ class TextDataset(object):
 
 
 def main():
-    data_path = "/home/xyz/Documents/Dataset/ptb_sample"
-    corpus = Corpus(data_path)
-    train_loader = corpus.get_train_loader()
-    for i, (data, target) in enumerate(train_loader):
-        if i == 1:
-            for b in data:
-                print("")
-                for w in b:
-                    print(corpus.vocabulary.index2word[w.item()], end=" ")
+    data_path = "/home/xyz/Documents/Dataset/wikitext-103-v1/wikitext-103/"
+    corpus = TextDataset(data_path, 1e6, 20)
+    print(len(corpus.TEXT.vocab.itos))
+    #for i, (data, target) in enumerate(train_loader):
+    #    if i == 1:
+    #        for b in data:
+    #            print("")
+    #            for w in b:
+    #                print(corpus.vocabulary.index2word[w.item()], end=" ")
     #print(corpus.train_data.data.shape)
     #train_data, valid_data, test_data, voc = ptb_raw_data(data_path)
     #traindataset = textDataset(train_data, 10, 5)
