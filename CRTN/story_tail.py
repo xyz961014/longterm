@@ -609,12 +609,14 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                 if args.distributed:
                     batch_start, batch_end = batch_division(eval_batch_size, 
                                                             args.rank)
+                    
                     src, trg = (data.src[:,batch_start:batch_end].to(device), 
                                 data.trg[:,batch_start:batch_end].to(device))
                 else:
                     src, trg = data.src.to(device), data.trg.to(device)
 
 
+                eval_batch_size = trg.size(2)
                 srcs = src.split(module.args.num_steps)
                 key_num = init_key_num(args, device, True)
                 key = None
