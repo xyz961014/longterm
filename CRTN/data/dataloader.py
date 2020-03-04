@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchtext import data, datasets
+import ipdb
 
 UNK_token = 0  # Unknown word token
 PAD_token = 1  # Used for padding short sentences
@@ -227,9 +228,10 @@ class TextDataset(object):
 
 
 def main():
-    data_path = "/home/xyz/Documents/Dataset/wikitext-103-v1/wikitext-103/"
+    data_path = "/home/xyz/Documents/Dataset/ptb_sample/"
     corpus = TextDataset(data_path, 1e6, 20)
     print(len(corpus.TEXT.vocab.itos))
+    ipdb.set_trace()
     #for i, (data, target) in enumerate(train_loader):
     #    if i == 1:
     #        for b in data:

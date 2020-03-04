@@ -26,7 +26,6 @@ from nltk.translate.bleu_score import sentence_bleu
 
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from torch.nn.parallel import DistributedDataParallel
 
 from data.tail_loader import TailDataset, ROCDataset
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
@@ -172,16 +171,30 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-class DistributedDataParallel(DistributedDataParallel):
+class DistributedDataParallel(nn.parallel.DistributedDataParallel):
     def __init__(self, module, device_ids=None, output_device=None, dim=0, 
                  find_unused_parameters=True, **kwargs):
         super().__init__(module, device_ids, output_device, dim, 
                          find_unused_parameters=find_unused_parameters, 
                          **kwargs)
+        self.rank = dist.get_rank()
+        self.world_size = dist.get_world_size()
 
     def set_batch_size(self, batch_size):
-        batch_size = batch_size // len(self.device_ids)
+        batch_start, batch_end = batch_division(batch_size, 
+                                                self.rank, 
+                                                self.world_size)
+        batch_size = batch_end - batch_start
         self.module.set_batch_size(batch_size)
+
+def batch_division(batch_size, rank=0, world_size=None):
+    if world_size is None:
+        world_size = dist.get_world_size()
+    batch_div = batch_size // world_size
+    if rank < world_size - 1:
+        return batch_div * rank, batch_div * (rank + 1)
+    elif rank == world_size - 1:
+        return batch_size * rank, batch_size
 
 class DataParallel(nn.DataParallel):
     def __init__(self, module, device_ids=None, output_device=None, dim=0, 
@@ -448,7 +461,7 @@ def train(model, train_loader, valid_loader, criterion,
     module = model.module if args.multi_gpu else model
     #module.encoder.embedding.emb_layers[0].weight[vocab.stoi["<pad>"]].zero_()
     if torch.cuda.is_available():
-        device = torch.device("cuda:" + str(args.devices[0]))
+        device = torch.device("cuda:" + str(args.devices[args.rank]))
     else:
         device = torch.device("cpu")
     
@@ -458,10 +471,18 @@ def train(model, train_loader, valid_loader, criterion,
         mem = None
     key_num = init_key_num(args, device)
 
+    if args.distributed:
+        batch_start, batch_end = batch_division(args.batch_size, args.rank)
+
     for batch, data in enumerate(train_loader):
-        text, target = data.text.to(device), data.target.to(device)
+        if args.distributed:
+            (text, target) = (data.text[:,batch_start:batch_end], 
+                              data.target[:,batch_start:batch_end])
+        else:
+            text, target = data.text, data.target
         if not text.size(0) == args.num_steps:
             continue
+        text, target = text.to(device), target.to(device)
 
         model.zero_grad()
         
@@ -549,7 +570,7 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
     eval_loader.dataset.fields["trg"].eos_token = "<eos>"
                                         
     if torch.cuda.is_available():       
-        device = torch.device("cuda:" + str(args.devices[0]))
+        device = torch.device("cuda:" + str(args.devices[args.rank]))
     else:                               
         device = torch.device("cpu")    
                                         
@@ -570,15 +591,23 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
     preds = []                          
     trgs = []
 
+    if args.distributed:
+        batch_start, batch_end = batch_division(args.batch_size, args.rank)
+
 
     with torch.no_grad():
         with tqdm(total=total_len) as pbar:
             pbar.set_description("evaluating")
 
+
             for batch, data in enumerate(eval_loader):
                 if batch >= total_len:
                     break
-                src, trg = data.src.to(device), data.trg.to(device)
+                if args.distributed:
+                    (src, trg) = (data.src[:,batch_start:batch_end].to(device), 
+                                  data.trg[:,batch_start:batch_end].to(device))
+                else:
+                    src, trg = data.src.to(device), data.trg.to(device)
                 eval_batch_size = src.size(1)
                 srcs = src.split(module.args.num_steps)
 
@@ -821,6 +850,7 @@ def roc_evaluate(model, eval_loader, criterion, writer, args):
     total_len = len(eval_loader)
     len_eval = 0
     corrects = []
+
 
     with torch.no_grad():
         with tqdm(total=total_len) as pbar:
@@ -1352,7 +1382,7 @@ if __name__ == "__main__":
 
         world_size = len(args.devices)
         from utils import dist_scripts
-        process_fn = dist_scripts.process_fn 
+        process_fn = dist_scripts.process_tail_fn
         mp.spawn(process_fn, args=(args, ), nprocs=world_size)
     else:
         main(args)
