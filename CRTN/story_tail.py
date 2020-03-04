@@ -499,7 +499,7 @@ def train(model, train_loader, valid_loader, criterion,
         else:
             output, hidden = model(text, key, value, key_num=key_num)
 
-        module, key_num, key, value = update_cache(module, args.batch_size, 
+        module, key_num, key, value = update_cache(module, text.size(1), 
                                                    key, value, hidden, text, key_num)
 
         if args.adaptive:
