@@ -185,6 +185,7 @@ class DistributedDataParallel(nn.parallel.DistributedDataParallel):
                                                 self.rank, 
                                                 self.world_size)
         batch_size = batch_end - batch_start
+        self.batch_size = batch_size
         self.module.set_batch_size(batch_size)
 
 def batch_division(batch_size, rank=0, world_size=None):
@@ -477,6 +478,8 @@ def train(model, train_loader, valid_loader, criterion,
 
     for batch, data in enumerate(train_loader):
         if args.distributed:
+            batch_start, batch_end = batch_division(data.target.size(1), 
+                                                    args.rank)
             (text, target) = (data.text[:,batch_start:batch_end], 
                               data.target[:,batch_start:batch_end])
         else:
@@ -1159,6 +1162,7 @@ def main(args):
         model = DistributedDataParallel(model, 
                                         device_ids=[devices[args.rank]], 
                                         dim=1)
+        model.set_batch_size(args.batch_size)
     else:
         if args.multi_gpu:
             model = DataParallel(model, device_ids=devices, dim=1)
