@@ -3,7 +3,10 @@ from datetime import datetime
 import os
 import sys
 import argparse
+import socket
+from copy import copy
 from tqdm import tqdm
+import ipdb
 
 #ignore future warning from tensorboard
 import warnings
@@ -11,6 +14,7 @@ import pickle as pkl
 warnings.filterwarnings("ignore")
 
 sys.path.append("..")
+sys.path.append("./utils")
 
 import numpy as np
 import math
@@ -20,8 +24,9 @@ import torch.nn.functional as F
 import torch.optim as optim
 from nltk.translate.bleu_score import sentence_bleu
 
-#import torch.distributed as dist
-#from torch.nn.parallel import DistributedDataParallel
+import torch.distributed as dist
+import torch.multiprocessing as mp
+from torch.nn.parallel import DistributedDataParallel
 
 from data.tail_loader import TailDataset, ROCDataset
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
@@ -33,7 +38,6 @@ if torch.__version__ < "1.2.0":
 else:
     from torch.utils.tensorboard import SummaryWriter
 
-import ipdb
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -99,6 +103,8 @@ def parse_args():
                         help="select top k values, default: 3")
     parser.add_argument('--multi_gpu', action="store_true",
                         help='enable multiple gpus')
+    parser.add_argument('--distributed', action="store_true",
+                        help='enable distributed multiple gpus')
     parser.add_argument('--adaptive', action="store_true",
                         help='use adaptive embedding and softmax')
     parser.add_argument('--cutoffs', type=int, 
@@ -166,7 +172,17 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-#class DataParallel(DistributedDataParallel):
+class DistributedDataParallel(DistributedDataParallel):
+    def __init__(self, module, device_ids=None, output_device=None, dim=0, 
+                 find_unused_parameters=True, **kwargs):
+        super().__init__(module, device_ids, output_device, dim, 
+                         find_unused_parameters=find_unused_parameters, 
+                         **kwargs)
+
+    def set_batch_size(self, batch_size):
+        batch_size = batch_size // len(self.device_ids)
+        self.module.set_batch_size(batch_size)
+
 class DataParallel(nn.DataParallel):
     def __init__(self, module, device_ids=None, output_device=None, dim=0, 
                  find_unused_parameters=True):
@@ -424,7 +440,7 @@ def save_pred(savepath, name, preds, trgs):
             fw.write("\n")
 
 def train(model, train_loader, valid_loader, criterion, 
-          args, epoch, optimizer, scheduler, best_eval_ppl):
+          args, epoch, optimizer, scheduler, best_eval_ppl, writer):
 
     model.train()
     start_time = time.time()
@@ -502,6 +518,7 @@ def train(model, train_loader, valid_loader, criterion,
              eval_nearppl) = evaluate(model, 
                                       valid_loader, 
                                       criterion, 
+                                      writer,
                                       args, 
                                       args.eval_part)
             print('| eval at step {:3d} | eval bleu {:5.2f} |'
@@ -525,7 +542,7 @@ def train(model, train_loader, valid_loader, criterion,
     
     return best_eval_ppl
 
-def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
+def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
     model.eval()                        
     module = model.module if args.multi_gpu else model
     # add eos token                     
@@ -790,7 +807,7 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
     model.set_batch_size(args.batch_size)
     return bleu / len_eval, ppl, preds, trgs, near_ppl
 
-def roc_evaluate(model, eval_loader, criterion, args):
+def roc_evaluate(model, eval_loader, criterion, writer, args):
     model.eval()
     module = model.module if args.multi_gpu else model
 
@@ -953,6 +970,9 @@ def roc_evaluate(model, eval_loader, criterion, args):
 
 
 def main(args):
+
+    writer = SummaryWriter("./log/" + args.save + args.timestr)
+
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
 
@@ -964,6 +984,12 @@ def main(args):
         args.eval_batch_size = len(devices) * (args.eval_batch_size // len(devices))
     else:
         devices = [torch.device("cpu")]
+
+    if args.distributed:
+        dist.init_process_group("nccl", init_method=args.url,
+                                rank=args.rank,
+                                world_size=len(devices))
+        torch.cuda.set_device(devices[args.rank])
 
     if args.adaptive:
         args.tie_projs = [False] + [True] * 3
@@ -1091,8 +1117,14 @@ def main(args):
 
     model.to(devices[0])
     criterion.to(devices[0])
-    if args.multi_gpu:
-        model = DataParallel(model, device_ids=devices, dim=1)
+
+    if args.distributed:
+        model = DistributedDataParallel(model, 
+                                        device_ids=[devices[args.rank]], 
+                                        dim=1)
+    else:
+        if args.multi_gpu:
+            model = DataParallel(model, device_ids=devices, dim=1)
 
     if args.adam:
         optimizer = optim.Adam(model.parameters(), lr=args.lr,
@@ -1119,7 +1151,7 @@ def main(args):
                 epoch_start_time = time.time()
                 best_eval_ppl = train(model, train_loader, valid_loader, criterion, 
                                       args, epoch, optimizer, scheduler, 
-                                      best_eval_ppl)
+                                      best_eval_ppl, writer)
 
                 if args.eval_on_train:
                     (eval_bleu, 
@@ -1129,6 +1161,7 @@ def main(args):
                      eval_nearppl) = evaluate(model, 
                                               train_valid_loader,
                                               criterion, 
+                                              writer,
                                               args,
                                               args.eval_part)
                 else:
@@ -1136,9 +1169,13 @@ def main(args):
                      eval_ppl, 
                      eval_preds, 
                      eval_trgs,
-                     eval_nearppl) = evaluate(model, valid_loader, criterion, args)
+                     eval_nearppl) = evaluate(model, 
+                                              valid_loader, 
+                                              criterion, 
+                                              writer,
+                                              args)
 
-                save_pred(savepath, "eval_" + str(epoch), eval_preds, eval_trgs)
+                save_pred(args.savepath, "eval_" + str(epoch), eval_preds, eval_trgs)
 
                 print('-' * 89)
                 print('| end of epoch {:3d}'
@@ -1164,7 +1201,7 @@ def main(args):
                     "model_state_dict": module.state_dict(),
                     "criterion": criterion.state_dict()
                     }, 
-                    savepath + 
+                    args.savepath + 
                     "/" + args.save + "_" + str(epoch) + ".pt")
 
                 # 0 if lower ppl then save model
@@ -1176,13 +1213,13 @@ def main(args):
                         "model_state_dict": module.state_dict(),
                         "criterion": criterion.state_dict()
                         }, 
-                        savepath + "/" + args.save + "_best.pt")
+                        args.savepath + "/" + args.save + "_best.pt")
                     print("save best model for better ppl")
                     if eval_bleu > best_eval_bleu:
                         best_eval_bleu = eval_bleu
                     best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
                     # save prediction
-                    save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
+                    save_pred(args.savepath, "eval_best", best_eval_preds, best_eval_trgs)
                 else:
                     if eval_bleu > best_eval_bleu:
                         torch.save({
@@ -1190,12 +1227,12 @@ def main(args):
                             "model_state_dict": module.state_dict(),
                             "criterion": criterion.state_dict()
                             }, 
-                            savepath + "/" + args.save + "_best.pt")
+                            args.savepath + "/" + args.save + "_best.pt")
                         print("save best model for better bleu")
                         best_eval_bleu = eval_bleu
                         best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
                         # save prediction
-                        save_pred(savepath, "eval_best", best_eval_preds, 
+                        save_pred(args.savepath, "eval_best", best_eval_preds, 
                                   best_eval_trgs)
                 print('-' * 89)
 
@@ -1208,7 +1245,7 @@ def main(args):
     if args.eval:
         best_model = args.load
     else:
-        best_model = savepath + "/" + args.save + "_best.pt"
+        best_model = args.savepath + "/" + args.save + "_best.pt"
 
     eval_checkpoint = torch.load(best_model, map_location=devices[0])
     model_state_dict = eval_checkpoint["model_state_dict"]
@@ -1221,7 +1258,7 @@ def main(args):
 
     print("=" * 89)
     print("experiment name: {}".format(args.save))
-    print("saved in: {}".format(os.path.abspath(savepath)))
+    print("saved in: {}".format(os.path.abspath(args.savepath)))
 
     if args.eval_on_train:
         (best_eval_bleu, 
@@ -1231,6 +1268,7 @@ def main(args):
          best_eval_nearppl) = evaluate(model, 
                                        train_valid_loader,
                                        criterion, 
+                                       writer,
                                        args,
                                        args.eval_part)
     else:
@@ -1238,9 +1276,9 @@ def main(args):
          best_eval_ppl, 
          best_eval_preds, 
          best_eval_trgs,
-         best_eval_nearppl) = evaluate(model, valid_loader, criterion, args)
+         best_eval_nearppl) = evaluate(model, valid_loader, criterion, writer, args)
 
-    save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
+    save_pred(args.savepath, "eval_best", best_eval_preds, best_eval_trgs)
 
     print('=' * 89)
     print('| End of training '
@@ -1256,7 +1294,11 @@ def main(args):
     print('=' * 89)
 
     if args.rocstories:
-        test_accuracy = roc_evaluate(model, dicriminate_loader, criterion, args) 
+        test_accuracy = roc_evaluate(model, 
+                                     dicriminate_loader, 
+                                     criterion, 
+                                     writer, 
+                                     args) 
         print('| ROCStories test accuracy {:5.2f} % |'.format(test_accuracy * 100))
         print('=' * 89)
 
@@ -1264,10 +1306,10 @@ def main(args):
      test_ppl, 
      test_preds, 
      test_trgs, 
-     test_nearppl) = evaluate(model, test_loader, criterion, args)
+     test_nearppl) = evaluate(model, test_loader, criterion, writer, args)
 
     # save prediction
-    save_pred(savepath, "test", test_preds, test_trgs)
+    save_pred(args.savepath, "test", test_preds, test_trgs)
     print('| test ppl {:5.2f} '.format(test_ppl), end="")
     if args.compare_farnear:
         print('| test near ppl {:5.2f} '.format(test_nearppl))
@@ -1278,6 +1320,12 @@ def main(args):
     print('=' * 89)
 
 
+#def process_fn(rank, args):
+#    local_args = copy(args)
+#    local_args.rank = rank
+#    main(local_args)
+
+
 if __name__ == "__main__":
 
     args = parse_args()
@@ -1285,16 +1333,26 @@ if __name__ == "__main__":
     timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
     savepath += args.save + timestr
 
-    #os.environ["RANK"] = str(args.rank)
-    #os.environ["WORLD_SIZE"] = str(len(args.devices))
-    #os.environ["MASTER_ADDR"] = "127.0.0.1"
-    #os.environ["MASTER_PORT"] = "23456"
-    #dist.init_process_group("nccl")
+    args.savepath = savepath
+    args.timestr = timestr
+
     
     if not os.path.exists("./log/" + args.save + timestr):
         os.mkdir("./log/" + args.save + timestr)
     if not os.path.exists(savepath):
         os.mkdir(savepath)
-    writer = SummaryWriter("./log/" + args.save + timestr)
 
-    main(args)
+    if args.distributed:
+        # Pick a free port
+        with socket.socket() as s:
+            s.bind(("localhost", 0))
+            port = s.getsockname()[1]
+            url = "tcp://localhost:" + str(port)
+            args.url = url
+
+        world_size = len(args.devices)
+        from utils import dist_scripts
+        process_fn = dist_scripts.process_fn 
+        mp.spawn(process_fn, args=(args, ), nprocs=world_size)
+    else:
+        main(args)

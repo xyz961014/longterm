@@ -61,7 +61,7 @@ def parse_args():
                         help='length of memory')
     parser.add_argument('--lr', type=float, default=25e-5,
                         help='initial learning rate')
-    parser.add_argument('--weight_decay', type=float, default=0.001,
+    parser.add_argument('--weight_decay', type=float, default=1e-5,
                         help='weight decay')
     parser.add_argument('--scheduler', type=str, default='cosine', 
                         choices=['cosine', 'constant'],

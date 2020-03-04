@@ -19,7 +19,7 @@ python main.py \
     --cache_k 2 \
     --cache_N 5 \
     --seed 1111 \
-    --log-interval 50 \
+    --log-interval 10 \
     --adaptive \
     --no_summary \
     --wise_summary \
