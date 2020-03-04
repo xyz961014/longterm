@@ -1055,7 +1055,7 @@ def main(args):
 
     if args.load:
         # Load Model
-        checkpoint = torch.load(args.load, map_location=devices[0])
+        checkpoint = torch.load(args.load, map_location=devices[args.rank])
         model_args = checkpoint["model_args"]
 
         # inject params for this time
@@ -1145,8 +1145,8 @@ def main(args):
     else:
         criterion = nn.CrossEntropyLoss()
 
-    model.to(devices[0])
-    criterion.to(devices[0])
+    model.to(devices[args.rank])
+    criterion.to(devices[args.rank])
 
     if args.distributed:
         model = DistributedDataParallel(model, 
@@ -1277,7 +1277,7 @@ def main(args):
     else:
         best_model = args.savepath + "/" + args.save + "_best.pt"
 
-    eval_checkpoint = torch.load(best_model, map_location=devices[0])
+    eval_checkpoint = torch.load(best_model, map_location=devices[args.rank])
     model_state_dict = eval_checkpoint["model_state_dict"]
 
     module = model.module if args.multi_gpu else model
