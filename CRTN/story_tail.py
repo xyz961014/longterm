@@ -1360,6 +1360,9 @@ def main(args):
         print('| test bleu {:5.2f} '.format(test_bleu * 100))
     print('=' * 89)
 
+    if args.distributed:
+        dist.destroy_process_group()
+
 
 #def process_fn(rank, args):
 #    local_args = copy(args)
