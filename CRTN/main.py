@@ -13,6 +13,8 @@ import pickle as pkl
 warnings.filterwarnings("ignore")
 
 sys.path.append("..")
+sys.path.append("../baseline")
+sys.path.append("../baseline/pytorch")
 
 import numpy as np
 import math
@@ -94,8 +96,6 @@ def parse_args():
                         help="dimension of key, default: 240")
     parser.add_argument("--cache_k", type=int, default=3, 
                         help="select top k values, default: 3")
-    parser.add_argument('--multi_gpu', action="store_true",
-                        help='enable multiple gpus')
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--adaptive', action="store_true",
@@ -188,16 +188,6 @@ def batch_division(batch_size, rank=0, world_size=None):
         return batch_div * rank, batch_size
 
 
-class DataParallel(nn.DataParallel):
-    def __init__(self, module, device_ids=None, output_device=None, dim=0,
-                 find_unused_parameters=True):
-        super().__init__(module, device_ids, output_device, dim)
-
-    def set_batch_size(self, batch_size):
-        batch_size = batch_size // len(self.device_ids)
-        self.module.set_batch_size(batch_size)
-        self.batch_size = batch_size
-
 def init_key_num(args, device, evaluate=False):
     batch_size = args.eval_batch_size if evaluate else args.batch_size
     key_num = torch.arange(args.cache_N, 0, -1, 
@@ -227,7 +217,7 @@ def train(model, train_loader, valid_loader, criterion,
     model.train()
     start_time = time.time()
     total_loss = 0.
-    module = model.module if args.multi_gpu else model
+    module = model.module if args.distributed else model
 
     if torch.cuda.is_available():
         device = torch.device("cuda:" + str(module.args.devices[args.rank]))
@@ -327,7 +317,7 @@ def train(model, train_loader, valid_loader, criterion,
 def evaluate(model, eval_loader, criterion, writer, args):
 
     model.eval()
-    module = model.module if args.multi_gpu else model
+    module = model.module if args.distributed else model
 
     if torch.cuda.is_available():
         device = torch.device("cuda:" + str(module.args.devices[args.rank]))
@@ -369,11 +359,11 @@ def evaluate(model, eval_loader, criterion, writer, args):
                     text, targets = (data.text[:,batch_start:batch_end].to(device), 
                                      data.target[:,batch_start:batch_end].to(device))
                 else:
-                    text, targets = text.to(device), targets.to(device)
-
+                    text, targets = data.text.to(device), data.target.to(device)
                                
                 eval_batch_size = text.size(1)
                 len_eval += targets.view(-1).size(0)
+
                 if args.farnear:
                     if mem is not None:
                         mem = mem.detach()
@@ -446,10 +436,6 @@ def main(args):
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
-    if not args.distributed:
-        args.batch_size = len(devices) * (args.batch_size // len(devices))
-        args.eval_batch_size = len(devices) * (args.eval_batch_size // len(devices))
-
     if args.adaptive:
         args.tie_projs = [False] + [True] * 3
 
@@ -514,7 +500,7 @@ def main(args):
         model_args.scheduler = args.scheduler
         model_args.clip = args.clip
         model_args.epochs = args.epochs
-        model_args.multi_gpu = args.multi_gpu
+        model_args.distributed = args.distributed
         model_args.devices = args.devices
         model_args.save = args.save
 
@@ -597,9 +583,6 @@ def main(args):
                                         device_ids=[devices[args.rank]], 
                                         dim=1)
         model.set_batch_size(args.batch_size)
-    else:
-        if args.multi_gpu:
-            model = DataParallel(model, device_ids=devices, dim=1)
 
     if args.adam:
         optimizer = optim.Adam(model.parameters(), lr=args.lr, 
@@ -637,7 +620,7 @@ def main(args):
                                       epoch * len(train_loader))
                     writer.flush()
 
-                    module = model.module if args.multi_gpu else model
+                    module = model.module if args.distributed else model
 
                     if eval_ppl < best_eval_ppl:
                         best_eval_ppl = eval_ppl
@@ -664,7 +647,7 @@ def main(args):
         eval_checkpoint = torch.load(best_model, map_location=devices[0])
         model_state_dict = eval_checkpoint["model_state_dict"]
 
-        module = model.module if args.multi_gpu else model
+        module = model.module if args.distributed else model
         module.load_state_dict(model_state_dict)
 
         if args.adaptive:

@@ -28,6 +28,6 @@ python main.py \
     --query_method single_sum \
     --eval_steps 3000 \
     --log-interval 50 \
-    --multi_gpu \
+    --distributed \
     ${@:1}
 

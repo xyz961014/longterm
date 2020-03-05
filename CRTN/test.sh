@@ -25,7 +25,7 @@ python main.py \
     --wise_summary \
     --farnear \
     --query_method single_sum \
-    --multi_gpu \
+    --distributed \
     --save demo \
     ${@:1}
 

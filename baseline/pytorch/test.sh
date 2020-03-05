@@ -19,6 +19,6 @@ python xl_lm.py \
     --seed 1111 \
     --adaptive \
     --log-interval 50 \
-    --multi_gpu \
+    --distributed \
     --save base_demo \
     ${@:1}
