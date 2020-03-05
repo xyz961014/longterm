@@ -525,6 +525,10 @@ def train(model, train_loader, valid_loader, criterion,
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
             if args.rank == 0:
+                if args.distributed:
+                    cur_loss = torch.tensor([cur_loss]).cuda()
+                    dist.reduce(cur_loss, 0)
+                    cur_loss = cur_loss.item() / dist.get_world_size()
                 print('| epoch {:1d} |{:5d}/{:5d} batches | lr {:02.2e} | '
                       'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
                     epoch, batch, len(train_loader), 
@@ -1320,7 +1324,7 @@ def main(args):
         print("experiment name: {}".format(args.save))
         print("saved in: {}".format(os.path.abspath(args.savepath)))
 
-    broadcast(module)
+    broadcast(model)
     broadcast(criterion)
 
     if args.eval_on_train:
