@@ -3,6 +3,8 @@ from datetime import datetime
 import os
 import sys
 import argparse
+import socket
+from copy import copy
 from tqdm import tqdm
 
 #ignore future warning from tensorboard
@@ -11,6 +13,7 @@ import pickle as pkl
 warnings.filterwarnings("ignore")
 
 sys.path.append("../..")
+sys.path.append("../../CRTN")
 
 import numpy as np
 import math
@@ -20,8 +23,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 from nltk.translate.bleu_score import sentence_bleu
 
-#import torch.distributed as dist
-#from torch.nn.parallel import DistributedDataParallel
+import torch.distributed as dist
+import torch.multiprocessing as mp
 
 from CRTN.data.tail_loader import TailDataset, ROCDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
@@ -91,8 +94,8 @@ def parse_args():
                         help='tied embedding weights')
     parser.add_argument('--attn_type', type=int, default=1, choices=[0, 1],
                         help='attention type, 0 for vaswani; 1 for transformer-xl')
-    parser.add_argument('--multi_gpu', action="store_true",
-                        help='enable multiple gpus')
+    parser.add_argument('--distributed', action="store_true",
+                        help='enable distributed multiple gpus')
     parser.add_argument('--adaptive', action="store_true",
                         help='use adaptive embedding and softmax')
     parser.add_argument('--cutoffs', type=int, 
@@ -124,20 +127,37 @@ def parse_args():
                         help='path to save the final model')
     parser.add_argument('--load', type=str, default='',
                         help='path to load the model')
+    parser.add_argument('--rank', type=int, default=0,
+                        help='rank in nccl')
     args = parser.parse_args()
     return args
 
-#class DataParallel(DistributedDataParallel):
-class DataParallel(nn.DataParallel):
+
+class DistributedDataParallel(nn.parallel.DistributedDataParallel):
     def __init__(self, module, device_ids=None, output_device=None, dim=0, 
-                 find_unused_parameters=True):
-        super().__init__(module, device_ids, output_device, dim)
+                 find_unused_parameters=True, **kwargs):
+        super().__init__(module, device_ids, output_device, dim, 
+                         find_unused_parameters=find_unused_parameters, 
+                         **kwargs)
+        self.rank = dist.get_rank()
+        self.world_size = dist.get_world_size()
 
     def set_batch_size(self, batch_size):
-        batch_size = batch_size // len(self.device_ids)
-        self.module.set_batch_size(batch_size)
+        batch_start, batch_end = batch_division(batch_size, 
+                                                self.rank, 
+                                                self.world_size)
+        batch_size = batch_end - batch_start
         self.batch_size = batch_size
+        self.module.set_batch_size(batch_size)
 
+def batch_division(batch_size, rank=0, world_size=None):
+    if world_size is None:
+        world_size = dist.get_world_size()
+    batch_div = batch_size // world_size
+    if rank < world_size - 1:
+        return batch_div * rank, batch_div * (rank + 1)
+    elif rank == world_size - 1:
+        return batch_div * rank, batch_size
 
 def batch_bleu(vocab, pred, trg):
     bleu = 0.
@@ -198,7 +218,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         memory block
         output of prediction of word
     """
-    module = model.module if args.multi_gpu else model
+    module = model.module if args.distributed else model
 
     # record all searched results
     ind_tensor = block.new_ones(0)
@@ -303,14 +323,14 @@ def save_pred(savepath, name, preds, trgs):
             fw.write("\n")
 
 def train(model, train_loader, valid_loader, criterion, 
-          args, epoch, optimizer, scheduler, best_eval_ppl):
+          args, epoch, optimizer, scheduler, best_eval_ppl, writer):
 
     model.train()
     start_time = time.time()
     total_loss = 0.
-    module = model.module if args.multi_gpu else model
+    module = model.module if args.distributed else model
     if torch.cuda.is_available():
-        device = torch.device("cuda:" + str(args.devices[0]))
+        device = torch.device("cuda:" + str(args.devices[args.rank]))
     else:
         device = torch.device("cpu")
 
@@ -318,9 +338,15 @@ def train(model, train_loader, valid_loader, criterion,
     
 
     for batch, data in enumerate(train_loader):
-        text, target = data.text, data.target
-        if not text.size(0) == args.num_steps:
+        if not data.text.size(0) == args.num_steps:
             continue
+        if args.distributed:
+            batch_start, batch_end = batch_division(data.target.size(1), 
+                                                    args.rank)
+            text, target = (data.text[:,batch_start:batch_end], 
+                            data.target[:,batch_start:batch_end])
+        else:
+            text, target = data.text, data.target
         text, target = text.to(device), target.to(device)
 
         model.zero_grad()
@@ -344,12 +370,17 @@ def train(model, train_loader, valid_loader, criterion,
 
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
+            if args.distributed:
+                cur_loss = torch.tensor([cur_loss]).cuda()
+                dist.reduce(cur_loss, 0)
+                cur_loss = cur_loss.item() / dist.get_world_size()
             elapsed = time.time() - start_time
-            print('| epoch {:1d} |{:5d}/{:5d} batches | lr {:02.2e} | '
-                  'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
-                epoch, batch, len(train_loader), 
-                optimizer.state_dict()["param_groups"][0]["lr"],
-                elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
+            if args.rank == 0:
+                print('| epoch {:1d} |{:5d}/{:5d} batches | lr {:02.2e} | '
+                      'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
+                    epoch, batch, len(train_loader), 
+                    optimizer.state_dict()["param_groups"][0]["lr"],
+                    elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
             writer.add_scalar("train/ppl", math.exp(cur_loss), 
                               batch + (epoch - 1) * len(train_loader))
             writer.flush()
@@ -359,43 +390,46 @@ def train(model, train_loader, valid_loader, criterion,
         if batch % args.eval_steps == 0 and batch > 0:
             eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(model, 
                                                                   valid_loader, 
-                                                                  criterion, args, 
+                                                                  criterion,
+                                                                  writer,
+                                                                  args, 
                                                                   args.eval_part)
-            print('| eval at step {:3d} | eval bleu {:5.2f} |'
-                  ' eval ppl {:5.2f}'.format(batch, 
-                                             eval_bleu * 100,
-                                             eval_ppl))
-            save_pred(savepath, 
-                      "eval_" + str(epoch) + "_" + str(batch // args.eval_steps), 
-                      eval_preds, eval_trgs)
-            if eval_ppl < best_eval_ppl:
-                best_eval_ppl = eval_ppl
-                torch.save({
-                    "model_args": args,
-                    "model_state_dict": module.state_dict(),
-                    "criterion": criterion.state_dict()
-                    }, 
-                    savepath + "/" + args.save + "_best" + ".pt")
-                print("save best model for better ppl")
-            print("-" * 60)
+            if args.rank == 0:
+                print('| eval at step {:3d} | eval bleu {:5.2f} |'
+                      ' eval ppl {:5.2f}'.format(batch, 
+                                                 eval_bleu * 100,
+                                                 eval_ppl))
+                save_pred(args.savepath, 
+                          "eval_" + str(epoch) + "_" + str(batch // args.eval_steps), 
+                          eval_preds, eval_trgs)
+                if eval_ppl < best_eval_ppl:
+                    best_eval_ppl = eval_ppl
+                    torch.save({
+                        "model_args": args,
+                        "model_state_dict": module.state_dict(),
+                        "criterion": criterion.state_dict()
+                        }, 
+                        args.savepath + "/" + args.save + "_best" + ".pt")
+                    print("save best model for better ppl")
+                print("-" * 60)
             start_time = time.time()
 
     return best_eval_ppl
 
-def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
+def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
     model.eval()
-    module = model.module if args.multi_gpu else model
+    module = model.module if args.distributed else model
     # add eos token
     eval_loader.dataset.fields["trg"].eos_token = "<eos>"
 
     if torch.cuda.is_available():
-        device = torch.device("cuda:" + str(args.devices[0]))
+        device = torch.device("cuda:" + str(args.devices[args.rank]))
     else:
         device = torch.device("cpu")
 
     losses = 0.
     if args.word_loss:
-        loss_file = open(savepath + "/" + args.save + "_word_loss.pkl", "wb")
+        loss_file = open(args.savepath + "/" + args.save + "_word_loss.pkl", "wb")
         loss_obj = TargetText()
         loss_obj.clear()
 
@@ -416,8 +450,18 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
             for batch, data in enumerate(eval_loader):
                 if batch >= total_len:
                     break
-                src, trg = data.src.to(device), data.trg.to(device)
-                eval_batch_size = src.size(1)
+
+                if args.distributed:
+                    eval_batch_size = data.trg.size(1)
+                    batch_start, batch_end = batch_division(eval_batch_size, 
+                                                            args.rank)
+                    
+                    src, trg = (data.src[:,batch_start:batch_end].to(device), 
+                                data.trg[:,batch_start:batch_end].to(device))
+                else:
+                    src, trg = data.src.to(device), data.trg.to(device)
+
+                eval_batch_size = trg.size(1)
                 srcs = src.split(module.num_steps)
 
                 memory = None
@@ -547,23 +591,29 @@ def evaluate(model, eval_loader, criterion, args, eval_part=1.0):
 
                 pbar.update(1)
 
+    if args.distributed:
+        losses = torch.tensor([losses]).cuda()
+        len_eval = torch.tensor([len_eval]).cuda()
+        dist.reduce(losses, 0)
+        dist.reduce(len_eval, 0)
+        losses = losses.item()
+        len_eval = len_eval.item()
     loss_mean = losses / len_eval
     ppl = math.exp(loss_mean)
-    #print("ppl on eval: %.2f" % ppl)
+
     if args.word_loss:
-        print(len(loss_obj))
         pkl.dump(loss_obj, loss_file)
         loss_file.close()
 
     model.train()
     return bleu / len_eval, ppl, preds, trgs
  
-def roc_evaluate(model, eval_loader, criterion, args):
+def roc_evaluate(model, eval_loader, criterion, writer, args):
     model.eval()
-    module = model.module if args.multi_gpu else model
+    module = model.module if args.distributed else model
 
     if torch.cuda.is_available():
-        device = torch.device("cuda:" + str(args.devices[0]))
+        device = torch.device("cuda:" + str(args.devices[args.rank]))
     else:
         device = torch.device("cpu")
 
@@ -660,8 +710,13 @@ def roc_evaluate(model, eval_loader, criterion, args):
 
                 pbar.update(1)
 
-        corrects = torch.cat(corrects, 0)
-        accuracy = corrects.sum().item() / len_eval
+        corrects = torch.cat(corrects, 0).sum()
+        if args.distributed:
+            len_eval = torch.tensor([len_eval]).cuda()
+            dist.reduce(corrects, 0)
+            dist.reduce(len_eval, 0)
+            len_eval = len_eval.item()
+        accuracy = corrects.item() / len_eval
 
     model.train()
     return accuracy
@@ -669,17 +724,23 @@ def roc_evaluate(model, eval_loader, criterion, args):
 
 
 def main(args):
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
+
+    writer = SummaryWriter("./log/" + args.save + args.timestr)
 
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
         devices = [torch.device("cuda:" + str(i)) for i in args.devices]
-
-        args.batch_size = len(devices) * (args.batch_size // len(devices))
-        args.eval_batch_size = len(devices) * (args.eval_batch_size // len(devices))
     else:
         devices = [torch.device("cpu")]
+
+    if args.distributed:
+        dist.init_process_group("nccl", init_method=args.url,
+                                rank=args.rank,
+                                world_size=len(devices))
+        torch.cuda.set_device(devices[args.rank])
+
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
 
     if args.adaptive:
         args.tie_projs = [False] + [True] * 3
@@ -690,7 +751,8 @@ def main(args):
  
     ### Load Data ###
 
-    print("Loading data from %s" % args.data)
+    if args.rank == 0:
+        print("Loading data from %s" % args.data)
     datatime_begin = time.time()
 
     if args.rocstories:
@@ -729,7 +791,7 @@ def main(args):
         model_args.scheduler = args.scheduler
         model_args.clip = args.clip
         model_args.epochs = args.epochs
-        model_args.multi_gpu = args.multi_gpu
+        model_args.distributed = args.distributed
         model_args.devices = args.devices
         model_args.save = args.save
 
@@ -747,15 +809,16 @@ def main(args):
         args = model_args
 
     #Print Params
-    for argk, argv in args.__dict__.items():
-        print("{}: {}".format(argk, argv))
-    print("")
-    print("Data loading finished. time: {:.3f} s".format(datatime_end-datatime_begin))
+    if args.rank == 0:
+        for argk, argv in args.__dict__.items():
+            print("{}: {}".format(argk, argv))
+        print("")
+        print("Data loading finished. time: {:.3f} s".format(datatime_end-datatime_begin))
 
-    if args.eval:
-        print("SKIP TRAINING")
-    else:
-        print("TRAINING......")
+        if args.eval:
+            print("SKIP TRAINING")
+        else:
+            print("TRAINING......")
 
 
     if args.load:
@@ -823,10 +886,13 @@ def main(args):
     else:
         criterion = nn.CrossEntropyLoss()
 
-    model.to(devices[0])
-    criterion.to(devices[0])
-    if args.multi_gpu:
-        model = DataParallel(model, device_ids=devices, dim=1)
+    model.to(devices[args.rank])
+    criterion.to(devices[args.rank])
+
+    if args.distributed:
+        model = DistributedDataParallel(model, 
+                                        device_ids=[devices[args.rank]], 
+                                        dim=1)
 
     if args.adam:
         optimizer = optim.Adam(model.parameters(), lr=args.lr,
@@ -854,12 +920,13 @@ def main(args):
                 best_eval_ppl = train(model, train_loader, 
                                       valid_loader, criterion, 
                                       args, epoch, optimizer, 
-                                      scheduler, best_eval_ppl)
+                                      scheduler, best_eval_ppl, writer)
                 if args.eval_on_train:
                     eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
                                                                    model, 
                                                                    train_valid_loader,
                                                                    criterion, 
+                                                                   writer,
                                                                    args,
                                                                    args.eval_part)
                 else:
@@ -867,64 +934,65 @@ def main(args):
                                                                     model, 
                                                                     valid_loader, 
                                                                     criterion, 
+                                                                    writer,
                                                                     args)
+                if args.rank == 0:
+                    save_pred(args.savepath, "eval_" + str(epoch), eval_preds, eval_trgs)
 
-                save_pred(savepath, "eval_" + str(epoch), eval_preds, eval_trgs)
+                    print('-' * 89)
+                    print('| end of epoch {:3d} | time: {:5.2f}s '
+                          '| valid bleu {:5.2f} '
+                          '| valid ppl {:5.2f} '.format(epoch, 
+                                                        (time.time() - epoch_start_time),
+                                                        eval_bleu * 100,
+                                                        eval_ppl))
+                    print('-' * 89)
+                    writer.add_scalar("valid/bleu", eval_bleu, 
+                                      epoch * len(train_loader))
+                    writer.flush()
 
-                print('-' * 89)
-                print('| end of epoch {:3d} | time: {:5.2f}s '
-                      '| valid bleu {:5.2f} '
-                      '| valid ppl {:5.2f} '.format(epoch, 
-                                                    (time.time() - epoch_start_time),
-                                                    eval_bleu * 100,
-                                                    eval_ppl))
-                print('-' * 89)
-                writer.add_scalar("valid/bleu", eval_bleu, 
-                                  epoch * len(train_loader))
-                writer.flush()
+                    module = model.module if args.distributed else model
 
-                module = model.module if args.multi_gpu else model
-
-                torch.save({
-                    "model_args": args,
-                    "model_state_dict": module.state_dict(),
-                    "criterion": criterion.state_dict()
-                    }, 
-                    savepath + 
-                    "/" + args.save + "_" + str(epoch) + ".pt")
-
-                # 0 if lower ppl then save model
-                # 1 if higher bleu then save model
-                if eval_ppl < best_eval_ppl:
                     torch.save({
                         "model_args": args,
                         "model_state_dict": module.state_dict(),
                         "criterion": criterion.state_dict()
                         }, 
-                        savepath + 
-                        "/" + args.save + "_best" + ".pt")
-                    print("save best model for better ppl")
-                    if eval_bleu > best_eval_bleu:
-                        best_eval_bleu = eval_bleu
-                    best_eval_ppl = eval_ppl
-                    best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
-                    # save prediction
-                    save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
-                else:
-                    if eval_bleu > best_eval_bleu:
+                        args.savepath + 
+                        "/" + args.save + "_" + str(epoch) + ".pt")
+
+                    # 0 if lower ppl then save model
+                    # 1 if higher bleu then save model
+                    if eval_ppl < best_eval_ppl:
                         torch.save({
                             "model_args": args,
                             "model_state_dict": module.state_dict(),
                             "criterion": criterion.state_dict()
                             }, 
-                            savepath + 
+                            args.savepath + 
                             "/" + args.save + "_best" + ".pt")
-                        print("save best model for better bleu")
-                        best_eval_bleu = eval_bleu
+                        print("save best model for better ppl")
+                        if eval_bleu > best_eval_bleu:
+                            best_eval_bleu = eval_bleu
+                        best_eval_ppl = eval_ppl
                         best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
                         # save prediction
-                        save_pred(savepath, "eval_best", best_eval_preds, 
-                                  best_eval_trgs)
+                        save_pred(args.savepath, "eval_best", best_eval_preds, best_eval_trgs)
+                    else:
+                        if eval_bleu > best_eval_bleu:
+                            torch.save({
+                                "model_args": args,
+                                "model_state_dict": module.state_dict(),
+                                "criterion": criterion.state_dict()
+                                }, 
+                                args.savepath + 
+                                "/" + args.save + "_best" + ".pt")
+                            print("save best model for better bleu")
+                            best_eval_bleu = eval_bleu
+                            best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
+                            # save prediction
+                            save_pred(args.savepath, "eval_best", best_eval_preds, 
+                                      best_eval_trgs)
 
         except KeyboardInterrupt:
             print('-' * 89)
@@ -932,29 +1000,35 @@ def main(args):
 
     ### Reload the best model
 
-    if args.eval:
-        best_model = args.load
-    else:
-        best_model = savepath + "/" + args.save + "_best.pt"
+    if args.rank == 0:
+        if args.eval:
+            best_model = args.load
+        else:
+            best_model = args.savepath + "/" + args.save + "_best.pt"
 
-    eval_checkpoint = torch.load(best_model, map_location=devices[0])
-    model_state_dict = eval_checkpoint["model_state_dict"]
+        eval_checkpoint = torch.load(best_model, map_location=devices[0])
+        model_state_dict = eval_checkpoint["model_state_dict"]
 
-    module = model.module if args.multi_gpu else model
-    module.load_state_dict(model_state_dict)
+        module = model.module if args.distributed else model
+        module.load_state_dict(model_state_dict)
 
-    if args.adaptive:
-        criterion.load_state_dict(eval_checkpoint["criterion"])
-        
-    print("=" * 89)
-    print("experiment name: {}".format(args.save))
-    print("saved in: {}".format(os.path.abspath(savepath)))
+        if args.adaptive:
+            criterion.load_state_dict(eval_checkpoint["criterion"])
+            
+        print("=" * 89)
+        print("experiment name: {}".format(args.save))
+        print("saved in: {}".format(os.path.abspath(args.savepath)))
+
+    if args.distributed:
+        broadcast(model)
+        broadcast(criterion)
 
     if args.eval_on_train:
         best_eval_bleu, best_eval_ppl, best_eval_preds, best_eval_trgs = evaluate(
                                                        model, 
                                                        train_valid_loader,
                                                        criterion, 
+                                                       writer,
                                                        args,
                                                        args.eval_part)
     else:
@@ -962,30 +1036,46 @@ def main(args):
                                                         model, 
                                                         valid_loader, 
                                                         criterion, 
+                                                        writer,
                                                         args)
+    if args.rank == 0:
+        save_pred(args.savepath, "eval_best", best_eval_preds, best_eval_trgs)
 
-    save_pred(savepath, "eval_best", best_eval_preds, best_eval_trgs)
-
-    print('=' * 89)
-    print('| End of training | best valid bleu {:5.2f} '
-          '| bset valid ppl {:5.2f}'.format(best_eval_bleu * 100, best_eval_ppl))
-    print('=' * 89)
+        print('=' * 89)
+        print('| End of training | best valid bleu {:5.2f} '
+              '| bset valid ppl {:5.2f}'.format(best_eval_bleu * 100, best_eval_ppl))
+        print('=' * 89)
 
     if args.rocstories:
-        test_accuracy = roc_evaluate(model, dicriminate_loader, criterion, args) 
-        print('| ROCStories test accuracy {:5.2f} % |'.format(test_accuracy * 100,))
-        print('=' * 89)
+        test_accuracy = roc_evaluate(model, 
+                                     dicriminate_loader, 
+                                     criterion, 
+                                     writer,
+                                     args) 
+        if args.rank == 0:
+            print('| ROCStories test accuracy {:5.2f} % |'.format(test_accuracy * 100,))
+            print('=' * 89)
 
     test_bleu, test_ppl, test_preds, test_trgs = evaluate(model, 
                                                           test_loader, 
                                                           criterion, 
+                                                          writer,
                                                           args)
 
     # save prediction
-    save_pred(savepath, "test", test_preds, test_trgs)
-    print('| test bleu {:5.2f} '
-          '| test ppl {:5.2f} |'.format(test_bleu * 100, test_ppl))
-    print('=' * 89)
+    if args.rank == 0:
+        save_pred(args.savepath, "test", test_preds, test_trgs)
+        print('| test bleu {:5.2f} '
+              '| test ppl {:5.2f} |'.format(test_bleu * 100, test_ppl))
+        print('=' * 89)
+
+    if args.distributed:
+        dist.destroy_process_group()
+
+
+def broadcast(model):
+    for var in model.parameters():
+        dist.broadcast(var.data, 0)
 
 
 
@@ -996,7 +1086,9 @@ if __name__ == "__main__":
     savepath = "../../../../experiment/crtn/story/"
     timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
     savepath += args.save + timestr
-
+    
+    args.savepath = savepath
+    args.timestr = timestr
     
     if not os.path.exists("./log/" + args.save + timestr):
         os.mkdir("./log/" + args.save + timestr)
@@ -1004,4 +1096,17 @@ if __name__ == "__main__":
         os.mkdir(savepath)
     writer = SummaryWriter("./log/" + args.save + timestr)
 
-    main(args)
+    if args.distributed:
+        # Pick a free port
+        with socket.socket() as s:
+            s.bind(("localhost", 0))
+            port = s.getsockname()[1]
+            url = "tcp://localhost:" + str(port)
+            args.url = url
+
+        world_size = len(args.devices)
+        from utils import dist_scripts
+        process_fn = dist_scripts.process_base_tail_fn
+        mp.spawn(process_fn, args=(args, ), nprocs=world_size)
+    else:
+        main(args)

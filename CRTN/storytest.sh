@@ -27,6 +27,6 @@ python story_tail.py \
     --query_method single_sum \
     --neighbor_len 20 \
     --eval_steps 5000 \
-    --multi_gpu \
+    --distributed \
     ${@:1}
 

@@ -42,6 +42,6 @@ python story_tail.py \
     --query_method single_sum \
     --eval_steps 3000 \
     --log-interval 100 \
-    --multi_gpu \
+    --distributed \
     ${@:2}
 

@@ -22,6 +22,6 @@ python story_tail.py \
     --vocab_size 25000 \
     --cutoffs 5000 10000 15000 \
     --eval_steps 5000 \
-    --multi_gpu \
+    --distributed \
     ${@:1}
 

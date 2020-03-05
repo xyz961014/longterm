@@ -99,8 +99,6 @@ def parse_args():
                         help="dimension of key, default: 256")
     parser.add_argument("--cache_k", type=int, default=3, 
                         help="select top k values, default: 3")
-    parser.add_argument('--multi_gpu', action="store_true",
-                        help='enable multiple gpus')
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--adaptive', action="store_true",
@@ -197,16 +195,6 @@ def batch_division(batch_size, rank=0, world_size=None):
         return batch_div * rank, batch_size
 
 
-class DataParallel(nn.DataParallel):
-    def __init__(self, module, device_ids=None, output_device=None, dim=0, 
-                 find_unused_parameters=True):
-        super().__init__(module, device_ids, output_device, dim)
-
-    def set_batch_size(self, batch_size):
-        batch_size = batch_size // len(self.device_ids)
-        self.module.set_batch_size(batch_size)
-        self.batch_size = batch_size
-
 def init_key_num(args, device, evaluate=False):
     batch_size = args.eval_batch_size if evaluate else args.batch_size
     key_num = torch.arange(args.cache_N, 0, -1, 
@@ -291,7 +279,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         key_num
         output of prediction of word
     """
-    module = model.module if args.multi_gpu else model
+    module = model.module if args.distributed else model
 
     # record all searched results
     ind_tensor = block.new_ones(0)
@@ -459,7 +447,7 @@ def train(model, train_loader, valid_loader, criterion,
     model.train()
     start_time = time.time()
     total_loss = 0.
-    module = model.module if args.multi_gpu else model
+    module = model.module if args.distributed else model
     #module.encoder.embedding.emb_layers[0].weight[vocab.stoi["<pad>"]].zero_()
     if torch.cuda.is_available():
         device = torch.device("cuda:" + str(args.devices[args.rank]))
@@ -476,6 +464,8 @@ def train(model, train_loader, valid_loader, criterion,
         batch_start, batch_end = batch_division(args.batch_size, args.rank)
 
     for batch, data in enumerate(train_loader):
+        if not data.text.size(0) == args.num_steps:
+            continue
         if args.distributed:
             batch_start, batch_end = batch_division(data.target.size(1), 
                                                     args.rank)
@@ -483,8 +473,6 @@ def train(model, train_loader, valid_loader, criterion,
                             data.target[:,batch_start:batch_end])
         else:
             text, target = data.text, data.target
-        if not text.size(0) == args.num_steps:
-            continue
         text, target = text.to(device), target.to(device)
 
         model.zero_grad()
@@ -576,7 +564,7 @@ def train(model, train_loader, valid_loader, criterion,
 
 def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
     model.eval()                        
-    module = model.module if args.multi_gpu else model
+    module = model.module if args.distributed else model
     # add eos token                     
     eval_loader.dataset.fields["trg"].eos_token = "<eos>"
                                         
@@ -588,7 +576,7 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
     losses = 0.                         
     near_losses = 0.                    
     if args.word_loss:                  
-        loss_file = open(savepath + "/" + args.save + "_word_loss.pkl", "wb")
+        loss_file = open(args.savepath + "/" + args.save + "_word_loss.pkl", "wb")
         loss_obj = TargetText()         
         loss_obj.clear()                
                                         
@@ -608,7 +596,6 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
         with tqdm(total=total_len) as pbar:
             pbar.set_description("evaluating")
 
-
             for batch, data in enumerate(eval_loader):
                 if batch >= total_len:
                     break
@@ -624,7 +611,6 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                                 data.trg[:,batch_start:batch_end].to(device))
                 else:
                     src, trg = data.src.to(device), data.trg.to(device)
-
 
                 eval_batch_size = trg.size(1)
                 srcs = src.split(module.args.num_steps)
@@ -849,6 +835,7 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
         len_eval = len_eval.item()
     ppl = math.exp(losses / len_eval)
     near_ppl = math.exp(near_losses / len_eval)
+
     if args.word_loss:
         pkl.dump(loss_obj, loss_file)
         loss_file.close()
@@ -859,10 +846,10 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
 
 def roc_evaluate(model, eval_loader, criterion, writer, args):
     model.eval()
-    module = model.module if args.multi_gpu else model
+    module = model.module if args.distributed else model
 
     if torch.cuda.is_available():
-        device = torch.device("cuda:" + str(args.devices[0]))
+        device = torch.device("cuda:" + str(args.devices[args.rank]))
     else:
         device = torch.device("cpu")
 
@@ -1048,7 +1035,6 @@ def main(args):
         args.batch_size = len(devices) * (args.batch_size // len(devices))
         args.eval_batch_size = len(devices) * (args.eval_batch_size // len(devices))
 
-
     if args.adaptive:
         args.tie_projs = [False] + [True] * 3
 
@@ -1100,7 +1086,7 @@ def main(args):
         model_args.scheduler = args.scheduler
         model_args.clip = args.clip
         model_args.epochs = args.epochs
-        model_args.multi_gpu = args.multi_gpu
+        model_args.distributed = args.distributed
         model_args.devices = args.devices
         model_args.save = args.save
 
@@ -1183,9 +1169,6 @@ def main(args):
                                         device_ids=[devices[args.rank]], 
                                         dim=1)
         model.set_batch_size(args.batch_size)
-    else:
-        if args.multi_gpu:
-            model = DataParallel(model, device_ids=devices, dim=1)
 
     if args.adam:
         optimizer = optim.Adam(model.parameters(), lr=args.lr,
@@ -1253,11 +1236,13 @@ def main(args):
                     if args.eval_bleu:
                         print('| valid bleu {:5.2f} '.format(eval_bleu * 100))
 
+                    print('-' * 89)
+
                     writer.add_scalar("valid/bleu", eval_bleu, 
                                       epoch * len(train_loader))
                     writer.flush()
 
-                    module = model.module if args.multi_gpu else model
+                    module = model.module if args.distributed else model
 
                     torch.save({
                         "model_args": module.args,
@@ -1297,7 +1282,6 @@ def main(args):
                             # save prediction
                             save_pred(args.savepath, "eval_best", best_eval_preds, 
                                       best_eval_trgs)
-                    print('-' * 89)
 
         except KeyboardInterrupt:
             print('-' * 89)
@@ -1314,7 +1298,7 @@ def main(args):
         eval_checkpoint = torch.load(best_model, map_location=devices[args.rank])
         model_state_dict = eval_checkpoint["model_state_dict"]
 
-        module = model.module if args.multi_gpu else model
+        module = model.module if args.distributed else model
         module.load_state_dict(model_state_dict)
 
         if args.adaptive:
@@ -1398,10 +1382,6 @@ def broadcast(model):
     for var in model.parameters():
         dist.broadcast(var.data, 0)
 
-#def process_fn(rank, args):
-#    local_args = copy(args)
-#    local_args.rank = rank
-#    main(local_args)
 
 
 if __name__ == "__main__":

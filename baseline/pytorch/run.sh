@@ -21,6 +21,6 @@ python xl_lm.py \
     --adaptive \
     --eval_steps 3000 \
     --log-interval 50 \
-    --multi_gpu \
+    --distributed \
     --save base \
     ${@:1}
