@@ -14,7 +14,6 @@ import pickle as pkl
 warnings.filterwarnings("ignore")
 
 sys.path.append("..")
-sys.path.append("./utils")
 
 import numpy as np
 import math
@@ -480,8 +479,8 @@ def train(model, train_loader, valid_loader, criterion,
         if args.distributed:
             batch_start, batch_end = batch_division(data.target.size(1), 
                                                     args.rank)
-            (text, target) = (data.text[:,batch_start:batch_end], 
-                              data.target[:,batch_start:batch_end])
+            text, target = (data.text[:,batch_start:batch_end], 
+                            data.target[:,batch_start:batch_end])
         else:
             text, target = data.text, data.target
         if not text.size(0) == args.num_steps:
@@ -848,10 +847,8 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
         dist.reduce(len_eval, 0)
         losses = losses.item()
         len_eval = len_eval.item()
-    loss_mean = losses / len_eval
-    ppl = math.exp(loss_mean)
-    near_loss_mean = near_losses / len_eval
-    near_ppl = math.exp(near_loss_mean)
+    ppl = math.exp(losses / len_eval)
+    near_ppl = math.exp(near_losses / len_eval)
     if args.word_loss:
         pkl.dump(loss_obj, loss_file)
         loss_file.close()
@@ -1032,16 +1029,8 @@ def main(args):
 
     writer = SummaryWriter("./log/" + args.save + args.timestr)
 
-    np.random.seed(args.seed)
-    torch.manual_seed(args.seed)
-
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
         devices = [torch.device("cuda:" + str(i)) for i in args.devices]
-
-        if not args.distributed:
-            args.batch_size = len(devices) * (args.batch_size // len(devices))
-            args.eval_batch_size = len(devices) * (args.eval_batch_size // len(devices))
     else:
         devices = [torch.device("cpu")]
 
@@ -1050,6 +1039,15 @@ def main(args):
                                 rank=args.rank,
                                 world_size=len(devices))
         torch.cuda.set_device(devices[args.rank])
+
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+
+    if not args.distributed:
+        args.batch_size = len(devices) * (args.batch_size // len(devices))
+        args.eval_batch_size = len(devices) * (args.eval_batch_size // len(devices))
+
 
     if args.adaptive:
         args.tie_projs = [False] + [True] * 3
@@ -1060,9 +1058,10 @@ def main(args):
  
     ### Load Data ###
 
-    print("Loading data from %s" % args.data)
-    datatime_begin = time.time()
+    if args.rank == 0:
+        print("Loading data from %s" % args.data)
 
+    datatime_begin = time.time()
     
     if args.rocstories:
         rocdata = ROCDataset(args.data, args.vocab_size, args.num_steps)
@@ -1122,15 +1121,16 @@ def main(args):
     args.mem_len = args.cache_k * args.num_steps
 
     #Print Params
-    for argk, argv in args.__dict__.items():
-        print("{}: {}".format(argk, argv))
-    print("")
-    print("Data loading finished. time: {:.3f} s".format(datatime_end-datatime_begin))
+    if args.rank == 0:
+        for argk, argv in args.__dict__.items():
+            print("{}: {}".format(argk, argv))
+        print("")
+        print("Data loading finished. time: {:.3f} s".format(datatime_end-datatime_begin))
 
-    if args.eval:
-        print("SKIP TRAINING")
-    else:
-        print("TRAINING......")
+        if args.eval:
+            print("SKIP TRAINING")
+        else:
+            print("TRAINING......")
 
 
     if args.load:
@@ -1143,7 +1143,7 @@ def main(args):
 
         args.batch_size = batch_size
 
-        model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        model.load_state_dict(checkpoint["model_state_dict"])
         model.set_batch_size(batch_size)
     else:
         #create model
@@ -1413,7 +1413,6 @@ if __name__ == "__main__":
 
     args.savepath = savepath
     args.timestr = timestr
-
     
     if not os.path.exists("./log/" + args.save + timestr):
         os.mkdir("./log/" + args.save + timestr)
