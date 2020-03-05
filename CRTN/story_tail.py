@@ -1301,24 +1301,27 @@ def main(args):
 
     ### Reload the best model
 
-    if args.eval:
-        best_model = args.load
-    else:
-        best_model = args.savepath + "/" + args.save + "_best.pt"
-
-    eval_checkpoint = torch.load(best_model, map_location=devices[args.rank])
-    model_state_dict = eval_checkpoint["model_state_dict"]
-
-    module = model.module if args.multi_gpu else model
-    module.load_state_dict(model_state_dict)
-
-    if args.adaptive:
-        criterion.load_state_dict(eval_checkpoint["criterion"])
-
     if args.rank == 0:
+        if args.eval:
+            best_model = args.load
+        else:
+            best_model = args.savepath + "/" + args.save + "_best.pt"
+
+        eval_checkpoint = torch.load(best_model, map_location=devices[args.rank])
+        model_state_dict = eval_checkpoint["model_state_dict"]
+
+        module = model.module if args.multi_gpu else model
+        module.load_state_dict(model_state_dict)
+
+        if args.adaptive:
+            criterion.load_state_dict(eval_checkpoint["criterion"])
+
         print("=" * 89)
         print("experiment name: {}".format(args.save))
         print("saved in: {}".format(os.path.abspath(args.savepath)))
+
+    broadcast(module)
+    broadcast(criterion)
 
     if args.eval_on_train:
         (best_eval_bleu, 
@@ -1385,6 +1388,10 @@ def main(args):
     if args.distributed:
         dist.destroy_process_group()
 
+
+def broadcast(model):
+    for var in model.parameters():
+        dist.broadcast(var.data, 0)
 
 #def process_fn(rank, args):
 #    local_args = copy(args)
