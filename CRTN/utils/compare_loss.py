@@ -125,14 +125,6 @@ def main(args):
         #    prob_model_better = model_better / total
         #    vis.line(np.array([[loss_diff]]), np.array([lossb]), opts=opts_diff, win="loss diff", update="append")
 
-
-            
-
-
-
-
-        base_file.close()
-        model_file.close()
     elif args.func == 1:
         loss_var = []
         with open(args.model_loss, "rb") as model_file:

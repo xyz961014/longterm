@@ -403,6 +403,8 @@ def evaluate(model, eval_loader, criterion, writer, args):
                         loss_list = [loss_tensor.new_zeros(targets.size(0) * batch_division(data.target.size(1), r, single_value=True)) for r in range(dist.get_world_size())]
                         dist.all_gather(targets_list, targets)
                         dist.all_gather(loss_list, loss_tensor)
+                        targets = torch.cat(targets_list, dim=1)
+                        loss_tensor = torch.cat(loss_list, dim=0)
                     if args.rank == 0:
                         words = [vocab.itos[w] for w in targets.view(-1)]
                         word_loss = [l.item() for l in loss_tensor]
