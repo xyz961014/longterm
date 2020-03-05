@@ -137,15 +137,15 @@ def main(args):
         loss_var = []
         with open(args.model_loss, "rb") as model_file:
             model_obj = pkl.load(model_file)
-
-            loss_var = list(zip(model_obj.loss, model_obj.var))
-            
-            loss_var = sorted(loss_var, key=lambda x:x[0])
-            for i in tqdm(range(len(loss_var) - args.smooth_window + 1)):
-                loss = loss_var[i][0]
-                var = np.mean([x[1] for x in loss_var[i:i+args.smooth_window]])
-                vis.line(np.array([[var]]), np.array([[loss]]), 
-                         win="loss-variance", update="append")
+        
+        loss_var = list(zip(model_obj.loss, model_obj.var))
+        
+        loss_var = sorted(loss_var, key=lambda x:x[0])
+        for i in tqdm(range(len(loss_var) - args.smooth_window + 1)):
+            loss = loss_var[i][0]
+            var = np.mean([x[1] for x in loss_var[i:i+args.smooth_window]])
+            vis.line(np.array([[var]]), np.array([[loss]]), 
+                     win="loss-variance", update="append")
     elif args.func == 2:
         freq_loss = []
         corpus = TailDataset(args.data, 1e6, 50)
@@ -153,15 +153,15 @@ def main(args):
         with open(args.model_loss, "rb") as model_file:
             model_obj = pkl.load(model_file)
 
-            for l, r in list(zip(model_obj.loss, model_obj.words)):
-                freq_loss.append((r, vocab.freqs[r], l))
-            
-            freq_loss = sorted(freq_loss, key=lambda x:x[1])
-            for i in tqdm(range(0, len(freq_loss) - args.smooth_window + 1)):
-                freq = freq_loss[i][1]
-                loss = np.mean([x[2] for x in freq_loss[i:i+args.smooth_window]])
-                vis.line(np.array([[loss]]), np.array([[freq]]), 
-                         win="freq-loss", update="append")
+        for l, r in list(zip(model_obj.loss, model_obj.words)):
+            freq_loss.append((r, vocab.freqs[r], l))
+        
+        freq_loss = sorted(freq_loss, key=lambda x:x[1])
+        for i in tqdm(range(0, len(freq_loss) - args.smooth_window + 1)):
+            freq = freq_loss[i][1]
+            loss = np.mean([x[2] for x in freq_loss[i:i+args.smooth_window]])
+            vis.line(np.array([[loss]]), np.array([[freq]]), 
+                     win="freq-loss", update="append")
     elif args.func == 3:
         # freq window ppl
         opts = {

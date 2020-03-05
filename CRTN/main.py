@@ -170,22 +170,28 @@ class DistributedDataParallel(nn.parallel.DistributedDataParallel):
         self.world_size = dist.get_world_size()
 
     def set_batch_size(self, batch_size):
-        batch_start, batch_end = batch_division(batch_size, 
-                                                self.rank, 
-                                                self.world_size)
-        batch_size = batch_end - batch_start
+        batch_size = batch_division(batch_size, 
+                                    self.rank, 
+                                    self.world_size,
+                                    single_value=True)
         self.batch_size = batch_size
         self.module.set_batch_size(batch_size)
 
 
-def batch_division(batch_size, rank=0, world_size=None):
+def batch_division(batch_size, rank=0, world_size=None, single_value=False):
     if world_size is None:
         world_size = dist.get_world_size()
     batch_div = batch_size // world_size
     if rank < world_size - 1:
-        return batch_div * rank, batch_div * (rank + 1)
+        if not single_value:
+            return batch_div * rank, batch_div * (rank + 1)
+        else:
+            return batch_div
     elif rank == world_size - 1:
-        return batch_div * rank, batch_size
+        if not single_value:
+            return batch_div * rank, batch_size
+        else:
+            return batch_size - batch_div * rank
 
 
 def init_key_num(args, device, evaluate=False):
@@ -333,7 +339,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
         mem = None              
     key_num = init_key_num(args, device, True)
 
-    if args.word_loss:                  
+    if args.word_loss and args.rank == 0:
         vocab = eval_loader.dataset.fields["text"].vocab 
         loss_file = open(args.savepath + "/" + args.save + "_word_loss.pkl", "wb")
         loss_obj = TargetText(batch_size=args.eval_batch_size, 
@@ -392,14 +398,20 @@ def evaluate(model, eval_loader, criterion, writer, args):
                 total_loss += loss.item()
 
                 if args.word_loss:
-                    words = [vocab.itos[w] for w in targets.view(-1)]
-                    word_loss = [l.item() for l in loss_tensor]
-                    loss_obj.add_words(words)
-                    loss_obj.add_losss(word_loss)
+                    if args.distributed:
+                        targets_list = [targets.new_zeros(targets.size(0), batch_division(data.target.size(1), r, single_value=True)) for r in range(dist.get_world_size())]
+                        loss_list = [loss_tensor.new_zeros(targets.size(0) * batch_division(data.target.size(1), r, single_value=True)) for r in range(dist.get_world_size())]
+                        dist.all_gather(targets_list, targets)
+                        dist.all_gather(loss_list, loss_tensor)
+                    if args.rank == 0:
+                        words = [vocab.itos[w] for w in targets.view(-1)]
+                        word_loss = [l.item() for l in loss_tensor]
+                        loss_obj.add_words(words)
+                        loss_obj.add_losss(word_loss)
 
                 pbar.update(1)
 
-    if args.word_loss:
+    if args.word_loss and args.rank == 0:
         pkl.dump(loss_obj, loss_file)
         loss_file.close()
 
