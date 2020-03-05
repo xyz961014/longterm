@@ -524,13 +524,16 @@ def train(model, train_loader, valid_loader, criterion,
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
-            print('| epoch {:1d} |{:5d}/{:5d} batches | lr {:02.2e} | '
-                  'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
-                epoch, batch, len(train_loader), 
-                optimizer.state_dict()["param_groups"][0]["lr"],
-                elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
+            if args.rank == 0:
+                print('| epoch {:1d} |{:5d}/{:5d} batches | lr {:02.2e} | '
+                      'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
+                    epoch, batch, len(train_loader), 
+                    optimizer.state_dict()["param_groups"][0]["lr"],
+                    elapsed * 1000 / args.log_interval, 
+                    cur_loss, 
+                    math.exp(cur_loss)))
             writer.add_scalar("train/ppl", math.exp(cur_loss), 
-                                batch + (epoch - 1) * len(train_loader))
+                              batch + (epoch - 1) * len(train_loader))
             writer.flush()
             total_loss = 0.
             start_time = time.time()
@@ -546,23 +549,24 @@ def train(model, train_loader, valid_loader, criterion,
                                       writer,
                                       args, 
                                       args.eval_part)
-            print('| eval at step {:3d} | eval bleu {:5.2f} |'
-                  ' eval ppl {:5.2f}'.format(batch, 
-                                             eval_bleu * 100,
-                                             eval_ppl))
-            save_pred(args.savepath, 
-                      "eval_" + str(epoch) + "_" + str(batch // args.eval_steps), 
-                      eval_preds, eval_trgs)
-            if eval_ppl < best_eval_ppl: 
-                best_eval_ppl = eval_ppl
-                torch.save({
-                    "model_args": module.args,
-                    "model_state_dict": module.state_dict(),
-                    "criterion": criterion.state_dict()
-                    }, 
-                    args.savepath + "/" + args.save + "_best.pt")
-                print("save best model for better ppl")
-            print('-' * 60)
+            if args.rank == 0:
+                print('| eval at step {:3d} | eval bleu {:5.2f} |'
+                      ' eval ppl {:5.2f}'.format(batch, 
+                                                 eval_bleu * 100,
+                                                 eval_ppl))
+                save_pred(args.savepath, 
+                          "eval_" + str(epoch) + "_" + str(batch // args.eval_steps), 
+                          eval_preds, eval_trgs)
+                if eval_ppl < best_eval_ppl: 
+                    best_eval_ppl = eval_ppl
+                    torch.save({
+                        "model_args": module.args,
+                        "model_state_dict": module.state_dict(),
+                        "criterion": criterion.state_dict()
+                        }, 
+                        args.savepath + "/" + args.save + "_best.pt")
+                    print("save best model for better ppl")
+                print('-' * 60)
             start_time = time.time()
     
     return best_eval_ppl
@@ -833,6 +837,13 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                 pbar.update(1)
 
 
+    if args.distributed:
+        losses = torch.tensor([losses]).cuda()
+        len_eval = torch.tensor([len_eval]).cuda()
+        dist.reduce(losses, 0)
+        dist.reduce(len_eval, 0)
+        losses = losses.item()
+        len_eval = len_eval.item()
     loss_mean = losses / len_eval
     ppl = math.exp(loss_mean)
     near_loss_mean = near_losses / len_eval
@@ -1000,8 +1011,13 @@ def roc_evaluate(model, eval_loader, criterion, writer, args):
 
                 pbar.update(1)
 
-        corrects = torch.cat(corrects, 0)
-        accuracy = corrects.sum().item() / len_eval
+        corrects = torch.cat(corrects, 0).sum()
+        if args.distributed:
+            len_eval = torch.tensor([len_eval]).cuda()
+            dist.reduce(corrects, 0)
+            dist.reduce(len_eval, 0)
+            len_eval = len_eval.item()
+        accuracy = corrects.item() / len_eval
 
     model.train()
     model.set_batch_size(args.batch_size)
@@ -1216,66 +1232,68 @@ def main(args):
                                               writer,
                                               args)
 
-                save_pred(args.savepath, "eval_" + str(epoch), eval_preds, eval_trgs)
+                if args.rank == 0:
+                    save_pred(args.savepath, "eval_" + str(epoch), 
+                              eval_preds, eval_trgs)
 
-                print('-' * 89)
-                print('| end of epoch {:3d}'
-                      ' | time: {:5.2f}s '.format(epoch,
-                                                  time.time() - epoch_start_time),
-                      end="")
-                print('| valid ppl {:5.2f} '.format(eval_ppl), end="")
-                if args.compare_farnear:
-                    print('| valid near ppl {:5.2f} '.format(eval_nearppl))
-                else:
-                    print("")
-                if args.eval_bleu:
-                    print('| valid bleu {:5.2f} '.format(eval_bleu * 100))
+                    print('-' * 89)
+                    print('| end of epoch {:3d}'
+                          ' | time: {:5.2f}s '.format(epoch,
+                                                      time.time() - epoch_start_time),
+                          end="")
+                    print('| valid ppl {:5.2f} '.format(eval_ppl), end="")
+                    if args.compare_farnear:
+                        print('| valid near ppl {:5.2f} '.format(eval_nearppl))
+                    else:
+                        print("")
+                    if args.eval_bleu:
+                        print('| valid bleu {:5.2f} '.format(eval_bleu * 100))
 
-                writer.add_scalar("valid/bleu", eval_bleu, 
-                                  epoch * len(train_loader))
-                writer.flush()
+                    writer.add_scalar("valid/bleu", eval_bleu, 
+                                      epoch * len(train_loader))
+                    writer.flush()
 
-                module = model.module if args.multi_gpu else model
+                    module = model.module if args.multi_gpu else model
 
-                torch.save({
-                    "model_args": module.args,
-                    "model_state_dict": module.state_dict(),
-                    "criterion": criterion.state_dict()
-                    }, 
-                    args.savepath + 
-                    "/" + args.save + "_" + str(epoch) + ".pt")
-
-                # 0 if lower ppl then save model
-                # 1 if higher bleu then save model
-                if eval_ppl < best_eval_ppl:
-                    best_eval_ppl = eval_ppl
                     torch.save({
                         "model_args": module.args,
                         "model_state_dict": module.state_dict(),
                         "criterion": criterion.state_dict()
                         }, 
-                        args.savepath + "/" + args.save + "_best.pt")
-                    print("save best model for better ppl")
-                    if eval_bleu > best_eval_bleu:
-                        best_eval_bleu = eval_bleu
-                    best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
-                    # save prediction
-                    save_pred(args.savepath, "eval_best", best_eval_preds, best_eval_trgs)
-                else:
-                    if eval_bleu > best_eval_bleu:
+                        args.savepath + 
+                        "/" + args.save + "_" + str(epoch) + ".pt")
+
+                    # 0 if lower ppl then save model
+                    # 1 if higher bleu then save model
+                    if eval_ppl < best_eval_ppl:
+                        best_eval_ppl = eval_ppl
                         torch.save({
                             "model_args": module.args,
                             "model_state_dict": module.state_dict(),
                             "criterion": criterion.state_dict()
                             }, 
                             args.savepath + "/" + args.save + "_best.pt")
-                        print("save best model for better bleu")
-                        best_eval_bleu = eval_bleu
+                        print("save best model for better ppl")
+                        if eval_bleu > best_eval_bleu:
+                            best_eval_bleu = eval_bleu
                         best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
                         # save prediction
-                        save_pred(args.savepath, "eval_best", best_eval_preds, 
-                                  best_eval_trgs)
-                print('-' * 89)
+                        save_pred(args.savepath, "eval_best", best_eval_preds, best_eval_trgs)
+                    else:
+                        if eval_bleu > best_eval_bleu:
+                            torch.save({
+                                "model_args": module.args,
+                                "model_state_dict": module.state_dict(),
+                                "criterion": criterion.state_dict()
+                                }, 
+                                args.savepath + "/" + args.save + "_best.pt")
+                            print("save best model for better bleu")
+                            best_eval_bleu = eval_bleu
+                            best_eval_preds, best_eval_trgs = eval_preds, eval_trgs
+                            # save prediction
+                            save_pred(args.savepath, "eval_best", best_eval_preds, 
+                                      best_eval_trgs)
+                    print('-' * 89)
 
         except KeyboardInterrupt:
             print('-' * 89)
@@ -1297,9 +1315,10 @@ def main(args):
     if args.adaptive:
         criterion.load_state_dict(eval_checkpoint["criterion"])
 
-    print("=" * 89)
-    print("experiment name: {}".format(args.save))
-    print("saved in: {}".format(os.path.abspath(args.savepath)))
+    if args.rank == 0:
+        print("=" * 89)
+        print("experiment name: {}".format(args.save))
+        print("saved in: {}".format(os.path.abspath(args.savepath)))
 
     if args.eval_on_train:
         (best_eval_bleu, 
@@ -1319,20 +1338,21 @@ def main(args):
          best_eval_trgs,
          best_eval_nearppl) = evaluate(model, valid_loader, criterion, writer, args)
 
-    save_pred(args.savepath, "eval_best", best_eval_preds, best_eval_trgs)
+    if args.rank == 0:
+        save_pred(args.savepath, "eval_best", best_eval_preds, best_eval_trgs)
 
-    print('=' * 89)
-    print('| End of training '
-          '| best valid ppl {:5.2f} '.format(best_eval_ppl), end="")
+        print('=' * 89)
+        print('| End of training '
+              '| best valid ppl {:5.2f} '.format(best_eval_ppl), end="")
 
-    if args.compare_farnear:
-        print('| best valid near ppl {:5.2f} '.format(best_eval_nearppl))
-    else:
-        print("")
-    if args.eval_bleu:
-        print('| best valid bleu {:5.2f} '.format(best_eval_bleu * 100))
+        if args.compare_farnear:
+            print('| best valid near ppl {:5.2f} '.format(best_eval_nearppl))
+        else:
+            print("")
+        if args.eval_bleu:
+            print('| best valid bleu {:5.2f} '.format(best_eval_bleu * 100))
 
-    print('=' * 89)
+        print('=' * 89)
 
     if args.rocstories:
         test_accuracy = roc_evaluate(model, 
@@ -1340,8 +1360,9 @@ def main(args):
                                      criterion, 
                                      writer, 
                                      args) 
-        print('| ROCStories test accuracy {:5.2f} % |'.format(test_accuracy * 100))
-        print('=' * 89)
+        if args.rank == 0:
+            print('| ROCStories test accuracy {:5.2f} % |'.format(test_accuracy * 100))
+            print('=' * 89)
 
     (test_bleu, 
      test_ppl, 
@@ -1350,15 +1371,16 @@ def main(args):
      test_nearppl) = evaluate(model, test_loader, criterion, writer, args)
 
     # save prediction
-    save_pred(args.savepath, "test", test_preds, test_trgs)
-    print('| test ppl {:5.2f} '.format(test_ppl), end="")
-    if args.compare_farnear:
-        print('| test near ppl {:5.2f} '.format(test_nearppl))
-    else:
-        print("")
-    if args.eval_bleu:
-        print('| test bleu {:5.2f} '.format(test_bleu * 100))
-    print('=' * 89)
+    if args.rank == 0:
+        save_pred(args.savepath, "test", test_preds, test_trgs)
+        print('| test ppl {:5.2f} '.format(test_ppl), end="")
+        if args.compare_farnear:
+            print('| test near ppl {:5.2f} '.format(test_nearppl))
+        else:
+            print("")
+        if args.eval_bleu:
+            print('| test bleu {:5.2f} '.format(test_bleu * 100))
+        print('=' * 89)
 
     if args.distributed:
         dist.destroy_process_group()
