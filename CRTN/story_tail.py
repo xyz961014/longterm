@@ -575,9 +575,10 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                                         
     losses = 0.                         
     near_losses = 0.                    
-    if args.word_loss:                  
+    if args.word_loss and args.rank == 0:                  
         loss_file = open(args.savepath + "/" + args.save + "_word_loss.pkl", "wb")
-        loss_obj = TargetText()         
+        loss_obj = TargetText(batch_size=args.eval_batch_size,
+                              num_steps=args.num_steps)         
         loss_obj.clear()                
                                         
                                         
