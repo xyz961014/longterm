@@ -218,7 +218,7 @@ def update_cache(model, batch_size, key, value, hidden, text, key_num):
 
 
 def train(model, train_loader, valid_loader, criterion, 
-          args, epoch, optimizer, scheduler, best_eval_ppl, writer):
+          args, epoch, optimizer, best_eval_ppl, writer):
 
     model.train()
     start_time = time.time()
@@ -273,9 +273,6 @@ def train(model, train_loader, valid_loader, criterion,
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
-
-        if args.scheduler == "cosine":
-            scheduler.step()
 
         total_loss += loss.item()
 
@@ -606,9 +603,7 @@ def main(args):
                               weight_decay=args.weight_decay)
     
     if args.scheduler == "cosine":
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 
-                                                         len(train_loader) 
-                                                         * args.epochs)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
     elif args.scheduler == "constant":
         scheduler = None
 
@@ -620,9 +615,12 @@ def main(args):
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
                 best_eval_ppl = train(model, train_loader, valid_loader, 
-                                      criterion, args, epoch, optimizer, scheduler,
+                                      criterion, args, epoch, optimizer,
                                       best_eval_ppl, writer)
                 eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+                if args.scheduler == "cosine":
+                    scheduler.step()
+
                 if args.rank == 0:
                     print('-' * 89)
                     print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '

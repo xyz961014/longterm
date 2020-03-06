@@ -442,7 +442,7 @@ def save_pred(savepath, name, preds, trgs):
             fw.write("\n")
 
 def train(model, train_loader, valid_loader, criterion, 
-          args, epoch, optimizer, scheduler, best_eval_ppl, writer):
+          args, epoch, optimizer, best_eval_ppl, writer):
 
     model.train()
     start_time = time.time()
@@ -502,9 +502,6 @@ def train(model, train_loader, valid_loader, criterion,
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
-
-        if args.scheduler == "cosine":
-            scheduler.step()
 
         total_loss += loss.item()
 
@@ -1179,9 +1176,7 @@ def main(args):
                               weight_decay=args.weight_decay)
     
     if args.scheduler == "cosine":
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 
-                                                         len(train_loader) 
-                                                         * args.epochs)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
     elif args.scheduler == "constant":
         scheduler = None
 
@@ -1194,9 +1189,12 @@ def main(args):
             best_eval_preds, best_eval_trgs = [], []
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
-                best_eval_ppl = train(model, train_loader, valid_loader, criterion, 
-                                      args, epoch, optimizer, scheduler, 
+                best_eval_ppl = train(model, train_loader, valid_loader,
+                                      criterion, args, epoch, optimizer, 
                                       best_eval_ppl, writer)
+                if args.scheduler == "cosine":
+                    scheduler.step()
+
 
                 if args.eval_on_train:
                     (eval_bleu, 
