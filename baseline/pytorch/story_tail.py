@@ -72,6 +72,10 @@ def parse_args():
     parser.add_argument('--scheduler', type=str, default='cosine', 
                         choices=['cosine', 'constant'],
                         help='lr scheduler to use')
+    parser.add_argument('--eta_min', type=float, default=0.0,
+                        help='lr_min for cosine scheduler')
+    parser.add_argument('--warmup_steps', type=int, default=0,
+                        help='linear warmup steps')
     parser.add_argument('--clip', type=float, default=0.25,
                         help='gradient clipping')
     parser.add_argument('--beam_size', type=int, default=4,
@@ -322,8 +326,8 @@ def save_pred(savepath, name, preds, trgs):
             fw.write(t)
             fw.write("\n")
 
-def train(model, train_loader, valid_loader, criterion, 
-          args, epoch, optimizer, best_eval_ppl, writer):
+def train(model, train_loader, valid_loader, criterion, scheduler, 
+          args, epoch, step, optimizer, best_eval_ppl, writer):
 
     model.train()
     start_time = time.time()
@@ -364,6 +368,14 @@ def train(model, train_loader, valid_loader, criterion,
         optimizer.step()
 
         total_loss += loss.item()
+
+        step += 1
+        if step <= args.warmup_steps:
+            curr_lr = args.lr * step / args.warmup_steps
+            optimizer.param_groups[0]['lr'] = curr_lr
+        else:
+            if args.scheduler == "cosine":
+                scheduler.step()
 
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
@@ -411,7 +423,7 @@ def train(model, train_loader, valid_loader, criterion,
                 print("-" * 60)
             start_time = time.time()
 
-    return best_eval_ppl
+    return best_eval_ppl, step
 
 def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
     model.eval()
@@ -899,7 +911,10 @@ def main(args):
                               weight_decay=args.weight_decay)
     
     if args.scheduler == "cosine":
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, args.epochs)
+        total_steps = args.epochs * len(train_loader)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 
+                                                         T_max=total_steps,
+                                                         eta_min=args.eta_min)
     elif args.scheduler == "constant":
         scheduler = None
 
@@ -907,17 +922,23 @@ def main(args):
 
     if not args.eval:
         try:
+            train_step = 0
             best_eval_bleu = -float("inf")
             best_eval_ppl = float("inf")
             best_eval_preds, best_eval_trgs = [], []
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
-                best_eval_ppl = train(model, train_loader, 
-                                      valid_loader, criterion, 
-                                      args, epoch, optimizer, 
-                                      best_eval_ppl, writer)
-                if args.scheduler == "cosine":
-                    scheduler.step()
+                best_eval_ppl, train_step = train(model, 
+                                                  train_loader, 
+                                                  valid_loader, 
+                                                  criterion, 
+                                                  scheduler,
+                                                  args, 
+                                                  epoch, 
+                                                  train_step,
+                                                  optimizer, 
+                                                  best_eval_ppl,
+                                                  writer)
 
                 if args.eval_on_train:
                     eval_bleu, eval_ppl, eval_preds, eval_trgs = evaluate(
@@ -1094,6 +1115,10 @@ if __name__ == "__main__":
         os.mkdir(savepath)
     writer = SummaryWriter("./log/" + args.save + timestr)
 
+    world_size = len(args.devices)
+    if world_size == 1:
+        args.distributed = False
+
     if args.distributed:
         # Pick a free port
         with socket.socket() as s:
@@ -1102,7 +1127,6 @@ if __name__ == "__main__":
             url = "tcp://localhost:" + str(port)
             args.url = url
 
-        world_size = len(args.devices)
         from utils import dist_scripts
         process_fn = dist_scripts.process_base_tail_fn
         mp.spawn(process_fn, args=(args, ), nprocs=world_size)
