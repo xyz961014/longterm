@@ -1148,7 +1148,7 @@ def main(args):
                               weight_decay=args.weight_decay)
     
     if args.scheduler == "cosine":
-        total_steps = args.epochs * len(train_loader)
+        total_steps = args.epochs * len(train_loader) - args.warmup_steps
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 
                                                          T_max=total_steps,
                                                          eta_min=args.eta_min)

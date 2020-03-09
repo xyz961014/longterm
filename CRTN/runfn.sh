@@ -5,8 +5,10 @@ python main.py \
     --datasets ptb \
     --adam \
     --epochs 200 \
-    --lr 25e-5 \
+    --lr 5e-4 \
     --dropout 0.4 \
+    --dropatt 0.4 \
+    --weight_decay 1e-5 \
     --nlayers 12 \
     --d_ff 1024 \
     --nhead 8 \
