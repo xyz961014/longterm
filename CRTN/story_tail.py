@@ -91,6 +91,8 @@ def parse_args():
                         help='sequence length')
     parser.add_argument('--dropout', type=float, default=0.5,
                         help='dropout applied to layers (0 = no dropout)')
+    parser.add_argument('--dropatt', type=float, default=0.2,
+                        help='dropout applied to attention (0 = no dropout)')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--tied', action="store_true",

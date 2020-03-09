@@ -123,7 +123,7 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropout):
+    def __init__(self, num_head, d_model, d_head, dropout, dropatt):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
@@ -131,6 +131,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         self.dropout = dropout
 
         self.drop = nn.Dropout(dropout)
+        self.dropatt = nn.Dropout(dropatt)
 
         self.lin_q = nn.Linear(d_model, num_head * d_head, bias=False)
         self.lin_kv = nn.Linear(d_model, 2 * num_head * d_head, bias=False)
@@ -279,7 +280,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
             attn_score.masked_fill_(mask[:,:,:,None], -float('inf'))
 
         attn_prob = F.softmax(attn_score, 1)
-        attn_prob = self.drop(attn_prob)
+        attn_prob = self.dropatt(attn_prob)
         attn_matrix = attn_prob.mean((2, 3))
 
         if memory is None and neighbor_mem is None:
@@ -325,7 +326,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout):
+    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout, dropatt):
         super().__init__()
 
         self.attn_type = attn_type
@@ -334,7 +335,7 @@ class TransformerUnit(nn.Module):
             self.attn = MultiheadSelfAttention(num_head, d_model, d_head, dropout)
         elif attn_type == 1:
             self.attn = LearnableMultiheadSelfAttention(num_head, d_model, 
-                                                        d_head, dropout)
+                                                        d_head, dropout, dropatt)
 
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, dropout)
@@ -374,6 +375,7 @@ class TransformerLM(nn.Module):
         mem_len = self.args.mem_len
         attn_type = self.args.attn_type
         dropout = self.args.dropout
+        dropatt = self.args.dropatt
         cutoffs = self.args.cutoffs
         div_val = self.args.div_val
         init_std = self.args.init_std
@@ -434,7 +436,8 @@ class TransformerLM(nn.Module):
                 d_head=d_head,
                 d_ff=d_ff,
                 attn_type=attn_type,
-                dropout=dropout))
+                dropout=dropout,
+                dropatt=dropatt))
 
 
         self.init_weights(init_std)

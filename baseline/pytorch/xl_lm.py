@@ -86,6 +86,8 @@ def parse_args():
                         help='sequence length')
     parser.add_argument('--dropout', type=float, default=0.4,
                         help='dropout applied to layers (0 = no dropout)')
+    parser.add_argument('--dropatt', type=float, default=0.2,
+                        help='dropout applied to attention (0 = no dropout)')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--tied', action="store_true",
@@ -452,7 +454,9 @@ def main(args):
                 adaptive=model_args.adaptive,
                 div_val=model_args.div_val,
                 cutoffs=model_args.cutoffs,
-                dropout=model_args.dropout)
+                dropout=model_args.dropout,
+                dropatt=model_args.dropatt
+                )
 
         model.load_state_dict(checkpoint["model_state_dict"])
     else:
@@ -473,7 +477,9 @@ def main(args):
                 adaptive=args.adaptive,
                 div_val=args.div_val,
                 cutoffs=args.cutoffs,
-                dropout=args.dropout)
+                dropout=args.dropout,
+                dropatt=args.dropatt
+                )
 
 
     

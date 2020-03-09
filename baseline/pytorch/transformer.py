@@ -119,7 +119,7 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropout):
+    def __init__(self, num_head, d_model, d_head, dropout, dropatt):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
@@ -127,6 +127,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         self.dropout = dropout
 
         self.drop = nn.Dropout(dropout)
+        self.dropatt = nn.Dropout(dropatt)
 
         self.lin_qkv = nn.Linear(d_model, 3 * num_head * d_head, bias=False)
         self.lin_o = nn.Linear(num_head * d_head, d_model, bias=False)
@@ -186,7 +187,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
             attn_score.masked_fill_(mask[:,:,:,None], -float('inf'))
 
         attn_prob = F.softmax(attn_score, 1)
-        attn_prob = self.drop(attn_prob)
+        attn_prob = self.dropatt(attn_prob)
 
         attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
         attn_vec = attn_vec.contiguous().view(seq_len, batch_size, self.num_head * self.d_head)
@@ -204,7 +205,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout):
+    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout, dropatt):
         super().__init__()
 
         self.attn_type = attn_type
@@ -212,7 +213,7 @@ class TransformerUnit(nn.Module):
         if attn_type == 0:
             self.attn = MultiheadSelfAttention(num_head, d_model, d_head, dropout)
         elif attn_type == 1:
-            self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropout)
+            self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropout, dropatt)
 
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, dropout)
@@ -230,7 +231,7 @@ class TransformerUnit(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, attn_type, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0):
+    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, attn_type, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layer = num_layer
@@ -249,6 +250,7 @@ class TransformerLM(nn.Module):
         self.div_val = div_val
         self.cutoffs = cutoffs
         self.dropout = dropout
+        self.dropatt = dropatt
 
         self.adaptive = adaptive
         self.decoder = nn.Linear(d_model, vocab_size, bias=False) 
@@ -279,7 +281,8 @@ class TransformerLM(nn.Module):
                 d_head=d_head,
                 d_ff=d_ff,
                 attn_type=attn_type,
-                dropout=dropout))
+                dropout=dropout,
+                dropatt=dropatt))
 
 
         self.init_weights(init_std)
