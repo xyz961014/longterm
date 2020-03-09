@@ -6,14 +6,12 @@ class TargetText(object):
     def __init__(self, words=[], 
                        loss=[], 
                        var=[], 
-                       near_loss=[], 
                        batch_size=200,
                        num_steps=20):
         super().__init__()
         self.words = words
         self.loss = loss
         self.var = var
-        self.near_loss = near_loss
         self.batch_size = batch_size
         self.num_steps = num_steps
 
@@ -29,15 +27,10 @@ class TargetText(object):
         for var in variances:
             self.var.append(var)
 
-    def add_near_losss(self, near_losss):
-        for near_loss in near_losss:
-            self.near_loss.append(near_loss)
-
     def clear(self):
         self.words = []
         self.loss = []
         self.var = []
-        self.near_loss = []
 
     def arranged_loss(self):
         loss_array = np.array(self.loss)

@@ -261,10 +261,7 @@ class CRTNModel(nn.Module):
         hidden = hidden.transpose(1, 2)
 
         if self.args.farnear:
-            if self.args.compare_farnear:
-                return output, hidden, neighbor_mem, near_output
-            else:
-                return output, hidden, neighbor_mem
+            return output, hidden, neighbor_mem
         else:
             return output, hidden
 

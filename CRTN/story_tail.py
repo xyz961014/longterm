@@ -159,8 +159,6 @@ def parse_args():
                         help='compute bleu during evaluation')
     parser.add_argument('--word_loss', action="store_true",
                         help='output loss of every word')
-    parser.add_argument('--compare_farnear', action="store_true",
-                        help='compare loss between far and near')
     parser.add_argument('--rocstories', action="store_true",
                         help='choose ROCStories task')
     parser.add_argument('--save', type=str, default='model',
@@ -484,13 +482,11 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         if args.farnear:
             if mem is not None:
                 mem = mem.detach()
-            if args.compare_farnear:
-                output, hidden, mem, near_output = model(text, key, value, 
-                                                         neighbor_mem=mem, 
-                                                         key_num=key_num)
-            else:
-                output, hidden, mem = model(text, key, value, neighbor_mem=mem, 
-                                                              key_num=key_num)
+            output, hidden, mem = model(text, 
+                                        key, 
+                                        value, 
+                                        neighbor_mem=mem, 
+                                        key_num=key_num)
         else:
             output, hidden = model(text, key, value, key_num=key_num)
 
@@ -637,16 +633,9 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                         if mem is not None:
                             mem = mem.detach()
                         
-                        if args.compare_farnear:
-                            output, hidden, mem, near_output = model(block, 
-                                                                     key, 
-                                                                     value, 
-                                                                     neighbor_mem=mem,
-                                                                     key_num=key_num)
-                        else:
-                            output, hidden, mem = model(block, key, value, 
-                                                        neighbor_mem=mem, 
-                                                        key_num=key_num)
+                        output, hidden, mem = model(block, key, value, 
+                                                    neighbor_mem=mem, 
+                                                    key_num=key_num)
                     else:
                         output, hidden = model(block, key, value, key_num=key_num)
 
@@ -700,8 +689,6 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                 outputs = output.new_zeros(0)
                 trg_len = trg.size(0)
                 tail_lens = []
-                if args.compare_farnear:
-                    near_outputs = output.new_zeros(0)
 
                 for story in trg.t():
                     for wid, w in enumerate(story):
@@ -722,17 +709,9 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                     ppl_block[ind:ind+trg_len] = trg
                     trg_lasts = []
                 if args.farnear:
-                    if args.compare_farnear:
-                        output, hidden, mem, near_output = model(ppl_block, 
-                                                                 key, 
-                                                                 value, 
-                                                                 neighbor_mem=mem, 
-                                                                 key_num=key_num)
-                        near_outputs = torch.cat((near_outputs, near_output), 0)
-                    else:
-                        output, hidden, mem = model(ppl_block, key, value, 
-                                                    neighbor_mem=mem, 
-                                                    key_num=key_num)
+                    output, hidden, mem = model(ppl_block, key, value, 
+                                                neighbor_mem=mem, 
+                                                key_num=key_num)
                 outputs = torch.cat((outputs, output), 0)
 
                 module, key_num, key, value = update_cache(module, 
@@ -741,17 +720,9 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                                                            ppl_block, 
                                                            key_num)
                 for trg_ppl_block in trg_lasts:
-                    if args.compare_farnear:
-                        output, hidden, mem, near_output = model(trg_ppl_block, 
-                                                                 key, 
-                                                                 value, 
-                                                                 neighbor_mem=mem, 
-                                                                 key_num=key_num)
-                        near_outputs = torch.cat((near_outputs, near_output), 0)
-                    else:
-                        output, hidden, mem = model(trg_ppl_block, key, value, 
-                                                    neighbor_mem=mem, 
-                                                    key_num=key_num)
+                    output, hidden, mem = model(trg_ppl_block, key, value, 
+                                                neighbor_mem=mem, 
+                                                key_num=key_num)
 
                     outputs = torch.cat((outputs, output), 0)
 
@@ -763,13 +734,6 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                 for batch, tail_len in enumerate(tail_lens):
                     batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
                     batch_trg = trg[:tail_len,batch]
-                    if args.compare_farnear:
-                        near_batch_pred = near_outputs[ind-1:ind+tail_len-1,batch,:]
-                        near_loss_tensor = criterion(near_batch_pred, 
-                                                     batch_trg, 
-                                                     keep_order=True)
-                        near_loss = near_loss_tensor.sum()
-                        near_losses += near_loss.item()
                     loss_tensor = criterion(batch_pred, 
                                             batch_trg, 
                                             keep_order=True)
@@ -787,14 +751,9 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
 
                         words = [vocab.itos[w] for w in batch_trg]    
                         word_loss = [l.item() for l in loss_tensor] 
-                        if args.compare_farnear:
-                            near_word_loss = [l.item() for l in near_loss_tensor] 
-                        else:
-                            near_word_loss = []
                         loss_obj.add_words(words)
                         loss_obj.add_losss(word_loss)
                         loss_obj.add_variances(variances)
-                        loss_obj.add_near_losss(near_word_loss)
 
 
                 # end of ppl
@@ -1109,7 +1068,6 @@ def main(args):
         model_args.eval_on_train = args.eval_on_train
         model_args.eval_bleu = args.eval_bleu
         model_args.word_loss = args.word_loss
-        model_args.compare_farnear = args.compare_farnear
         model_args.rocstories = args.rocstories
 
         args = model_args
@@ -1249,12 +1207,10 @@ def main(args):
                                                       time.time() - epoch_start_time),
                           end="")
                     print('| valid ppl {:5.2f} '.format(eval_ppl), end="")
-                    if args.compare_farnear:
-                        print('| valid near ppl {:5.2f} '.format(eval_nearppl))
-                    else:
-                        print("")
                     if args.eval_bleu:
                         print('| valid bleu {:5.2f} '.format(eval_bleu * 100))
+                    else:
+                        print("")
 
                     print('-' * 89)
 
@@ -1357,12 +1313,10 @@ def main(args):
         print('| End of training '
               '| best valid ppl {:5.2f} '.format(best_eval_ppl), end="")
 
-        if args.compare_farnear:
-            print('| best valid near ppl {:5.2f} '.format(best_eval_nearppl))
-        else:
-            print("")
         if args.eval_bleu:
             print('| best valid bleu {:5.2f} '.format(best_eval_bleu * 100))
+        else:
+            print("")
 
         print('=' * 89)
 
@@ -1386,12 +1340,10 @@ def main(args):
     if args.rank == 0:
         save_pred(args.savepath, "test", test_preds, test_trgs)
         print('| test ppl {:5.2f} '.format(test_ppl), end="")
-        if args.compare_farnear:
-            print('| test near ppl {:5.2f} '.format(test_nearppl))
-        else:
-            print("")
         if args.eval_bleu:
             print('| test bleu {:5.2f} '.format(test_bleu * 100))
+        else:
+            print("")
         print('=' * 89)
 
     if args.distributed:
