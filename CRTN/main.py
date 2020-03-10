@@ -440,6 +440,51 @@ def evaluate(model, eval_loader, criterion, writer, args):
     model.train()
     return ppl
 
+def load_dataset(args):
+    datatime_begin = time.time()
+    
+    if args.datasets == "ptb":
+        if args.rank == 0:
+            print("Loading %s dataset from torchtext" % args.datasets)
+        train_loader, _, _ = torchtext.datasets.PennTreebank.iters(
+                batch_size=args.batch_size, 
+                device=torch.device("cpu"),
+                bptt_len=args.num_steps)
+        _, valid_loader, test_loader = torchtext.datasets.PennTreebank.iters(
+                batch_size=args.eval_batch_size, 
+                device=torch.device("cpu"),
+                bptt_len=args.num_steps)
+        vocab = train_loader.dataset.fields["text"].vocab
+        vocab_size = len(vocab.itos)
+    elif args.datasets == "wt103":
+        if args.rank == 0:
+            print("Loading %s dataset from torchtext" % args.datasets)
+        train_loader, _, _ = torchtext.datasets.WikiText103.iters(
+                batch_size=args.batch_size, 
+                device=torch.device("cpu"),
+                bptt_len=args.num_steps)
+        _, valid_loader, test_loader = torchtext.datasets.WikiText103.iters(
+                batch_size=args.eval_batch_size, 
+                device=torch.device("cpu"),
+                bptt_len=args.num_steps)
+        vocab = train_loader.dataset.fields["text"].vocab
+        vocab_size = len(vocab.itos)
+    else:
+        if args.rank == 0:
+            print("Loading data from %s" % args.data)
+        corpus = TextDataset(args.data, args.vocab_size, args.num_steps)
+        vocab_size = len(corpus.TEXT.vocab.itos)
+
+        train_loader = corpus.get_train_loader(args.batch_size)
+        valid_loader = corpus.get_valid_loader(args.eval_batch_size)
+        test_loader = corpus.get_test_loader(args.eval_batch_size)
+
+    datatime_end = time.time()
+    datatime = datatime_end - datatime_begin
+
+    return (train_loader, valid_loader, test_loader), vocab_size, datatime
+
+
 
 
 def main(args):
@@ -469,46 +514,10 @@ def main(args):
         args.eval_batch_size = 1
 
     ### Load Data ###
-
-    datatime_begin = time.time()
-    
-    if args.datasets == "ptb":
-        if args.rank == 0:
-            print("Loading %s dataset from torchtext" % args.datasets)
-        train_loader, _, _ = torchtext.datasets.PennTreebank.iters(
-                batch_size=args.batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
-        _, valid_loader, test_loader = torchtext.datasets.PennTreebank.iters(
-                batch_size=args.eval_batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
-        vocab = train_loader.dataset.fields["text"].vocab
-        args.vocab_size = len(vocab.itos)
-    elif args.datasets == "wt103":
-        if args.rank == 0:
-            print("Loading %s dataset from torchtext" % args.datasets)
-        train_loader, _, _ = torchtext.datasets.WikiText103.iters(
-                batch_size=args.batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
-        _, valid_loader, test_loader = torchtext.datasets.WikiText103.iters(
-                batch_size=args.eval_batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
-        vocab = train_loader.dataset.fields["text"].vocab
-        args.vocab_size = len(vocab.itos)
-    else:
-        if args.rank == 0:
-            print("Loading data from %s" % args.data)
-        corpus = TextDataset(args.data, args.vocab_size, args.num_steps)
-        args.vocab_size = len(corpus.TEXT.vocab.itos)
-
-        train_loader = corpus.get_train_loader(args.batch_size)
-        valid_loader = corpus.get_valid_loader(args.eval_batch_size)
-        test_loader = corpus.get_test_loader(args.eval_batch_size)
-
-    datatime_end = time.time()
+    datasets, vocab_size, data_time = load_dataset(args)
+    args.vocab_size = vocab_size
+    print("Data loading finished. time: {:.3f} s".format(data_time))
+    train_loader, valid_loader, test_loader = datasets
 
     if args.load:
         # Load Model
@@ -549,7 +558,6 @@ def main(args):
         for argk, argv in args.__dict__.items():
             print("{}: {}".format(argk, argv))
         print("")
-        print("Data loading finished. time: {:.3f} s".format(datatime_end-datatime_begin))
 
 
 
@@ -739,6 +747,11 @@ if __name__ == "__main__":
     if not os.path.exists(savepath):
         os.mkdir(savepath)
     writer = SummaryWriter("./log/" + args.save + timestr)
+
+    #### Load Data ###
+    #datasets, vocab_size, data_time = load_dataset(args)
+    #args.vocab_size = vocab_size
+    #print("Data loading finished. time: {:.3f} s".format(data_time))
 
     world_size = len(args.devices)
     if world_size == 1:

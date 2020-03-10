@@ -387,13 +387,12 @@ class TransformerLM(nn.Module):
         self.demo = self.args.demo
 
 
-        self.decoder = nn.Linear(d_model, vocab_size, bias=False) 
-
         if adaptive:
             self.embedding = AdaptiveEmbedding(vocab_size, d_embedding, d_model, 
                                                cutoffs, div_val=div_val, 
                                                init_std=init_std)
         else:
+            self.decoder = nn.Linear(d_model, vocab_size, bias=False) 
             if args.tied:
                 self.embedding = nn.Embedding(vocab_size, 
                                               d_embedding, 

@@ -253,11 +253,11 @@ class TransformerLM(nn.Module):
         self.dropatt = dropatt
 
         self.adaptive = adaptive
-        self.decoder = nn.Linear(d_model, vocab_size, bias=False) 
 
         if adaptive:
             self.embedding = AdaptiveEmbedding(vocab_size, d_embedding, d_model, cutoffs, div_val=div_val, init_std=init_std)
         else:
+            self.decoder = nn.Linear(d_model, vocab_size, bias=False) 
             if tied_weights:
                 self.embedding = nn.Embedding(vocab_size, d_embedding, padding_idx=0).from_pretrained(self.decoder.weight)
                 self.embedding.weight = self.decoder.weight
