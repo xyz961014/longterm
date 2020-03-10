@@ -222,7 +222,7 @@ class CRTNModel(nn.Module):
                 mask = mask.byte()[:,:,None,None]
             else:
                 mask = mask.bool()[:,:,None,None]
-            query.masked_fill_(mask, 0)
+            query = query.masked_fill(mask, 0)
 
         if self.demo:
             weights, indices, words = self.cache(query)

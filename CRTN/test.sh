@@ -3,13 +3,15 @@
 python main.py \
     --adam \
     --datasets ptb \
-    --epochs 100 \
-    --lr 0.00025 \
-    --dropout 0.1 \
+    --epochs 50 \
+    --lr 25e-5 \
+    --dropout 0.2 \
+    --dropatt 0.2 \
     --nlayers 3 \
     --nhead 4 \
     --emsize 100 \
     --nhid 100 \
+    --d_ff 1000 \
     --batch_size 200 \
     --eval_batch_size 200 \
     --num_steps 20 \
@@ -19,7 +21,7 @@ python main.py \
     --cache_k 2 \
     --cache_N 5 \
     --seed 1111 \
-    --log-interval 10 \
+    --log-interval 30 \
     --adaptive \
     --no_summary \
     --wise_summary \

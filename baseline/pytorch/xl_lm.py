@@ -431,11 +431,6 @@ def main(args):
         print("")
         print("Data loading finished. time: {:.3f} s".format(datatime_end-datatime_begin))
 
-        if args.eval:
-            print("SKIP TRAINING")
-        else:
-            print("TRAINING......")
-
     if args.load:
 
         model = TransformerLM(
@@ -480,6 +475,17 @@ def main(args):
                 dropout=args.dropout,
                 dropatt=args.dropatt
                 )
+
+    if args.rank == 0:
+        all_param = sum([p.numel() for p in model.parameters()])
+        nonemb_param = sum([p.numel() for p in model.layers.parameters()])
+        print("#model params = {}".format(all_param))
+        print('#non emb params = {}'.format(nonemb_param))
+
+        if args.eval:
+            print("SKIP TRAINING")
+        else:
+            print("TRAINING......")
 
 
     
