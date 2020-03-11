@@ -187,8 +187,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
         if inf_ind is not None:
             x = x[inf_ind].unsqueeze(0)
 
-        heads_matrix = self.lin_kv(c)
-        rel_emb_matrix = self.lin_relemb(pos_emb)
+        heads_matrix = self.lin_kv(c).float()
+        rel_emb_matrix = self.lin_relemb(pos_emb).float()
 
         heads_q = self.lin_q(x)
         heads_k, heads_v = torch.chunk(heads_matrix, 2, dim=-1)
@@ -196,7 +196,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         if neighbor_mem is not None:
             nei_len = neighbor_mem.size(0)
-            nei_matrix = self.lin_kv(neighbor_mem)
+            nei_matrix = self.lin_kv(neighbor_mem).float()
             nei_k, nei_v = torch.chunk(nei_matrix, 2, dim=-1)
             
             rel_cache, rel_nei, rel_inp = rel_emb_matrix.split([mem_len, 

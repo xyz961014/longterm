@@ -34,6 +34,9 @@ from models.CRTNModel import CRTNModel
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
+from apex import amp
+from apex.parallel import DistributedDataParallel as apexDDP
+
 if torch.__version__ < "1.2.0":
     from tensorboardX import SummaryWriter
 else:
@@ -162,6 +165,10 @@ def parse_args():
                         help='path to load the model')
     parser.add_argument('--rank', type=int, default=0,
                         help='rank in nccl')
+    parser.add_argument('--apex', action="store_true",
+                        help='use apex to train')
+    parser.add_argument('--opt_level', type=str, default='O1',
+                        help='apex opt level')
     args = parser.parse_args()
     return args
 
@@ -183,6 +190,19 @@ class DistributedDataParallel(nn.parallel.DistributedDataParallel):
         self.batch_size = batch_size
         self.module.set_batch_size(batch_size)
 
+class ApexDataParallel(apexDDP):
+    def __init__(self, module, **kwargs):
+        super().__init__(module, **kwargs)
+        self.rank = dist.get_rank()
+        self.world_size = dist.get_world_size()
+
+    def set_batch_size(self, batch_size):
+        batch_size = batch_division(batch_size, 
+                                    self.rank, 
+                                    self.world_size,
+                                    single_value=True)
+        self.batch_size = batch_size
+        self.module.set_batch_size(batch_size)
 
 def batch_division(batch_size, rank=0, world_size=None, single_value=False):
     if world_size is None:
@@ -275,7 +295,12 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             loss = loss.mean()
         else:
             loss = criterion(output.reshape(-1, args.vocab_size), targets.reshape(-1))
-        loss.backward()
+
+        if args.apex:
+            with amp.scale_loss(loss, optimizer) as scaled_loss:
+                scaled_loss.backward()
+        else:
+            loss.backward()
 
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
@@ -617,18 +642,24 @@ def main(args):
     model.to(devices[args.rank])
     criterion.to(devices[args.rank])
 
-    if args.distributed:
-        model = DistributedDataParallel(model, 
-                                        device_ids=[devices[args.rank]], 
-                                        dim=1)
-        model.set_batch_size(args.batch_size)
-
     if args.adam:
         optimizer = optim.Adam(model.parameters(), lr=args.lr, 
                                weight_decay=args.weight_decay)
     else:
         optimizer = optim.SGD(model.parameters(), lr=args.lr,
                               weight_decay=args.weight_decay)
+
+    if args.apex:
+        model, optimizer = amp.initialize(model, optimizer, opt_level=args.opt_level)
+
+    if args.distributed:
+        if args.apex:
+            model = ApexDataParallel(model) 
+        else:
+            model = DistributedDataParallel(model, 
+                                            device_ids=[devices[args.rank]], 
+                                            dim=1)
+        model.set_batch_size(args.batch_size)
     
     if args.scheduler == "cosine":
         total_steps = args.epochs * len(train_loader) - args.warmup_steps
@@ -637,6 +668,7 @@ def main(args):
                                                          eta_min=args.eta_min)
     elif args.scheduler == "constant":
         scheduler = None
+
 
     ### Training ###
 

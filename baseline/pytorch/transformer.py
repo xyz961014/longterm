@@ -160,8 +160,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         total_len, batch_size = c.size(0), c.size(1)
 
-        heads_matrix = self.lin_qkv(c)
-        rel_emb_matrix = self.lin_relemb(pos_emb)
+        heads_matrix = self.lin_qkv(c).float()
+        rel_emb_matrix = self.lin_relemb(pos_emb).float()
 
         heads_q, heads_k, heads_v = torch.chunk(heads_matrix, 3, dim=-1)
 
