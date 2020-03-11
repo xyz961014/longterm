@@ -676,7 +676,7 @@ if __name__ == "__main__":
     writer = SummaryWriter("./log/" + args.save + timestr)
 
     world_size = len(args.devices)
-    if world_size == 1:
+    if world_size == 1 and not args.apex:
         args.distributed = False
 
     if args.distributed:

@@ -786,7 +786,7 @@ if __name__ == "__main__":
     #print("Data loading finished. time: {:.3f} s".format(data_time))
 
     world_size = len(args.devices)
-    if world_size == 1:
+    if world_size == 1 and not args.apex:
         args.distributed = False
 
     if args.distributed:
