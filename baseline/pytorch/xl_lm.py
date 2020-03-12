@@ -33,8 +33,24 @@ from transformer import TransformerLM
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from apex import amp
-from apex.parallel import DistributedDataParallel as apexDDP
+try:
+    from apex import amp
+    from apex.parallel import DistributedDataParallel as apexDDP
+    class ApexDataParallel(apexDDP):
+        def __init__(self, module, **kwargs):
+            super().__init__(module, **kwargs)
+            self.rank = dist.get_rank()
+            self.world_size = dist.get_world_size()
+    
+        def set_batch_size(self, batch_size):
+            batch_size = batch_division(batch_size, 
+                                        self.rank, 
+                                        self.world_size,
+                                        single_value=True)
+            self.batch_size = batch_size
+            self.module.set_batch_size(batch_size)
+except:
+    print("No apex package found")
 
 from torch.utils.tensorboard import SummaryWriter
 
@@ -148,19 +164,6 @@ class DistributedDataParallel(nn.parallel.DistributedDataParallel):
         self.batch_size = batch_size
         self.module.set_batch_size(batch_size)
 
-class ApexDataParallel(apexDDP):
-    def __init__(self, module, **kwargs):
-        super().__init__(module, **kwargs)
-        self.rank = dist.get_rank()
-        self.world_size = dist.get_world_size()
-
-    def set_batch_size(self, batch_size):
-        batch_size = batch_division(batch_size, 
-                                    self.rank, 
-                                    self.world_size,
-                                    single_value=True)
-        self.batch_size = batch_size
-        self.module.set_batch_size(batch_size)
 
 def batch_division(batch_size, rank=0, world_size=None, single_value=False):
     if world_size is None:
