@@ -65,8 +65,10 @@ class CRTNModel(nn.Module):
         nhid = self.args.nhid
 
         # get cache key and value
-        self.cache.init_key_and_value(cache_key, cache_value)
+        #self.cache.init_key_and_value(cache_key, cache_value)
 
+        if cache_key is None and cache_value is None:
+            cache_key, cache_value = self.cache.new_key_and_values()
         
         if self.args.farnear:
             nei_len = self.args.neighbor_len
@@ -104,7 +106,7 @@ class CRTNModel(nn.Module):
                         prev = neighbor_mem[0].split([nei_len-seq_len, 
                                                       seq_len], dim=0)[1]
                 else:
-                    prev = self.cache._get_values()[-1]
+                    prev = cache_value[-1].transpose(0, 1)
                     prev = prev.view(seq_len, -1, self.args.nlayers+1, nhid)
                     prev = prev[:,:,0,:]
                 inputs = self.encoder.embedding(inputs)
@@ -131,7 +133,7 @@ class CRTNModel(nn.Module):
                     near_output, wise_inputs, _ = self.encoder(inputs, 
                                                         neighbor_mem=neighbor_mem)
                 else:
-                    prev_value = self.cache._get_values()[-1]
+                    prev_value = cache_value[-1].transpose(0, 1)
                     prev_value.unsqueeze_(0)
                     prev_indice = torch.zeros_like(inputs).view(-1)
                     prev_indice.unsqueeze_(0)
@@ -224,13 +226,14 @@ class CRTNModel(nn.Module):
                 mask = mask.bool()[:,:,None,None]
             query = query.masked_fill(mask, 0)
 
+        values = cache_value.transpose(1, 2).contiguous()
+
         if self.demo:
-            weights, indices, words = self.cache(query)
+            weights, indices, words = self.cache(query, cache_key, values)
         else:
-            weights, indices = self.cache(query)
+            weights, indices = self.cache(query, cache_key, values)
             words = None
 
-        values = self.cache._get_values()
 
         if self.args.not_weighted:
             weights = None
@@ -244,19 +247,7 @@ class CRTNModel(nn.Module):
             total_mem = torch.cat((neighbor_mem, hidden), 1)
             hidden, neighbor_mem = total_mem.split([seq_len, self.args.neighbor_len], 
                                                  dim=1)
-            #hidden = total_mem[:,:seq_len,:,:]
-            #neighbor_mem = total_mem[:,seq_len:,:,:]
             neighbor_mem = neighbor_mem.reshape(-1, bsz, nhid)
-
-        #self.cache.detach_memory()
-        #if renew:
-        #    new_key_num = self.cache.renew(hidden, inputs, key_num)
-
-        #print("after:", self.cache.key4[0][0])
-
-        #keys = self.cache._get_keys()
-        #values = self.cache._get_values()
-        #values = values.transpose(1, 2)
 
         hidden = hidden.transpose(1, 2)
 

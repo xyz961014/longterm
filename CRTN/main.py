@@ -34,8 +34,11 @@ from models.CRTNModel import CRTNModel
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-from apex import amp
-from apex.parallel import DistributedDataParallel as apexDDP
+try:
+    from apex import amp
+    from apex.parallel import DistributedDataParallel as apexDDP
+except:
+    print("No Apex package found")
 
 if torch.__version__ < "1.2.0":
     from tensorboardX import SummaryWriter
@@ -233,14 +236,18 @@ def update_cache(model, batch_size, key, value, hidden, text, key_num):
     
     hidden = hidden.transpose(1, 2)
 
-    model.cache.set_batch_size(batch_size)
-    model.cache.init_key_and_value(key, value)
-    model.cache.detach_memory()
-    key_num = model.cache.renew(hidden, text, key_num)
-    key, value = (model.cache._get_keys(), 
-                  model.cache._get_values().transpose(1, 2))
-    model.cache.set_batch_size(batch_size // len(model.args.devices))
-    return model, key_num, key, value
+    #model.cache.set_batch_size(batch_size)
+    #model.cache.init_key_and_value(key, value)
+    #model.cache.detach_memory()
+    keys, values, key_num = model.cache.renew(hidden, 
+                                              text, 
+                                              key_num, 
+                                              keys=key, 
+                                              values=value)
+    #key, value = (model.cache._get_keys(), 
+    #              model.cache._get_values().transpose(1, 2))
+    #model.cache.set_batch_size(batch_size // len(model.args.devices))
+    return model, key_num, keys, values
 
 
 def train(model, train_loader, valid_loader, criterion, scheduler, 
@@ -267,6 +274,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         if not data.text.size(0) == args.num_steps:
             continue
 
+        # load data
         if args.distributed:
             batch_start, batch_end = batch_division(data.target.size(1), 
                                                     args.rank)
@@ -276,7 +284,8 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             text, targets = data.text.to(device), data.target.to(device)
 
         model.zero_grad()
-        
+       
+        # train
         if args.farnear:
             if mem is not None:
                 mem = mem.detach()
@@ -285,7 +294,6 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                                         key_num=key_num)
         else:
             output, hidden = model(text, key, value, key_num=key_num)
-
 
         module, key_num, key, value = update_cache(module, text.size(1), 
                                                    key, value, hidden, text, key_num)
@@ -546,7 +554,7 @@ def main(args):
 
     if args.load:
         # Load Model
-        checkpoint = torch.load(args.load, map_location=devices[0])
+        checkpoint = torch.load(args.load, map_location=devices[args.rank])
         model_args = checkpoint["model_args"]
 
         model_args.data = args.data
@@ -569,6 +577,19 @@ def main(args):
         else:
             batch_size = args.batch_size
             model_args.eval_batch_size = args.eval_batch_size
+
+        if not model_args.neighbor_len == args.neighbor_len:
+            print("REDEFINE neighbor_len: {} --> {}".format(model_args.neighbor_len, 
+                                                            args.neighbor_len))
+            model_args.neighbor_len = args.neighbor_len
+        if not model_args.cache_N == args.cache_N:
+            print("REDEFINE cache_N: {} --> {}".format(model_args.cache_N, 
+                                                       args.cache_N))
+            model_args.cache_N = args.cache_N
+        if not model_args.cache_k == args.cache_k:
+            print("REDEFINE cache_k: {} --> {}".format(model_args.cache_k, 
+                                                       args.cache_k))
+            model_args.cache_k = args.cache_k
 
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps

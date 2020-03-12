@@ -426,7 +426,7 @@ def main(args):
 
     if args.load:
         # Load Model
-        checkpoint = torch.load(args.load, map_location=devices[0])
+        checkpoint = torch.load(args.load, map_location=devices[args.rank])
         model_args = checkpoint["model_args"]
 
         model_args.demo = args.demo
@@ -441,6 +441,11 @@ def main(args):
         model_args.distributed = args.distributed
         model_args.devices = args.devices
         model_args.save = args.save
+
+        if not model_args.mem_len == args.mem_len:
+            print("REDEFINE mem_len: {} --> {}".format(model_args.mem_len, 
+                                                       args.mem_len))
+            model_args.mem_len = args.mem_len
 
         model_args.batch_size = args.batch_size
         model_args.eval_batch_size = args.eval_batch_size
