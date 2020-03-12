@@ -448,6 +448,7 @@ def main(args):
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
         model_args.word_loss = args.word_loss
+        model_args.apex = args.apex
 
         args = model_args
 
@@ -477,7 +478,8 @@ def main(args):
                 div_val=model_args.div_val,
                 cutoffs=model_args.cutoffs,
                 dropout=model_args.dropout,
-                dropatt=model_args.dropatt
+                dropatt=model_args.dropatt,
+                apex=model_args.apex
                 )
 
         model.load_state_dict(checkpoint["model_state_dict"])
@@ -500,7 +502,8 @@ def main(args):
                 div_val=args.div_val,
                 cutoffs=args.cutoffs,
                 dropout=args.dropout,
-                dropatt=args.dropatt
+                dropatt=args.dropatt,
+                apex=args.apex
                 )
 
     if args.rank == 0:

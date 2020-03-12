@@ -33,6 +33,42 @@ class PostionalEmbedding(nn.Module):
             return pos_embedding[:,None,:]
 
 
+def bmm_einsum(tensor1, tensor2, eqn="ibnd,jbnd->ijbn"):
+    """
+    bmm version of 
+    ibnd,jbnd->ijbn
+    ilbn,lbnd->ibnd
+    kibnd,kjbnd->ikjbn
+    """
+    if eqn == "ibnd,jbnd->ijbn":
+        assert tensor1.shape[1:] == tensor2.shape[1:]
+        bmm1 = tensor1.reshape(tensor1.size(0), -1, tensor1.size(-1))
+        bmm2 = tensor2.reshape(tensor2.size(0), -1, tensor2.size(-1))
+        bmm1 = bmm1.permute(1,0,2)
+        bmm2 = bmm2.permute(1,2,0)
+        ret = torch.bmm(bmm1,bmm2)
+        ret = ret.view(tensor1.size(1), tensor1.size(2), *ret.shape[1:])
+        return ret.permute(2,3,0,1)
+    elif eqn == "ilbn,lbnd->ibnd":
+        assert tensor1.size(1) == tensor2.size(0) and tensor1.shape[2:] == tensor2.shape[1:3] 
+        bmm1 = tensor1.reshape(tensor1.size(0), tensor1.size(1), -1)
+        bmm2 = tensor2.reshape(tensor2.size(0), -1, tensor2.size(-1))
+        bmm1 = bmm1.permute(2,0,1)
+        bmm2 = bmm2.permute(1,0,2)
+        ret = torch.bmm(bmm1,bmm2)
+        ret = ret.view(tensor1.size(2), tensor1.size(3), *ret.shape[1:])
+        return ret.permute(2,0,1,3)
+    elif eqn == "kibnd,kjbnd->ikjbn":
+        assert tensor1.size(0) == tensor2.size(0) and tensor1.shape[2:] == tensor2.shape[2:]
+        bmm1 = tensor1.permute(0,2,3,1,4)
+        bmm2 = tensor2.permute(0,2,3,4,1)
+        bmm1 = bmm1.reshape(-1, bmm1.size(-2), bmm1.size(-1))
+        bmm2 = bmm2.reshape(-1, bmm2.size(-2), bmm2.size(-1))
+        ret = torch.bmm(bmm1,bmm2)
+        ret = ret.view(tensor1.size(0), tensor1.size(2), tensor1.size(3), *ret.shape[1:])
+        return ret.permute(3,0,4,1,2)
+
+
 
 class PostionwiseFF(nn.Module):
     def __init__(self, d_model, d_ff, dropout):
@@ -119,12 +155,13 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropout, dropatt):
+    def __init__(self, num_head, d_model, d_head, dropout, dropatt, apex=False):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
         self.d_head = d_head
         self.dropout = dropout
+        self.apex = apex
 
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
@@ -160,8 +197,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         total_len, batch_size = c.size(0), c.size(1)
 
-        heads_matrix = self.lin_qkv(c).float()
-        rel_emb_matrix = self.lin_relemb(pos_emb).float()
+        heads_matrix = self.lin_qkv(c)
+        rel_emb_matrix = self.lin_relemb(pos_emb)
 
         heads_q, heads_k, heads_v = torch.chunk(heads_matrix, 3, dim=-1)
 
@@ -174,8 +211,14 @@ class LearnableMultiheadSelfAttention(nn.Module):
         heads_qu = heads_q + pos_bias_u
         heads_qv = heads_q + pos_bias_v
 
-        AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
-        BD = torch.einsum("ibnd,jnd->ijbn", (heads_qv, rel_emb_matrix))
+        rel_emb_matrix = rel_emb_matrix.unsqueeze(1)
+        rel_emb_matrix = rel_emb_matrix.expand(-1, heads_qv.size(1), -1, -1)
+        if self.apex:
+            AC = bmm_einsum(heads_qu, heads_k, "ibnd,jbnd->ijbn")
+            BD = bmm_einsum(heads_qv, rel_emb_matrix, "ibnd,jbnd->ijbn")
+        else:
+            AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
+            BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
         
         BD = self._rel_shift(BD)
 
@@ -189,7 +232,10 @@ class LearnableMultiheadSelfAttention(nn.Module):
         attn_prob = F.softmax(attn_score, 1)
         attn_prob = self.dropatt(attn_prob)
 
-        attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
+        if self.apex:
+            attn_vec = bmm_einsum(attn_prob, heads_v, "ilbn,lbnd->ibnd")
+        else:
+            attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
         attn_vec = attn_vec.contiguous().view(seq_len, batch_size, self.num_head * self.d_head)
 
         attn_out = self.lin_o(attn_vec)
@@ -205,7 +251,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout, dropatt):
+    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout, dropatt, apex):
         super().__init__()
 
         self.attn_type = attn_type
@@ -213,7 +259,7 @@ class TransformerUnit(nn.Module):
         if attn_type == 0:
             self.attn = MultiheadSelfAttention(num_head, d_model, d_head, dropout)
         elif attn_type == 1:
-            self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropout, dropatt)
+            self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropout, dropatt, apex)
 
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, dropout)
@@ -231,7 +277,7 @@ class TransformerUnit(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, attn_type, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0):
+    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, attn_type, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, apex=False):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layer = num_layer
@@ -282,7 +328,8 @@ class TransformerLM(nn.Module):
                 d_ff=d_ff,
                 attn_type=attn_type,
                 dropout=dropout,
-                dropatt=dropatt))
+                dropatt=dropatt,
+                apex=apex))
 
 
         self.init_weights(init_std)

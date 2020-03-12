@@ -36,6 +36,41 @@ class PositionalEmbedding(nn.Module):
 
         return pos_embedding[:,:,None,:]
 
+def bmm_einsum(tensor1, tensor2, eqn="ibnd,jbnd->ijbn"):
+    """
+    bmm version of 
+    ibnd,jbnd->ijbn
+    ilbn,lbnd->ibnd
+    kibnd,kjbnd->ikjbn
+    """
+    if eqn == "ibnd,jbnd->ijbn":
+        assert tensor1.shape[1:] == tensor2.shape[1:]
+        bmm1 = tensor1.reshape(tensor1.size(0), -1, tensor1.size(-1))
+        bmm2 = tensor2.reshape(tensor2.size(0), -1, tensor2.size(-1))
+        bmm1 = bmm1.permute(1,0,2)
+        bmm2 = bmm2.permute(1,2,0)
+        ret = torch.bmm(bmm1,bmm2)
+        ret = ret.view(tensor1.size(1), tensor1.size(2), *ret.shape[1:])
+        return ret.permute(2,3,0,1)
+    elif eqn == "ilbn,lbnd->ibnd":
+        assert tensor1.size(1) == tensor2.size(0) and tensor1.shape[2:] == tensor2.shape[1:3] 
+        bmm1 = tensor1.reshape(tensor1.size(0), tensor1.size(1), -1)
+        bmm2 = tensor2.reshape(tensor2.size(0), -1, tensor2.size(-1))
+        bmm1 = bmm1.permute(2,0,1)
+        bmm2 = bmm2.permute(1,0,2)
+        ret = torch.bmm(bmm1,bmm2)
+        ret = ret.view(tensor1.size(2), tensor1.size(3), *ret.shape[1:])
+        return ret.permute(2,0,1,3)
+    elif eqn == "kibnd,kjbnd->ikjbn":
+        assert tensor1.size(0) == tensor2.size(0) and tensor1.shape[2:] == tensor2.shape[2:]
+        bmm1 = tensor1.permute(0,2,3,1,4)
+        bmm2 = tensor2.permute(0,2,3,4,1)
+        bmm1 = bmm1.reshape(-1, bmm1.size(-2), bmm1.size(-1))
+        bmm2 = bmm2.reshape(-1, bmm2.size(-2), bmm2.size(-1))
+        ret = torch.bmm(bmm1,bmm2)
+        ret = ret.view(tensor1.size(0), tensor1.size(2), tensor1.size(3), *ret.shape[1:])
+        return ret.permute(3,0,4,1,2)
+
 
 
 class PostionwiseFF(nn.Module):
@@ -123,12 +158,13 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropout, dropatt):
+    def __init__(self, num_head, d_model, d_head, dropout, dropatt, apex=False):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
         self.d_head = d_head
         self.dropout = dropout
+        self.apex = apex
 
         self.drop = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
@@ -187,8 +223,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
         if inf_ind is not None:
             x = x[inf_ind].unsqueeze(0)
 
-        heads_matrix = self.lin_kv(c).float()
-        rel_emb_matrix = self.lin_relemb(pos_emb).float()
+        heads_matrix = self.lin_kv(c)
+        rel_emb_matrix = self.lin_relemb(pos_emb)
 
         heads_q = self.lin_q(x)
         heads_k, heads_v = torch.chunk(heads_matrix, 2, dim=-1)
@@ -196,7 +232,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         if neighbor_mem is not None:
             nei_len = neighbor_mem.size(0)
-            nei_matrix = self.lin_kv(neighbor_mem).float()
+            nei_matrix = self.lin_kv(neighbor_mem)
             nei_k, nei_v = torch.chunk(nei_matrix, 2, dim=-1)
             
             rel_cache, rel_nei, rel_inp = rel_emb_matrix.split([mem_len, 
@@ -228,8 +264,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
                 pre_rel = rel_emb_matrix.view(mem_num + 1, x_len, 
                                               batch_size, self.num_head, self.d_head)
-                AC = torch.einsum("kibnd,kjbnd->ikjbn", pre_AC, pre_k)
-                BD = torch.einsum("kibnd,kjbnd->ikjbn", pre_BD, pre_rel)
+                if self.apex:
+                    AC = bmm_einsum(pre_AC, pre_k, "kibnd,kjbnd->ikjbn")
+                    BD = bmm_einsum(pre_BD, pre_rel, "kibnd,kjbnd->ikjbn")
+                else:
+                    AC = torch.einsum("kibnd,kjbnd->ikjbn", pre_AC, pre_k)
+                    BD = torch.einsum("kibnd,kjbnd->ikjbn", pre_BD, pre_rel)
             else:
                 rel_emb_matrix = rel_emb_matrix.view(total_len, batch_size, 
                                                      self.num_head, self.d_head)
@@ -237,8 +277,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
                                        self.d_head)
                 heads_v = heads_v.view(total_len, batch_size, self.num_head, 
                                        self.d_head)
-                AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
-                BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
+                if self.apex:
+                    AC = bmm_einsum(heads_qu, heads_k)
+                    BD = bmm_einsum(heads_qv, rel_emb_matrix)
+                else:
+                    AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
+                    BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
                 
                 AC.unsqueeze_(1)
                 BD.unsqueeze_(1)
@@ -247,8 +291,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
                 nei_k = nei_k.view(nei_len, batch_size, self.num_head, self.d_head)
                 nei_v = nei_v.view(nei_len, batch_size, self.num_head, self.d_head)
                 rel_nei = rel_nei.view(nei_len, batch_size, self.num_head, self.d_head)
-                nei_AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, nei_k))
-                nei_BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_nei))
+                if self.apex:
+                    nei_AC = bmm_einsum(heads_qu, nei_k)
+                    nei_BD = bmm_einsum(heads_qv, rel_nei)
+                else:
+                    nei_AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, nei_k))
+                    nei_BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_nei))
                 
                 AC_cache, AC_inp = AC.split([mem_num, 1], dim=1)
                 BD_cache, BD_inp = BD.split([mem_num, 1], dim=1)
@@ -291,14 +339,22 @@ class LearnableMultiheadSelfAttention(nn.Module):
                                                                   nei_len,
                                                                   x_len], dim=1)
                 attn_prob = torch.cat((prob_cache, prob_inp), 1)
-                nei_vec = torch.einsum("ilbn,lbnd->ibnd", prob_nei, nei_v)
+                if self.apex:
+                    nei_vec = bmm_einsum(prob_nei, nei_v, "ilbn,lbnd->ibnd")
+                else:
+                    nei_vec = torch.einsum("ilbn,lbnd->ibnd", prob_nei, nei_v)
 
             if indice_bool is not None: 
                 attn_prob = attn_prob.reshape(attn_prob.size(0), -1, x_len,
                                               batch_size, self.num_head)
                 if weights is not None:
                     attn_prob = torch.einsum("ikjbn,ibk->ikjbn", attn_prob, weights)
-                attn_vec = torch.einsum("ikjbn,kjbnd->ibnd", attn_prob, pre_v)
+                attn_prob = attn_prob.view(attn_prob.size(0), -1, *attn_prob.shape[3:])
+                pre_v = pre_v.view(-1, *pre_v.shape[2:])
+                if self.apex:
+                    attn_vec = bmm_einsum(attn_prob, pre_v, "ilbn,lbnd->ibnd")
+                else:
+                    attn_vec = torch.einsum("ilbn,lbnd->ibnd", attn_prob, pre_v)
                 if neighbor_mem is not None and nei_len > 0:
                     attn_vec = attn_vec + nei_vec
             else:
@@ -326,7 +382,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout, dropatt):
+    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout, dropatt, apex):
         super().__init__()
 
         self.attn_type = attn_type
@@ -335,7 +391,7 @@ class TransformerUnit(nn.Module):
             self.attn = MultiheadSelfAttention(num_head, d_model, d_head, dropout)
         elif attn_type == 1:
             self.attn = LearnableMultiheadSelfAttention(num_head, d_model, 
-                                                        d_head, dropout, dropatt)
+                                                        d_head, dropout, dropatt, apex)
 
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, dropout)
@@ -436,7 +492,8 @@ class TransformerLM(nn.Module):
                 d_ff=d_ff,
                 attn_type=attn_type,
                 dropout=dropout,
-                dropatt=dropatt))
+                dropatt=dropatt,
+                apex=args.apex))
 
 
         self.init_weights(init_std)
