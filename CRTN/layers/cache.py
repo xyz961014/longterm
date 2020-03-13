@@ -153,6 +153,7 @@ class Cache(nn.Module):
         keys = keys.transpose(0, 1)
         values = torch.einsum("klbh->bklh", values)
         
+        #print(query.device, keys.device, values.device)
         if self.args.max_pooling:
             query = query.view(-1, self.args.num_steps, self.args.nhid)
             pooling_keys = keys.view(-1, self.N, self.args.num_steps, self.args.nhid)

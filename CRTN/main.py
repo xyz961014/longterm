@@ -529,11 +529,13 @@ def main(args):
     else:
         devices = [torch.device("cpu")]
 
+    device = devices[args.rank]
+    torch.cuda.set_device(device)
+
     if args.distributed:
         dist.init_process_group("nccl", init_method=args.url,
                                 rank=args.rank,
                                 world_size=len(devices))
-        torch.cuda.set_device(devices[args.rank])
 
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -554,7 +556,7 @@ def main(args):
 
     if args.load:
         # Load Model
-        checkpoint = torch.load(args.load, map_location=devices[args.rank])
+        checkpoint = torch.load(args.load, map_location=device)
         model_args = checkpoint["model_args"]
 
         model_args.data = args.data
@@ -568,8 +570,11 @@ def main(args):
         model_args.clip = args.clip
         model_args.epochs = args.epochs
         model_args.distributed = args.distributed
+        model_args.apex = args.apex
         model_args.devices = args.devices
         model_args.save = args.save
+
+        model_args.rank = args.rank
 
         if args.demo:
             batch_size = 1
@@ -660,8 +665,8 @@ def main(args):
     else:
         criterion = nn.CrossEntropyLoss()
 
-    model.to(devices[args.rank])
-    criterion.to(devices[args.rank])
+    model.cuda()
+    criterion.cuda()
 
     if args.adam:
         optimizer = optim.Adam(model.parameters(), lr=args.lr, 
@@ -678,7 +683,7 @@ def main(args):
             model = ApexDataParallel(model) 
         else:
             model = DistributedDataParallel(model, 
-                                            device_ids=[devices[args.rank]], 
+                                            device_ids=[device], 
                                             dim=1)
         model.set_batch_size(args.batch_size)
     
@@ -747,7 +752,7 @@ def main(args):
         else:
             best_model = args.savepath + "/" + args.save + "_best.pt"
 
-        eval_checkpoint = torch.load(best_model, map_location=devices[0])
+        eval_checkpoint = torch.load(best_model, map_location=device)
         model_state_dict = eval_checkpoint["model_state_dict"]
 
         module = model.module if args.distributed else model
