@@ -37,6 +37,7 @@ import torch.multiprocessing as mp
 try:
     from apex import amp
     from apex.parallel import DistributedDataParallel as apexDDP
+    from apex.optimizers import FusedAdam
     class ApexDataParallel(apexDDP):
         def __init__(self, module, **kwargs):
             super().__init__(module, **kwargs)
@@ -669,8 +670,12 @@ def main(args):
     criterion.cuda()
 
     if args.adam:
-        optimizer = optim.Adam(model.parameters(), lr=args.lr, 
-                               weight_decay=args.weight_decay)
+        if args.apex:
+            optimizer = FusedAdam(model.parameters(), lr=args.lr,
+                                  weight_decay=args.weight_decay)
+        else:
+            optimizer = optim.Adam(model.parameters(), lr=args.lr,
+                                   weight_decay=args.weight_decay)
     else:
         optimizer = optim.SGD(model.parameters(), lr=args.lr,
                               weight_decay=args.weight_decay)

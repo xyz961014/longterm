@@ -12,6 +12,10 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 import os
 sys.path.append("../..")
 from CRTN.utils.adaptive import AdaptiveEmbedding
+try:
+    from apex.normalization import FusedLayerNorm
+except:
+    print("No apex package found")
 
 
 class PostionalEmbedding(nn.Module):
@@ -71,7 +75,7 @@ def bmm_einsum(tensor1, tensor2, eqn="ibnd,jbnd->ijbn"):
 
 
 class PostionwiseFF(nn.Module):
-    def __init__(self, d_model, d_ff, dropout):
+    def __init__(self, d_model, d_ff, dropout, apex):
         super().__init__()
 
         self.d_model = d_model
@@ -86,7 +90,10 @@ class PostionwiseFF(nn.Module):
                 nn.Dropout(dropout)
                 )
 
-        self.layer_norm = nn.LayerNorm(d_model)
+        if apex:
+            self.layer_norm = FusedLayerNorm(d_model)
+        else:
+            self.layer_norm = nn.LayerNorm(d_model)
 
     def forward(self, inputs):
         
@@ -170,7 +177,10 @@ class LearnableMultiheadSelfAttention(nn.Module):
         self.lin_o = nn.Linear(num_head * d_head, d_model, bias=False)
         self.lin_relemb = nn.Linear(d_model, num_head * d_head, bias=False)
 
-        self.layer_norm = nn.LayerNorm(d_model)
+        if apex:
+            self.layer_norm = FusedLayerNorm(d_model)
+        else:
+            self.layer_norm = nn.LayerNorm(d_model)
 
         self.scale = 1 / (d_head ** 0.5)
 
@@ -262,7 +272,7 @@ class TransformerUnit(nn.Module):
             self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropout, dropatt, apex)
 
 
-        self.pos_ff = PostionwiseFF(d_model, d_ff, dropout)
+        self.pos_ff = PostionwiseFF(d_model, d_ff, dropout, apex)
 
     def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None):
         
