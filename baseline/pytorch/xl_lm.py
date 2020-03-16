@@ -71,6 +71,8 @@ def parse_args():
                         help='demo mode')
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
+    parser.add_argument('--nonmono', type=int, default=5,
+                        help='non-monotone interval n in NT-ASGD')
     parser.add_argument('--emsize', type=int, default=256,
                         help='size of word embeddings')
     parser.add_argument('--nhid', type=int, default=256,
@@ -591,6 +593,7 @@ def main(args):
     if not args.eval:
         try:
             best_eval_ppl = float('inf')
+            best_eval_ppls = []
             train_step = 0
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
@@ -605,7 +608,29 @@ def main(args):
                                                    optimizer, 
                                                    best_eval_ppl, 
                                                    writer)
-                eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+                if "t0" in optimizer.param_groups[0]:
+                    # NT-ASGD triggered, updtae param
+                    params = dict()
+                    for param in model.parameters():
+                        params[param] = param.data.clone()
+                        param.data = optimizer.state[param]["ax"].clone()
+
+                    eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+
+                    for param in model.parameters():
+                        param.data = params[param].clone()
+                else:
+                    eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+
+                    if not args.adam and not "t0" in optimizer.param_groups[0] and len(best_eval_ppls) > args.nonmono and eval_ppl > min(best_eval_ppls[:-args.nonmono]):
+                        # trigger ASGD
+                        print("Switching to ASGD")
+                        optimizer = torch.optim.ASGD(model.parameters(), 
+                                                     lr=args.lr, 
+                                                     t0=0, 
+                                                     lambd=0., 
+                                                     weight_decay=args.weight_decay)
+
 
                 if args.rank == 0:
                     print('-' * 89)
@@ -630,6 +655,8 @@ def main(args):
                             }, 
                             args.savepath + "/" + args.save + "_best.pt")
                         print("save best model")
+                
+                    best_eval_ppls.append(eval_ppl)
 
         except KeyboardInterrupt:
             print('-' * 89)
