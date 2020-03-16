@@ -445,6 +445,8 @@ def main(args):
         model_args.devices = args.devices
         model_args.save = args.save
 
+        model_args.rank = args.rank
+
         if not model_args.mem_len == args.mem_len:
             print("REDEFINE mem_len: {} --> {}".format(model_args.mem_len, 
                                                        args.mem_len))
