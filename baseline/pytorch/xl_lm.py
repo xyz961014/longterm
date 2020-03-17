@@ -617,19 +617,49 @@ def main(args):
 
                     eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
+                    if args.rank == 0:
+                        module = model.module if args.distributed else model
+                        if eval_ppl < best_eval_ppl:
+                            best_eval_ppl = eval_ppl
+                            torch.save({
+                                "model_args": args,
+                                "model_state_dict": module.state_dict(),
+                                "criterion": criterion.state_dict()
+                                }, 
+                                args.savepath + "/" + args.save + "_best.pt")
+                            print("save best model")
+
                     for param in model.parameters():
                         param.data = params[param].clone()
                 else:
                     eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
-                    if not args.adam and not "t0" in optimizer.param_groups[0] and len(best_eval_ppls) > args.nonmono and eval_ppl > min(best_eval_ppls[:-args.nonmono]):
+                    if args.rank == 0:
+                        module = model.module if args.distributed else model
+                        if eval_ppl < best_eval_ppl:
+                            best_eval_ppl = eval_ppl
+                            torch.save({
+                                "model_args": args,
+                                "model_state_dict": module.state_dict(),
+                                "criterion": criterion.state_dict()
+                                }, 
+                                args.savepath + "/" + args.save + "_best.pt")
+                            print("save best model")
+
+                    #if not args.adam and "t0" not in optimizer.param_groups[0] and len(best_eval_ppls) > args.nonmono and eval_ppl > min(best_eval_ppls[:-args.nonmono]):
+                    if True:
                         # trigger ASGD
                         print("Switching to ASGD")
-                        optimizer = torch.optim.ASGD(model.parameters(), 
-                                                     lr=args.lr, 
-                                                     t0=0, 
-                                                     lambd=0., 
-                                                     weight_decay=args.weight_decay)
+                        optimizer = torch.optim.ASGD(
+                                            model.parameters(), 
+                                            lr=optimizer.param_groups[0]["lr"], 
+                                            t0=0, 
+                                            lambd=0., 
+                                            weight_decay=args.weight_decay)
+                        scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                                        optimizer, 
+                                        T_max=total_steps - len(train_loader) * epoch,
+                                        eta_min=args.eta_min)
 
 
                 if args.rank == 0:
@@ -644,17 +674,6 @@ def main(args):
                                       epoch * len(train_loader))
                     writer.flush()
 
-                    module = model.module if args.distributed else model
-
-                    if eval_ppl < best_eval_ppl:
-                        best_eval_ppl = eval_ppl
-                        torch.save({
-                            "model_args": args,
-                            "model_state_dict": module.state_dict(),
-                            "criterion": criterion.state_dict()
-                            }, 
-                            args.savepath + "/" + args.save + "_best.pt")
-                        print("save best model")
                 
                     best_eval_ppls.append(eval_ppl)
 
