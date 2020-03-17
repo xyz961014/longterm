@@ -575,12 +575,8 @@ def main(args):
     criterion = criterion.to(device)
 
     if args.adam:
-        if args.apex:
-            optimizer = FusedAdam(model.parameters(), lr=args.lr,
-                                  weight_decay=args.weight_decay)
-        else:
-            optimizer = optim.Adam(model.parameters(), lr=args.lr,
-                                   weight_decay=args.weight_decay)
+        optimizer = optim.Adam(model.parameters(), lr=args.lr,
+                               weight_decay=args.weight_decay)
     else:
         optimizer = optim.SGD(model.parameters(), lr=args.lr,
                               weight_decay=args.weight_decay)
