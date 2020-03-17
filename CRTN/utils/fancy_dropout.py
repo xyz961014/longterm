@@ -1,4 +1,5 @@
 from torch.nn import Parameter
+import torch.nn.functional as F
 
 import numpy as np
 import torch
@@ -6,7 +7,6 @@ import ipdb
 
 
 def _weight_drop(module, weights, dropout):
-
     for name_w in weights:
         w = getattr(module, name_w)
         del module._parameters[name_w]
@@ -26,16 +26,24 @@ def _weight_drop(module, weights, dropout):
 
 class WeightDropLinear(torch.nn.Linear):
     """
-    Wrapper around :class:`torch.nn.Linear` that adds ``weight_dropout`` named argument.
-
     Args:
         weight_dropout (float): The probability a weight will be dropped.
     """
 
     def __init__(self, *args, weight_dropout=0.0, **kwargs):
         super().__init__(*args, **kwargs)
-        weights = ['weight']
-        _weight_drop(self, weights, weight_dropout)
+
+        #weights = ['weight']
+        #_weight_drop(self, weights, weight_dropout)
+        self.dropout = weight_dropout
+
+    def forward(self, *args, **kwargs):
+        weight = self.weight.clone()
+        drop_w = F.dropout(weight, p=self.dropout, training=self.training)
+        self.weight.data = drop_w
+        output = super().forward(*args, **kwargs)
+        self.weight.data = weight.data
+        return output
 
 
 

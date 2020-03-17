@@ -180,6 +180,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
                                         weight_dropout=dropwei)
         self.lin_relemb = WeightDropLinear(d_model, num_head * d_head, bias=False, 
                                            weight_dropout=dropwei)
+        #self.lin_qkv = nn.Linear(d_model, 3 * num_head * d_head, bias=False) 
+        #self.lin_relemb = nn.Linear(d_model, num_head * d_head, bias=False,)
         self.lin_o = nn.Linear(num_head * d_head, d_model, bias=False)
 
         if apex:
