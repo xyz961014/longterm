@@ -4,13 +4,16 @@ import ipdb
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import sys
+sys.path.append("../..")
+from CRTN.utils.fancy_dropout import embedded_dropout
 
 CUDA_MAJOR = int(torch.version.cuda.split('.')[0])
 CUDA_MINOR = int(torch.version.cuda.split('.')[1])
 
 class AdaptiveEmbedding(nn.Module):
     def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1, init_std=0.1,
-                 sample_softmax=False):
+                 dropemb=0.0, sample_softmax=False):
         super().__init__()
 
         self.n_token = n_token
@@ -19,6 +22,8 @@ class AdaptiveEmbedding(nn.Module):
         self.cutoffs = cutoffs + [n_token]
         self.div_val = div_val
         self.d_proj = d_proj
+
+        self.dropemb = dropemb
 
         self.emb_scale = d_proj ** 0.5
 
@@ -50,8 +55,11 @@ class AdaptiveEmbedding(nn.Module):
 
 
     def forward(self, inp):
+
         if self.div_val == 1:
-            embed = self.emb_layers[0](inp)
+            embed = embedded_dropout(self.emb_layers[0], inp, 
+                                     dropout=self.dropemb if self.training else 0)
+            #embed = self.emb_layers[0](inp)
             if self.d_proj != self.d_embed:
                 embed  = F.linear(embed, self.emb_projs[0])
         else:
@@ -69,7 +77,9 @@ class AdaptiveEmbedding(nn.Module):
                     continue
 
                 inp_i = inp_flat.index_select(0, indices_i) - l_idx
-                emb_i = self.emb_layers[i](inp_i)
+                #emb_i = self.emb_layers[i](inp_i)
+                emb_i = embedded_dropout(self.emb_layers[i], inp_i, 
+                                         dropout=self.dropemb if self.training else 0)
                 emb_i = F.linear(emb_i, self.emb_projs[i])
 
                 emb_flat.index_copy_(0, indices_i, emb_i)

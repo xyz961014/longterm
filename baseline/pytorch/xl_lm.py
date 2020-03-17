@@ -110,6 +110,14 @@ def parse_args():
                         help='dropout applied to layers (0 = no dropout)')
     parser.add_argument('--dropatt', type=float, default=0.2,
                         help='dropout applied to attention (0 = no dropout)')
+    parser.add_argument('--dropemb', type=float, default=0.1,
+                        help='embedding dropout, random remove whole words')
+    parser.add_argument('--dropinp', type=float, default=0.65,
+                        help='input layer dropout')
+    parser.add_argument('--dropwei', type=float, default=0.5,
+                        help='linear weight dropout')
+    parser.add_argument('--drophid', type=float, default=0.3,
+                        help='hidden layers dropout')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--tied', action="store_true",
@@ -494,6 +502,10 @@ def main(args):
                 cutoffs=model_args.cutoffs,
                 dropout=model_args.dropout,
                 dropatt=model_args.dropatt,
+                dropemb=model_args.dropemb,
+                dropinp=model_args.dropinp,
+                dropwei=model_args.dropwei,
+                drophid=model_args.drophid,
                 apex=model_args.apex
                 )
 
@@ -518,6 +530,10 @@ def main(args):
                 cutoffs=args.cutoffs,
                 dropout=args.dropout,
                 dropatt=args.dropatt,
+                dropemb=args.dropemb,
+                dropinp=args.dropinp,
+                dropwei=args.dropwei,
+                drophid=args.drophid,
                 apex=args.apex
                 )
 
@@ -588,6 +604,7 @@ def main(args):
     elif args.scheduler == "constant":
         scheduler = None
 
+
     ### Training ###
 
     if not args.eval:
@@ -629,6 +646,7 @@ def main(args):
                                 args.savepath + "/" + args.save + "_best.pt")
                             print("save best model")
 
+                    # restore param
                     for param in model.parameters():
                         param.data = params[param].clone()
                 else:
@@ -646,8 +664,8 @@ def main(args):
                                 args.savepath + "/" + args.save + "_best.pt")
                             print("save best model")
 
-                    #if not args.adam and "t0" not in optimizer.param_groups[0] and len(best_eval_ppls) > args.nonmono and eval_ppl > min(best_eval_ppls[:-args.nonmono]):
-                    if True:
+                    if not args.adam and "t0" not in optimizer.param_groups[0] and len(best_eval_ppls) > args.nonmono and eval_ppl > min(best_eval_ppls[:-args.nonmono]):
+                    #if True:
                         # trigger ASGD
                         print("Switching to ASGD")
                         optimizer = torch.optim.ASGD(
