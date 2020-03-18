@@ -78,6 +78,8 @@ def parse_args():
                         help='adam optimizer')
     parser.add_argument('--nt_asgd', action='store_true',
                         help='NT-ASGD optimizer')
+    parser.add_argument('--nonmono', type=int, default=5,
+                        help='non-monotone interval n in NT-ASGD')
     parser.add_argument('--emsize', type=int, default=256,
                         help='size of word embeddings')
     parser.add_argument('--nhid', type=int, default=256,
@@ -713,6 +715,7 @@ def main(args):
     if not args.eval:
         try:
             best_eval_ppl = float('inf')
+            best_eval_ppls = []
             train_step = 0
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
@@ -727,7 +730,61 @@ def main(args):
                                                   optimizer, 
                                                   best_eval_ppl, 
                                                   writer)
-                eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+                if args.nt_asgd and "t0" in optimizer.param_groups[0]:
+                    # NT-ASGD triggered, updtae param
+                    params = dict()
+                    for param in model.parameters():
+                        params[param] = param.data.clone()
+                        param.data = optimizer.state[param]["ax"].clone()
+
+                    eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+
+                    if args.rank == 0:
+                        module = model.module if args.distributed else model
+                        if eval_ppl < best_eval_ppl:
+                            best_eval_ppl = eval_ppl
+                            torch.save({
+                                "model_args": args,
+                                "model_state_dict": module.state_dict(),
+                                "criterion": criterion.state_dict()
+                                }, 
+                                args.savepath + "/" + args.save + "_best.pt")
+                            print("save best model")
+
+                    # restore param
+                    for param in model.parameters():
+                        param.data = params[param].clone()
+                else:
+                    eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+
+                    if args.rank == 0:
+                        module = model.module if args.distributed else model
+                        if eval_ppl < best_eval_ppl:
+                            best_eval_ppl = eval_ppl
+                            torch.save({
+                                "model_args": args,
+                                "model_state_dict": module.state_dict(),
+                                "criterion": criterion.state_dict()
+                                }, 
+                                args.savepath + "/" + args.save + "_best.pt")
+                            print("save best model")
+
+                    if args.nt_asgd and "t0" not in optimizer.param_groups[0] and len(best_eval_ppls) > args.nonmono and eval_ppl > min(best_eval_ppls[:-args.nonmono]):
+                    #if True:
+                        # trigger ASGD
+                        print("Switching to ASGD")
+                        optimizer = torch.optim.ASGD(
+                                            model.parameters(), 
+                                            lr=optimizer.param_groups[0]["lr"], 
+                                            t0=0, 
+                                            lambd=0., 
+                                            weight_decay=args.weight_decay)
+                        if args.scheduler == "cosine":
+                            scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                                        optimizer, 
+                                        T_max=total_steps - len(train_loader) * epoch,
+                                        eta_min=args.eta_min)
+
 
                 if args.rank == 0:
                     print('-' * 89)
@@ -736,21 +793,37 @@ def main(args):
                                            (time.time() - epoch_start_time),
                                            eval_ppl))
                     print('-' * 89)
+
                     writer.add_scalar("valid/ppl", eval_ppl, 
                                       epoch * len(train_loader))
                     writer.flush()
 
-                    module = model.module if args.distributed else model
+                
+                    best_eval_ppls.append(eval_ppl)
+                #eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
-                    if eval_ppl < best_eval_ppl:
-                        best_eval_ppl = eval_ppl
-                        torch.save({
-                            "model_args": module.args,
-                            "model_state_dict": module.state_dict(),
-                            "criterion": criterion.state_dict()
-                            }, 
-                            args.savepath + "/" + args.save + "_best.pt")
-                        print("save best model")
+                #if args.rank == 0:
+                #    print('-' * 89)
+                #    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
+                #          '{:8.2f}'.format(epoch, 
+                #                           (time.time() - epoch_start_time),
+                #                           eval_ppl))
+                #    print('-' * 89)
+                #    writer.add_scalar("valid/ppl", eval_ppl, 
+                #                      epoch * len(train_loader))
+                #    writer.flush()
+
+                #    module = model.module if args.distributed else model
+
+                #    if eval_ppl < best_eval_ppl:
+                #        best_eval_ppl = eval_ppl
+                #        torch.save({
+                #            "model_args": module.args,
+                #            "model_state_dict": module.state_dict(),
+                #            "criterion": criterion.state_dict()
+                #            }, 
+                #            args.savepath + "/" + args.save + "_best.pt")
+                #        print("save best model")
 
         except KeyboardInterrupt:
             print('-' * 89)
