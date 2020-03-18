@@ -533,7 +533,7 @@ class TransformerLM(nn.Module):
         else:
             return None
 
-    def forward(self, inputs, key_num=None, values=None, weights=None, indices=None, words=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None):
+    def forward(self, inputs, cache_info=None, values=None, weights=None, indices=None, words=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None):
         #input shape should be seq_len * bsz or seq_len * bsz * emsize
         if inputs.dim() == 2:
             word_emb = self.embedding(inputs)
@@ -590,15 +590,15 @@ class TransformerLM(nn.Module):
                 pos_seq += seq_shift
 
             if self.args.real_pos:
-                #pos_key = torch.cat((key_num + 1.0, 
-                #                     key_num.new_zeros(1, key_num.size(1))))
-                if key_num is None:
-                    key_num = torch.arange(indices.size(0) - 1, -1, -1, 
+                if cache_info is None:
+                    pos = torch.arange(indices.size(0) - 1, -1, -1, 
                                            dtype=torch.float,
                                            device=inputs.device)
-                    key_num = key_num.expand(batch_size, -1)
-                    key_num.transpose_(0, 1)
-                pos_key = key_num 
+                    pos = pos.expand(batch_size, -1)
+                    pos.transpose_(0, 1)
+                    pos_key = pos 
+                else:
+                    pos_key = cache_info[:,:,0]
                 pos_start = torch.einsum("ib,j->bij", pos_key, 
                                          pos_key.new_ones(seq_len) * seq_len)
                 if self.args.farnear:
@@ -619,10 +619,6 @@ class TransformerLM(nn.Module):
                 pos_seq = torch.cat((pos_seq, pos_tail), dim=1)
             else:
                 pos_seq = pos_seq.expand(batch_size, -1)
-            #pos_seq = torch.einsum("b,k->bk", 
-            #                       torch.ones(batch_size, device=inputs.device), 
-            #                       torch.arange(total_len-1, -1, -1.0, 
-            #                       device=inputs.device))
 
             #one-hot pos_indices
             mem_num = values.size(0)
@@ -632,6 +628,13 @@ class TransformerLM(nn.Module):
             indice_bool = torch.index_select(tfbase, 0, pos_indices.view(-1))
             indice_bool = indice_bool.view(indice_len, -1, batch_size, mem_num + 1)
             indice_bool = indice_bool.sum(0)
+            if self.args.discard_worst:
+                # update recalls
+                query_len = indice_bool.size(0)
+                recall = indice_bool.sum(0).t()[:-1,:]
+                pos, recalls, queries = cache_info.chunk(3, dim=-1)
+                recalls += recall.unsqueeze(-1)
+                queries += query_len
 
             if self.args.stat:
                 stat = indice_bool.sum((0, 1))

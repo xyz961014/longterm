@@ -621,6 +621,7 @@ def main(args):
                                                    optimizer, 
                                                    best_eval_ppl, 
                                                    writer)
+
                 if args.nt_asgd and "t0" in optimizer.param_groups[0]:
                     # NT-ASGD triggered, updtae param
                     params = dict()
@@ -687,9 +688,8 @@ def main(args):
 
                     writer.add_scalar("valid/ppl", eval_ppl, 
                                       epoch * len(train_loader))
-                    writer.flush()
+                    writer.flush()                
 
-                
                     best_eval_ppls.append(eval_ppl)
 
         except KeyboardInterrupt:

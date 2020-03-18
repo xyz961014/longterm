@@ -55,11 +55,11 @@ def evaluate(model, eval_data, criterion, model_args=None):
     model.eval() 
     total_loss = 0.
     memory = None
-    key_num = torch.arange(model_args.cache_N, 0, -1, 
+    cache_info = torch.arange(model_args.cache_N, 0, -1, 
                            dtype=torch.float,
                            device=device)
-    key_num = key_num.expand(model_args.eval_batch_size, -1)
-    key_num.transpose_(0, 1)
+    cache_info = cache_info.expand(model_args.eval_batch_size, -1)
+    cache_info.transpose_(0, 1)
     key = None
     value = None
     len_eval = len(eval_data)
@@ -82,16 +82,16 @@ def evaluate(model, eval_data, criterion, model_args=None):
             if args.farnear:
                 if mem is not None:
                     mem = mem.detach()
-                output, mems, mem, key_num = model(text, key, value, 
+                output, mems, mem, cache_info = model(text, key, value, 
                                                    neighbor_mem=mem, 
-                                                   key_num=key_num)
+                                                   cache_info=cache_info)
             else:
-                output, mems, key_num = model(text, key, value, key_num=key_num)
+                output, mems, cache_info = model(text, key, value, cache_info=cache_info)
 
             model.cache.set_batch_size(args.eval_batch_size)
             model.cache.init_key_and_value(key, value)
             model.cache.detach_memory()
-            key_num = model.cache.renew(mems, text, key_num)
+            cache_info = model.cache.renew(mems, text, cache_info)
             key, value = (model.cache._get_keys(), 
                           model.cache._get_values().transpose(1, 2))
             model.cache.set_batch_size(args.eval_batch_size // len(args.devices))
@@ -277,11 +277,11 @@ def demo_words(model, criterion, corpus, init_word, length=100):
     sequence = torch.tensor(sequence).view(-1, 1).to(device)
     sequence = sequence.expand(-1, 2)
 
-    key_num = torch.arange(model.args.cache_N, 0, -1, 
+    cache_info = torch.arange(model.args.cache_N, 0, -1, 
                            dtype=torch.float,
                            device=device)
-    key_num = key_num.expand(2, -1)
-    key_num.transpose_(0, 1)
+    cache_info = cache_info.expand(2, -1)
+    cache_info.transpose_(0, 1)
     key = None
     value = None
     if model.args.farnear:
@@ -291,15 +291,15 @@ def demo_words(model, criterion, corpus, init_word, length=100):
         if model.args.farnear:
             if mem is not None:
                 mem = mem.detach()
-            output, mems, mem, key_num = model(sequence, key, value, 
+            output, mems, mem, cache_info = model(sequence, key, value, 
                                                neighbor_mem=mem, 
-                                               key_num=key_num)
+                                               cache_info=cache_info)
         else:
-            output, mems, key_num = model(sequence, key, value, key_num=key_num)
+            output, mems, cache_info = model(sequence, key, value, cache_info=cache_info)
         if not i == length - 1:
             model.cache.init_key_and_value(key, value)
             model.cache.detach_memory()
-            key_num = model.cache.renew(mems, sequence, key_num)
+            cache_info = model.cache.renew(mems, sequence, cache_info)
             key, value = (model.cache._get_keys(), 
                           model.cache._get_values().transpose(1, 2))
 

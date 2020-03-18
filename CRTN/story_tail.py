@@ -199,27 +199,27 @@ def batch_division(batch_size, rank=0, world_size=None):
         return batch_div * rank, batch_size
 
 
-def init_key_num(args, device, evaluate=False):
+def init_cache_info(args, device, evaluate=False):
     batch_size = args.eval_batch_size if evaluate else args.batch_size
-    key_num = torch.arange(args.cache_N, 0, -1, 
+    cache_info = torch.arange(args.cache_N, 0, -1, 
                            dtype=torch.float,
                            device=device)
-    key_num = key_num.expand(batch_size, -1)
-    key_num.transpose_(0, 1)
-    return key_num
+    cache_info = cache_info.expand(batch_size, -1)
+    cache_info.transpose_(0, 1)
+    return cache_info
 
-def update_cache(model, batch_size, key, value, hidden, text, key_num):
+def update_cache(model, batch_size, key, value, hidden, text, cache_info):
     
     hidden = hidden.transpose(1, 2)
 
     model.cache.set_batch_size(batch_size)
     model.cache.init_key_and_value(key, value)
     model.cache.detach_memory()
-    key_num = model.cache.renew(hidden, text, key_num)
+    cache_info = model.cache.renew(hidden, text, cache_info)
     key, value = (model.cache._get_keys(), 
                   model.cache._get_values().transpose(1, 2))
     model.cache.set_batch_size(batch_size // len(model.args.devices))
-    return model, key_num, key, value
+    return model, cache_info, key, value
 
 def batch_bleu(vocab, pred, trg):
     bleu = 0.
@@ -280,7 +280,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         key
         valueoutput, memory = model(ppl_block, memory)
         neighbor_mem
-        key_num
+        cache_info
         output of prediction of word
     """
     module = model.module if args.distributed else model
@@ -293,12 +293,12 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
     keys_tensor = prob_tensor.new_zeros(0)
     values_tensor = prob_tensor.new_zeros(0)
     mems_tensor = prob_tensor.new_zeros(0)
-    key_nums_tensor = prob_tensor.new_zeros(0)
+    cache_infos_tensor = prob_tensor.new_zeros(0)
 
     def length_punish(alpha, length):
         return ((5 + length) / 6) ** alpha
 
-    for old_inds, old_probs, old_eos, old_block, old_key, old_value, old_mem, old_key_num, out in candidates:
+    for old_inds, old_probs, old_eos, old_block, old_key, old_value, old_mem, old_cache_info, out in candidates:
         # get probablity
         head_prob, tails = criterion(out, block[0], output=True)
         word_ind, word_prob = get_real_ind_and_prob(head_prob, tails, args.beam_size)
@@ -339,8 +339,8 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         values_tensor = torch.cat((values_tensor, old_value), 0)
         old_mem = old_mem.unsqueeze(0)
         mems_tensor = torch.cat((mems_tensor, old_mem), 0)
-        old_key_num = old_key_num.unsqueeze(0)
-        key_nums_tensor = torch.cat((key_nums_tensor, old_key_num), 0)
+        old_cache_info = old_cache_info.unsqueeze(0)
+        cache_infos_tensor = torch.cat((cache_infos_tensor, old_cache_info), 0)
 
     chosen_prob, chosen_ind = prob_tensor.topk(args.beam_size)
     chosen_eos = torch.gather(eos_tensor, 1, chosen_ind)
@@ -368,9 +368,9 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
                              mems_tensor.size(-1))
     chosen_mems = torch.gather(mems_tensor, 0, mem_ind)
 
-    key_num_ind = chosen_cand[:,None,:]
-    key_num_ind = key_num_ind.expand(-1, key_nums_tensor.size(1), -1)
-    chosen_key_nums = torch.gather(key_nums_tensor, 0, key_num_ind)
+    cache_info_ind = chosen_cand[:,None,:]
+    cache_info_ind = cache_info_ind.expand(-1, cache_infos_tensor.size(1), -1)
+    chosen_cache_infos = torch.gather(cache_infos_tensor, 0, cache_info_ind)
 
     # demo: print words in batch0
     #for words, prob in list(zip(chosen_ind[0], chosen_prob[0])):
@@ -384,7 +384,7 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
         key = chosen_keys[i]
         value = chosen_values[i]
         mem = chosen_mems[i]
-        key_num = chosen_key_nums[i]
+        cache_info = chosen_cache_infos[i]
         eos = chosen_eos[:,i]
 
         cand = [chosen_ind[:,i,:], 
@@ -397,17 +397,17 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
             if args.farnear:
 
                 output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
-                                                key_num=key_num, inf_ind=ind, 
+                                                cache_info=cache_info, inf_ind=ind, 
                                                 inf_blocks=inf_blocks)
 
                 #output, hidden, new_mem = model(block, key, value, neighbor_mem=mem, 
-                #                                key_num=key_num)
+                #                                cache_info=cache_info)
                 #output = output[ind].unsqueeze(0)
                 #update_hidden = hidden.clone()
                 #hidden = new_mem.view_as(mem)[:,ind-args.num_steps,:,:].unsqueeze(1)
                 #hidden = hidden.transpose(1, 2)
             else:
-                output, hidden = model(block, key, value, key_num=key_num)
+                output, hidden = model(block, key, value, cache_info=cache_info)
 
             hidden = hidden.transpose(1, 2)
             new_inf_blocks = inf_blocks.clone()
@@ -420,16 +420,16 @@ def beam_search(candidates, criterion, vocab, block, block_start, ind, model, ar
                     update_hidden, new_mem = total_mem.split([args.num_steps, 
                                                               args.neighbor_len], 
                                                               dim=1)
-                module, key_num, key, value = update_cache(module, block.size(1), 
+                module, cache_info, key, value = update_cache(module, block.size(1), 
                                                           key, value, update_hidden, 
-                                                          block, key_num)
+                                                          block, cache_info)
                 mem = new_mem.view_as(mem)
 
             cand.append(new_inf_blocks)
-            cand += [key, value, mem, key_num]
+            cand += [key, value, mem, cache_info]
             cand.append(output.squeeze(0))
         else:
-            cand += [inf_blocks.clone(), key, value, mem, key_num,
+            cand += [inf_blocks.clone(), key, value, mem, cache_info,
                      inf_blocks.new_zeros(inf_blocks.size(1), inf_blocks.size(-1))]
         new_candidates.append(cand)
     
@@ -462,7 +462,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
     value = None
     if args.farnear:
         mem = None
-    key_num = init_key_num(args, device)
+    cache_info = init_cache_info(args, device)
 
     if args.distributed:
         batch_start, batch_end = batch_division(args.batch_size, args.rank)
@@ -488,12 +488,12 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                                         key, 
                                         value, 
                                         neighbor_mem=mem, 
-                                        key_num=key_num)
+                                        cache_info=cache_info)
         else:
-            output, hidden = model(text, key, value, key_num=key_num)
+            output, hidden = model(text, key, value, cache_info=cache_info)
 
-        module, key_num, key, value = update_cache(module, text.size(1), 
-                                                   key, value, hidden, text, key_num)
+        module, cache_info, key, value = update_cache(module, text.size(1), 
+                                                   key, value, hidden, text, cache_info)
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), target.reshape(-1))
@@ -622,7 +622,7 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
 
                 eval_batch_size = trg.size(1)
                 srcs = src.split(module.args.num_steps)
-                key_num = init_key_num(args, device, True)
+                cache_info = init_cache_info(args, device, True)
                 key = None
                 value = None
                 pred = []
@@ -637,17 +637,17 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                         
                         output, hidden, mem = model(block, key, value, 
                                                     neighbor_mem=mem, 
-                                                    key_num=key_num)
+                                                    cache_info=cache_info)
                     else:
-                        output, hidden = model(block, key, value, key_num=key_num)
+                        output, hidden = model(block, key, value, cache_info=cache_info)
 
                     if i < len(srcs) - 1:
-                        module, key_num, key, value = update_cache(module, 
+                        module, cache_info, key, value = update_cache(module, 
                                                                    eval_batch_size, 
                                                                    key, value, 
                                                                    hidden, 
                                                                    block, 
-                                                                   key_num)
+                                                                   cache_info)
 
                 # begin to evaluate
 
@@ -667,7 +667,7 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                                   output.new_zeros(eval_batch_size, 1),
                                   block.new_ones(eval_batch_size, 1).bool(),
                                   inf_blocks,
-                                  key, value, mem, key_num]]
+                                  key, value, mem, cache_info]]
 
                     # generated index
                     # probability
@@ -713,26 +713,26 @@ def evaluate(model, eval_loader, criterion, writer, args, eval_part=1.0):
                 if args.farnear:
                     output, hidden, mem = model(ppl_block, key, value, 
                                                 neighbor_mem=mem, 
-                                                key_num=key_num)
+                                                cache_info=cache_info)
                 outputs = torch.cat((outputs, output), 0)
 
-                module, key_num, key, value = update_cache(module, 
+                module, cache_info, key, value = update_cache(module, 
                                                            eval_batch_size, 
                                                            key, value, hidden, 
                                                            ppl_block, 
-                                                           key_num)
+                                                           cache_info)
                 for trg_ppl_block in trg_lasts:
                     output, hidden, mem = model(trg_ppl_block, key, value, 
                                                 neighbor_mem=mem, 
-                                                key_num=key_num)
+                                                cache_info=cache_info)
 
                     outputs = torch.cat((outputs, output), 0)
 
-                    module, key_num, key, value = update_cache(module, 
+                    module, cache_info, key, value = update_cache(module, 
                                                                eval_batch_size, 
                                                                key, value, hidden, 
                                                                ppl_block, 
-                                                               key_num)
+                                                               cache_info)
                 for batch, tail_len in enumerate(tail_lens):
                     batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
                     batch_trg = trg[:tail_len,batch]
@@ -844,7 +844,7 @@ def roc_evaluate(model, eval_loader, criterion, writer, args):
                 srcs = src.split(module.args.num_steps)
 
                 model.set_batch_size(eval_batch_size)
-                key_num = init_key_num(args, device, True)
+                cache_info = init_cache_info(args, device, True)
                 key = None
                 value = None
 
@@ -858,17 +858,17 @@ def roc_evaluate(model, eval_loader, criterion, writer, args):
                             mem = mem.detach()
                         output, hidden, mem = model(block, key, value, 
                                                     neighbor_mem=mem, 
-                                                    key_num=key_num)
+                                                    cache_info=cache_info)
                     else:
-                        output, hidden = model(block, key, value, key_num=key_num)
+                        output, hidden = model(block, key, value, cache_info=cache_info)
 
                     if i < len(srcs) - 1:
-                        module, key_num, key, value = update_cache(module, 
+                        module, cache_info, key, value = update_cache(module, 
                                                                    eval_batch_size, 
                                                                    key, value, 
                                                                    hidden, 
                                                                    block, 
-                                                                   key_num)
+                                                                   cache_info)
 
                 # begin to evaluate
 
@@ -894,7 +894,7 @@ def roc_evaluate(model, eval_loader, criterion, writer, args):
                 losses = []
                 for trg in [ans1, ans2]:
                     ppl_block = block.clone()
-                    key_num_clone= key_num.clone()
+                    cache_info_clone= cache_info.clone()
                     key_clone = key.clone()
                     value_clone = value.clone()
                     mem_clone = mem.clone()
@@ -926,34 +926,34 @@ def roc_evaluate(model, eval_loader, criterion, writer, args):
                                                           key_clone, 
                                                           value_clone, 
                                                           neighbor_mem=mem_clone, 
-                                                          key_num=key_num_clone)
+                                                          cache_info=cache_info_clone)
                     outputs = torch.cat((outputs, output), 0)
 
-                    module, key_num_clone, key_clone, value_clone = update_cache(
+                    module, cache_info_clone, key_clone, value_clone = update_cache(
                                                                module, 
                                                                eval_batch_size, 
                                                                key_clone, 
                                                                value_clone, 
                                                                hidden, 
                                                                ppl_block, 
-                                                               key_num_clone)
+                                                               cache_info_clone)
                     for trg_ppl_block in trg_lasts:
                         output, hidden, mem_clone = model(trg_ppl_block, 
                                                           key_clone, 
                                                           value_clone, 
                                                           neighbor_mem=mem_clone, 
-                                                          key_num=key_num_clone)
+                                                          cache_info=cache_info_clone)
 
                         outputs = torch.cat((outputs, output), 0)
 
-                        module, key_num_clone, key_clone, value_clone = update_cache(
+                        module, cache_info_clone, key_clone, value_clone = update_cache(
                                                                    module, 
                                                                    eval_batch_size, 
                                                                    key_clone, 
                                                                    value_clone, 
                                                                    hidden, 
                                                                    ppl_block, 
-                                                                   key_num_clone)
+                                                                   cache_info_clone)
                     for batch, tail_len in enumerate(tail_lens):
                         batch_pred = outputs[ind-1:ind+tail_len-1,batch,:]
                         batch_trg = trg[:tail_len,batch]

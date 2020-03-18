@@ -165,14 +165,14 @@ def parse_args():
                         ' near to compute query and attention; far to be queried')
     parser.add_argument("--neighbor_len", type=int, default=50,
                         help="length of near neighbor; only use in farnear mode")
-    parser.add_argument('--p_discard', action="store_true",
-                        help='discard segment according to a computed posibility')
     parser.add_argument('--merge', action="store_true",
                         help='merge history instead of discarding')
     parser.add_argument('--merge_shift', action="store_true",
                         help='shift positioning encoding when merge')
     parser.add_argument("--merge_alpha", type=float, default=0.5,
                         help="ratio of retaining old information when merging")
+    parser.add_argument('--discard_worst', action="store_true",
+                        help='discard the least used section')
     parser.add_argument('--real_pos', action="store_true",
                         help='compute position encoding according to realtime pos')
     parser.add_argument('--div_val', type=int, default=1,
@@ -237,31 +237,30 @@ def batch_division(batch_size, rank=0, world_size=None, single_value=False):
             return batch_size - batch_div * rank
 
 
-def init_key_num(args, device, evaluate=False):
+def init_cache_info(args, device, evaluate=False):
+    """
+    store relative position of cahce chunk and its recall times
+    [pos, recall times, all query times]
+    """
     batch_size = args.eval_batch_size if evaluate else args.batch_size
-    key_num = torch.arange(args.cache_N, 0, -1, 
-                           dtype=torch.float,
-                           device=device)
-    key_num = key_num.expand(batch_size, -1)
-    key_num.transpose_(0, 1)
-    return key_num
+    pos = torch.arange(args.cache_N, 0, -1, 
+                       dtype=torch.float,
+                       device=device)
+    recall_query = torch.zeros((args.cache_N, 2), dtype=torch.float, device=device)
+    cache_info = torch.cat((pos.unsqueeze(-1), recall_query), dim=-1).unsqueeze(1)
+    cache_info = cache_info.expand(-1, batch_size, -1).contiguous()
+    return cache_info
 
-def update_cache(model, batch_size, key, value, hidden, text, key_num):
+def update_cache(model, batch_size, key, value, hidden, text, cache_info):
     
     hidden = hidden.transpose(1, 2)
 
-    #model.cache.set_batch_size(batch_size)
-    #model.cache.init_key_and_value(key, value)
-    #model.cache.detach_memory()
-    keys, values, key_num = model.cache.renew(hidden, 
+    keys, values, cache_info = model.cache.renew(hidden, 
                                               text, 
-                                              key_num, 
+                                              cache_info, 
                                               keys=key, 
                                               values=value)
-    #key, value = (model.cache._get_keys(), 
-    #              model.cache._get_values().transpose(1, 2))
-    #model.cache.set_batch_size(batch_size // len(model.args.devices))
-    return model, key_num, keys, values
+    return model, cache_info, keys, values
 
 
 def train(model, train_loader, valid_loader, criterion, scheduler, 
@@ -281,7 +280,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
     value = None
     if args.farnear:
         mem = None
-    key_num = init_key_num(args, device)
+    cache_info = init_cache_info(args, device)
 
     for batch, data in enumerate(train_loader):
 
@@ -305,12 +304,12 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 mem = mem.detach()
             output, hidden, mem = model(text, key, value, 
                                         neighbor_mem=mem, 
-                                        key_num=key_num)
+                                        cache_info=cache_info)
         else:
-            output, hidden = model(text, key, value, key_num=key_num)
+            output, hidden = model(text, key, value, cache_info=cache_info)
 
-        module, key_num, key, value = update_cache(module, text.size(1), 
-                                                   key, value, hidden, text, key_num)
+        module, cache_info, key, value = update_cache(module, text.size(1), 
+                                                   key, value, hidden, text, cache_info)
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))
@@ -395,7 +394,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
     value = None                
     if args.farnear:            
         mem = None              
-    key_num = init_key_num(args, device, True)
+    cache_info = init_cache_info(args, device, True)
 
     if args.word_loss and args.rank == 0:
         vocab = eval_loader.dataset.fields["text"].vocab 
@@ -433,16 +432,16 @@ def evaluate(model, eval_loader, criterion, writer, args):
                         mem = mem.detach()
                     output, hidden, mem = model(text, key, value, 
                                                 neighbor_mem=mem, 
-                                                key_num=key_num)
+                                                cache_info=cache_info)
                 else:
-                    output, hidden = model(text, key, value, key_num=key_num)
+                    output, hidden = model(text, key, value, cache_info=cache_info)
 
-                module, key_num, key, value = update_cache(module, 
+                module, cache_info, key, value = update_cache(module, 
                                                            text.size(1), 
                                                            key, value, 
                                                            hidden, 
                                                            text, 
-                                                           key_num)
+                                                           cache_info)
 
                 if args.adaptive:
                     loss_tensor = criterion(output.view(-1, args.nhid), 
@@ -730,6 +729,7 @@ def main(args):
                                                   optimizer, 
                                                   best_eval_ppl, 
                                                   writer)
+
                 if args.nt_asgd and "t0" in optimizer.param_groups[0]:
                     # NT-ASGD triggered, updtae param
                     params = dict()
@@ -797,33 +797,8 @@ def main(args):
                     writer.add_scalar("valid/ppl", eval_ppl, 
                                       epoch * len(train_loader))
                     writer.flush()
-
                 
                     best_eval_ppls.append(eval_ppl)
-                #eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
-
-                #if args.rank == 0:
-                #    print('-' * 89)
-                #    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
-                #          '{:8.2f}'.format(epoch, 
-                #                           (time.time() - epoch_start_time),
-                #                           eval_ppl))
-                #    print('-' * 89)
-                #    writer.add_scalar("valid/ppl", eval_ppl, 
-                #                      epoch * len(train_loader))
-                #    writer.flush()
-
-                #    module = model.module if args.distributed else model
-
-                #    if eval_ppl < best_eval_ppl:
-                #        best_eval_ppl = eval_ppl
-                #        torch.save({
-                #            "model_args": module.args,
-                #            "model_state_dict": module.state_dict(),
-                #            "criterion": criterion.state_dict()
-                #            }, 
-                #            args.savepath + "/" + args.save + "_best.pt")
-                #        print("save best model")
 
         except KeyboardInterrupt:
             print('-' * 89)

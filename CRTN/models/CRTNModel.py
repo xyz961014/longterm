@@ -47,12 +47,12 @@ class CRTNModel(nn.Module):
         self.encoder.set_batch_size(batch_size)
         self.args.batch_size = batch_size
 
-    def forward(self, inputs, cache_key, cache_value, key_num=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None, **kwargs):
+    def forward(self, inputs, cache_key, cache_value, cache_info=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None, **kwargs):
         """
         inputs: num_steps * batch_size
         cache_key: cache_N * batch_size * (num_steps * nhid)
         cache_value: cache_N * batch_size * num_steps * ((nlayers+1) * nhid)
-        key_num: cache_N * batch_size
+        cache_info: cache_N * batch_size * 3 [pos, recalls, queries]
         neighbor_mem: (nlayers+1) * batch_size * nei_len * nhid
         inf_blocks: (nlayers+1) * batch_size * num_steps * nhid
         """
@@ -232,7 +232,7 @@ class CRTNModel(nn.Module):
         if self.args.not_weighted:
             weights = None
 
-        output, hidden, attn_map = self.encoder(inputs, key_num, values, weights, 
+        output, hidden, attn_map = self.encoder(inputs, cache_info, values, weights, 
                                               indices, words, draw, neighbor_mem,
                                               inf_ind, inf_blocks)
 
