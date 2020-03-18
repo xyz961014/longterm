@@ -135,6 +135,8 @@ def parse_args():
                         help="dimension of key, default: 240")
     parser.add_argument("--cache_k", type=int, default=3, 
                         help="select top k values, default: 3")
+    parser.add_argument("--cache_theta", type=float, default=1.0, 
+                        help="cache theta, default: 1.0")
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--adaptive', action="store_true",

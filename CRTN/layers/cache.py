@@ -28,6 +28,7 @@ class Cache(nn.Module):
         self.N = self.args.cache_N
         self.dv = self.args.nhid
         self.topk = self.args.cache_k
+        self.theta = self.args.cache_theta
 
         self.pos_emb = PositionalEmbedding(args.nhid)
 
@@ -67,7 +68,7 @@ class Cache(nn.Module):
             attention = attention.view(-1, self.args.num_steps ** 2, 1, self.N)
             attention = attention.max(1)[0]
         else:
-            attention, _ = self.attn(query, keys, values)
+            attention, _ = self.attn(query, keys, values, scale=self.theta)
 
         attention = attention.view(-1, 1, attention.size(-1))
         

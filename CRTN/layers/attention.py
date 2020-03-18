@@ -11,9 +11,9 @@ class DotProductAttention(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, query, keys, values, mask=None):
+    def forward(self, query, keys, values, mask=None, scale=1.0):
         weights = torch.einsum("...bh,bnh->...bn", query, keys)
-        weights = F.softmax(weights / np.sqrt(keys.size(-1)), 2)
+        weights = F.softmax(scale * weights / np.sqrt(keys.size(-1)), 2)
         #outputs = torch.einsum("...bn,bnlh->...blh", weights, values)
         outputs = None
         weights = weights.unsqueeze(-2)
