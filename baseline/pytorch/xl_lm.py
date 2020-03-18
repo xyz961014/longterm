@@ -69,7 +69,7 @@ def parse_args():
                         help='demo mode')
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
-    parser.add_argument('--nt-asgd', action='store_true',
+    parser.add_argument('--nt_asgd', action='store_true',
                         help='NT-ASGD optimizer')
     parser.add_argument('--nonmono', type=int, default=5,
                         help='non-monotone interval n in NT-ASGD')
@@ -621,7 +621,7 @@ def main(args):
                                                    optimizer, 
                                                    best_eval_ppl, 
                                                    writer)
-                if args.nt-asgd and "t0" in optimizer.param_groups[0]:
+                if args.nt_asgd and "t0" in optimizer.param_groups[0]:
                     # NT-ASGD triggered, updtae param
                     params = dict()
                     for param in model.parameters():
@@ -660,7 +660,7 @@ def main(args):
                                 args.savepath + "/" + args.save + "_best.pt")
                             print("save best model")
 
-                    if args.nt-asgd and "t0" not in optimizer.param_groups[0] and len(best_eval_ppls) > args.nonmono and eval_ppl > min(best_eval_ppls[:-args.nonmono]):
+                    if args.nt_asgd and "t0" not in optimizer.param_groups[0] and len(best_eval_ppls) > args.nonmono and eval_ppl > min(best_eval_ppls[:-args.nonmono]):
                     #if True:
                         # trigger ASGD
                         print("Switching to ASGD")

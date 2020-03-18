@@ -76,7 +76,7 @@ def parse_args():
                         help='stat memory choices')
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
-    parser.add_argument('--nt-asgd', action='store_true',
+    parser.add_argument('--nt_asgd', action='store_true',
                         help='NT-ASGD optimizer')
     parser.add_argument('--emsize', type=int, default=256,
                         help='size of word embeddings')
