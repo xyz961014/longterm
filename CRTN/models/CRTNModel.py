@@ -8,15 +8,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-#from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-
 import os
 from CRTN.utils.adaptive import AdaptiveEmbedding
 
 from CRTN.layers.transformer import TransformerLM
 from CRTN.layers.cache import Cache
-
-#import torchsnooper
 
 class CRTNModel(nn.Module):
     def __init__(self, args, corpus=None):
@@ -63,9 +59,6 @@ class CRTNModel(nn.Module):
         seq_len = self.args.num_steps
         bsz = inputs.size(1)
         nhid = self.args.nhid
-
-        # get cache key and value
-        #self.cache.init_key_and_value(cache_key, cache_value)
 
         if cache_key is None and cache_value is None:
             cache_key, cache_value = self.cache.new_key_and_values()
@@ -228,6 +221,7 @@ class CRTNModel(nn.Module):
 
         values = cache_value.transpose(1, 2).contiguous()
 
+        # look into cache
         if self.demo:
             weights, indices, words = self.cache(query, cache_key, values)
         else:

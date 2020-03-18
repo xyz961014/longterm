@@ -7,13 +7,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-
 import os
 sys.path.append("../..")
 from CRTN.utils.adaptive import AdaptiveEmbedding
 from CRTN.utils.fancy_dropout import WeightDropLinear
-from torchnlp.nn import LockedDropout, WeightDrop
+from torchnlp.nn import LockedDropout
 try:
     from apex.normalization import FusedLayerNorm
 except:
@@ -174,7 +172,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         self.dropout = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
-        self.drophid = LockedDropout(dropatt)
+        self.drophid = LockedDropout(drophid)
 
         self.lin_qkv = WeightDropLinear(d_model, 3 * num_head * d_head, bias=False, 
                                         weight_dropout=dropwei)
@@ -340,7 +338,7 @@ class TransformerLM(nn.Module):
 
         self.dropout = LockedDropout(dropout)
         self.dropinp = LockedDropout(dropinp)
-        self.drophid = LockedDropout(drophid)
+        #self.drophid = LockedDropout(drophid)
 
         self.layers = nn.ModuleList()
 
@@ -359,15 +357,11 @@ class TransformerLM(nn.Module):
 
 
         self.init_weights(init_std)
-        #self.criterion = criterion
 
     def init_weights(self, init_std):
         if self.attn_type == 1:
             nn.init.normal_(self.pos_bias_u, 0.0, init_std)
             nn.init.normal_(self.pos_bias_v, 0.0, init_std)
-        #if not self.adaptive:
-        #    nn.init.normal_(self.embedding.weight, 0.0, init_std)
-        #    nn.init.normal_(self.decoder.weight, 0.0, init_std)
 
     def init_hidden(self, batch_size):
         return self.init_memory(batch_size)
@@ -382,8 +376,6 @@ class TransformerLM(nn.Module):
     def forward(self, inputs, memory=None):
         seq_len, batch_size = inputs.size()
         length = torch.tensor([seq_len] * batch_size, dtype=torch.int64)
-
-        #inputs = pack_padded_sequence(inputs, length)
 
         if memory is None:
             memory = self.init_memory(batch_size)

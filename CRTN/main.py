@@ -37,7 +37,6 @@ import torch.multiprocessing as mp
 try:
     from apex import amp
     from apex.parallel import DistributedDataParallel as apexDDP
-    from apex.optimizers import FusedAdam
     class ApexDataParallel(apexDDP):
         def __init__(self, module, **kwargs):
             super().__init__(module, **kwargs)
@@ -52,12 +51,14 @@ try:
             self.batch_size = batch_size
             self.module.set_batch_size(batch_size)
 except:
-    print("No Apex package found")
+    print("No apex package found")
 
-if torch.__version__ < "1.2.0":
-    from tensorboardX import SummaryWriter
-else:
-    from torch.utils.tensorboard import SummaryWriter
+#if torch.__version__ < "1.2.0":
+#    from tensorboardX import SummaryWriter
+#else:
+#    from torch.utils.tensorboard import SummaryWriter
+
+from torch.utils.tensorboard import SummaryWriter
 import ipdb
 
 def parse_args():
@@ -75,6 +76,8 @@ def parse_args():
                         help='stat memory choices')
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
+    parser.add_argument('--nt-asgd', action='store_true',
+                        help='NT-ASGD optimizer')
     parser.add_argument('--emsize', type=int, default=256,
                         help='size of word embeddings')
     parser.add_argument('--nhid', type=int, default=256,
@@ -110,6 +113,14 @@ def parse_args():
                         help='dropout applied to layers (0 = no dropout)')
     parser.add_argument('--dropatt', type=float, default=0.2,
                         help='dropout applied to attention (0 = no dropout)')
+    parser.add_argument('--dropemb', type=float, default=0.1,
+                        help='embedding dropout, random remove whole words')
+    parser.add_argument('--dropinp', type=float, default=0.65,
+                        help='input layer dropout')
+    parser.add_argument('--dropwei', type=float, default=0.5,
+                        help='linear weight dropout')
+    parser.add_argument('--drophid', type=float, default=0.3,
+                        help='hidden layers dropout')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--tied', action="store_true",

@@ -7,10 +7,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-
 import os
 from CRTN.utils.adaptive import AdaptiveEmbedding
+from CRTN.utils.fancy_dropout import WeightDropLinear
+from torchnlp.nn import LockedDropout
 
 import ipdb
 import visdom
@@ -33,11 +33,9 @@ class PositionalEmbedding(nn.Module):
 
         sinusoid = torch.einsum("bi,j->ibj", pos_seq, self.inverse_freq)
 
-        #sinusoid = torch.einsum("i,j->ij", pos_seq, self.inverse_freq)
-
         pos_embedding = torch.cat((sinusoid.sin(), sinusoid.cos()), -1)
 
-        return pos_embedding[:,:,None,:]
+        return pos_embedding
 
 def bmm_einsum(tensor1, tensor2, eqn="ibnd,jbnd->ijbn"):
     """
@@ -45,6 +43,8 @@ def bmm_einsum(tensor1, tensor2, eqn="ibnd,jbnd->ijbn"):
     ibnd,jbnd->ijbn
     ilbn,lbnd->ibnd
     kibnd,kjbnd->ikjbn
+
+    this version is used to be compatible with apex
     """
     if eqn == "ibnd,jbnd->ijbn":
         assert tensor1.shape[1:] == tensor2.shape[1:]
@@ -77,19 +77,18 @@ def bmm_einsum(tensor1, tensor2, eqn="ibnd,jbnd->ijbn"):
 
 
 class PostionwiseFF(nn.Module):
-    def __init__(self, d_model, d_ff, dropout, apex=False):
+    def __init__(self, d_model, d_ff, drophid, apex=False):
         super().__init__()
 
         self.d_model = d_model
         self.d_ff = d_ff
-        self.dropout = dropout
 
         self.FFNet = nn.Sequential(
                 nn.Linear(d_model, d_ff),
                 nn.ReLU(inplace=True),
-                nn.Dropout(dropout),
+                LockedDropout(drophid),
                 nn.Linear(d_ff, d_model),
-                nn.Dropout(dropout)
+                LockedDropout(drophid)
                 )
 
         if apex:
@@ -164,21 +163,27 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropout, dropatt, apex=False):
+    def __init__(self, num_head, d_model, d_head, dropout, dropatt, dropwei, drophid, apex=False):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
         self.d_head = d_head
-        self.dropout = dropout
         self.apex = apex
 
-        self.drop = nn.Dropout(dropout)
+        self.dropout = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
+        self.drophid = LockedDropout(drophid)
 
-        self.lin_q = nn.Linear(d_model, num_head * d_head, bias=False)
-        self.lin_kv = nn.Linear(d_model, 2 * num_head * d_head, bias=False)
+        #self.lin_q = nn.Linear(d_model, num_head * d_head, bias=False)
+        #self.lin_kv = nn.Linear(d_model, 2 * num_head * d_head, bias=False)
+        #self.lin_relemb = nn.Linear(d_model, num_head * d_head, bias=False)
+        self.lin_q = WeightDropLinear(d_model, num_head * d_head, bias=False,
+                                      weight_dropout=dropwei)
+        self.lin_kv = WeightDropLinear(d_model, 2 * num_head * d_head, bias=False,
+                                       weight_dropout=dropwei)
+        self.lin_relemb = WeightDropLinear(d_model, num_head * d_head, bias=False,
+                                           weight_dropout=dropwei)
         self.lin_o = nn.Linear(num_head * d_head, d_model, bias=False)
-        self.lin_relemb = nn.Linear(d_model, num_head * d_head, bias=False)
 
         if apex:
             self.layer_norm = FusedLayerNorm(d_model)
@@ -373,7 +378,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
                                     self.num_head * self.d_head)
 
         attn_out = self.lin_o(attn_vec)
-        attn_out = self.drop(attn_out)
+        attn_out = self.drophid(attn_out)
 
         output = self.layer_norm(x + attn_out)
 
@@ -391,7 +396,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout, dropatt, apex):
+    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout, dropatt, dropwei, drophid, apex):
         super().__init__()
 
         self.attn_type = attn_type
@@ -400,10 +405,11 @@ class TransformerUnit(nn.Module):
             self.attn = MultiheadSelfAttention(num_head, d_model, d_head, dropout)
         elif attn_type == 1:
             self.attn = LearnableMultiheadSelfAttention(num_head, d_model, 
-                                                        d_head, dropout, dropatt, apex)
+                                                        d_head, dropout, dropatt, 
+                                                        dropwei, drophid, apex)
 
 
-        self.pos_ff = PostionwiseFF(d_model, d_ff, dropout, apex)
+        self.pos_ff = PostionwiseFF(d_model, d_ff, drophid, apex)
 
     def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, indices=None, weights=None, neighbor_mem=None, inf_ind=None):
         
@@ -439,14 +445,15 @@ class TransformerLM(nn.Module):
         num_steps = self.args.num_steps
         mem_len = self.args.mem_len
         attn_type = self.args.attn_type
-        dropout = self.args.dropout
-        dropatt = self.args.dropatt
         cutoffs = self.args.cutoffs
         div_val = self.args.div_val
         init_std = self.args.init_std
 
         attn_type = self.args.attn_type
         adaptive = self.args.adaptive
+
+        #dropout = self.args.dropout
+        #dropatt = self.args.dropatt
         
         self.corpus = corpus
         self.demo = self.args.demo
@@ -455,7 +462,8 @@ class TransformerLM(nn.Module):
         if adaptive:
             self.embedding = AdaptiveEmbedding(vocab_size, d_embedding, d_model, 
                                                cutoffs, div_val=div_val, 
-                                               init_std=init_std)
+                                               init_std=init_std,
+                                               dropemb=args.dropemb)
         else:
             self.decoder = nn.Linear(d_model, vocab_size, bias=False) 
             if args.tied:
@@ -469,15 +477,10 @@ class TransformerLM(nn.Module):
 
         self.pos_emb = PositionalEmbedding(d_model)
 
+        self.dropout = LockedDropout(args.dropout)
+        self.dropinp = LockedDropout(args.dropinp)
+        #self.drophid = LockedDropout(args.drophid)
 
-
-        #establish pos_emb_bank
-
-        #pos_unit = torch.arange((self.args.cache_N+1)*num_steps-1, -1, -1.0) 
-        #pos_unit = pos_unit.view(self.args.cache_N+1, -1)
-        #batch = torch.ones(self.batch_size * num_steps)
-        #pos_emb_bank = torch.einsum('nl,b->bnl', pos_unit, batch)
-        #self.register_buffer("pos_emb_bank", pos_emb_bank)
 
         if attn_type == 1:
             self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
@@ -489,8 +492,6 @@ class TransformerLM(nn.Module):
             self.viz = visdom.Visdom()
             assert self.viz.check_connection()
 
-        self.drop = nn.Dropout(dropout)
-
         self.layers = nn.ModuleList()
 
         for i in range(num_layer):
@@ -500,13 +501,14 @@ class TransformerLM(nn.Module):
                 d_head=d_head,
                 d_ff=d_ff,
                 attn_type=attn_type,
-                dropout=dropout,
-                dropatt=dropatt,
+                dropout=args.dropout,
+                dropatt=args.dropatt,
+                dropwei=args.dropwei,
+                drophid=args.drophid,
                 apex=args.apex))
 
 
         self.init_weights(init_std)
-        #self.criterion = criterion
 
     def init_weights(self, init_std):
         if self.args.attn_type == 1:
@@ -673,8 +675,8 @@ class TransformerLM(nn.Module):
 
         pos_emb = self.pos_emb(pos_seq)
 
-        pos_emb = self.drop(pos_emb)
-        core_out = self.drop(word_emb)
+        pos_emb = self.dropinp(pos_emb)
+        core_out = self.dropinp(word_emb)
         
         memory = word_emb.clone()
         if inf_ind is None:
@@ -741,11 +743,11 @@ class TransformerLM(nn.Module):
 
 
 
-        core_out = self.drop(core_out)
+        core_out = self.dropout(core_out)
         
         if not self.args.adaptive:
             output = self.decoder(core_out)
-            output = self.drop(output)
+            output = self.dropout(output)
         else:
             output = core_out
 

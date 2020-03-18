@@ -36,7 +36,6 @@ import torch.multiprocessing as mp
 try:
     from apex import amp
     from apex.parallel import DistributedDataParallel as apexDDP
-    from apex.optimizers import FusedAdam
     class ApexDataParallel(apexDDP):
         def __init__(self, module, **kwargs):
             super().__init__(module, **kwargs)
@@ -54,7 +53,6 @@ except:
     print("No apex package found")
 
 from torch.utils.tensorboard import SummaryWriter
-
 import ipdb
 
 
@@ -71,6 +69,8 @@ def parse_args():
                         help='demo mode')
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
+    parser.add_argument('--nt-asgd', action='store_true',
+                        help='NT-ASGD optimizer')
     parser.add_argument('--nonmono', type=int, default=5,
                         help='non-monotone interval n in NT-ASGD')
     parser.add_argument('--emsize', type=int, default=256,
@@ -621,7 +621,7 @@ def main(args):
                                                    optimizer, 
                                                    best_eval_ppl, 
                                                    writer)
-                if "t0" in optimizer.param_groups[0]:
+                if args.nt-asgd and "t0" in optimizer.param_groups[0]:
                     # NT-ASGD triggered, updtae param
                     params = dict()
                     for param in model.parameters():
@@ -660,7 +660,7 @@ def main(args):
                                 args.savepath + "/" + args.save + "_best.pt")
                             print("save best model")
 
-                    if not args.adam and "t0" not in optimizer.param_groups[0] and len(best_eval_ppls) > args.nonmono and eval_ppl > min(best_eval_ppls[:-args.nonmono]):
+                    if args.nt-asgd and "t0" not in optimizer.param_groups[0] and len(best_eval_ppls) > args.nonmono and eval_ppl > min(best_eval_ppls[:-args.nonmono]):
                     #if True:
                         # trigger ASGD
                         print("Switching to ASGD")
@@ -670,7 +670,8 @@ def main(args):
                                             t0=0, 
                                             lambd=0., 
                                             weight_decay=args.weight_decay)
-                        scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                        if args.scheduler == "cosine":
+                            scheduler = optim.lr_scheduler.CosineAnnealingLR(
                                         optimizer, 
                                         T_max=total_steps - len(train_loader) * epoch,
                                         eta_min=args.eta_min)
