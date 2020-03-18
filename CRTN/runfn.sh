@@ -8,6 +8,10 @@ python main.py \
     --warmup_steps 5000 \
     --dropout 0.4 \
     --dropatt 0.4 \
+    --dropemb 0.1 \
+    --dropinp 0.4 \
+    --dropwei 0.1 \
+    --drophid 0.4 \
     --weight_decay 1e-5 \
     --nlayers 12 \
     --d_ff 1024 \
