@@ -164,7 +164,6 @@ class Cache(nn.Module):
 
         pos, recalls, queries = cache_info.chunk(3, dim=-1)
         recall_mean = recalls / queries
-        ipdb.set_trace()
 
         # discard the least used block
         eli_indice = recall_mean.squeeze(-1).argmin(dim=0)
