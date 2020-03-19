@@ -24,6 +24,23 @@ def _weight_drop(module, weights, dropout):
 
     setattr(module, 'forward', forward)
 
+def _weight_drop_linear(module, dropout):
+    w = module.weight
+    module.weight = Parameter()
+    module.register_parameter('weight_raw', Parameter(w))
+
+    original_module_forward = module.forward
+
+    def forward(*args, **kwargs):
+        raw_w = module.weight_raw
+        w = F.dropout(raw_w, p=dropout, training=module.training)
+        module.weight.data = w
+
+        return original_module_forward(*args, **kwargs)
+
+    setattr(module, 'forward', forward)
+    
+
 class WeightDropLinear(torch.nn.Linear):
     """
     Args:
@@ -35,14 +52,14 @@ class WeightDropLinear(torch.nn.Linear):
 
         #weights = ['weight']
         #_weight_drop(self, weights, weight_dropout)
+        #_weight_drop_linear(self, weight_dropout)
         self.dropout = weight_dropout
 
-    def forward(self, *args, **kwargs):
-        weight = self.weight.clone()
-        drop_w = F.dropout(weight, p=self.dropout, training=self.training)
-        self.weight.data = drop_w
-        output = super().forward(*args, **kwargs)
-        self.weight.data = weight.data
+    def forward(self, inputs):
+        if not self.training:
+            return super().forward(inputs)
+        drop_w = F.dropout(self.weight, p=self.dropout, training=self.training)
+        output = F.linear(inputs, Parameter(drop_w), self.bias)
         return output
 
 
@@ -65,29 +82,34 @@ def embedded_dropout(embed, words, dropout=0.1, scale=None):
     if padding_idx is None:
         padding_idx = -1
 
-    word_emb = torch.nn.functional.embedding(words, 
-                                             masked_embed_weight,
-                                             padding_idx, 
-                                             embed.max_norm, 
-                                             embed.norm_type,
-                                             embed.scale_grad_by_freq, 
-                                             embed.sparse)
+    word_emb = F.embedding(words, 
+                           masked_embed_weight,
+                           padding_idx, 
+                           embed.max_norm, 
+                           embed.norm_type,
+                           embed.scale_grad_by_freq, 
+                           embed.sparse)
     return word_emb
 
 
 if __name__ == '__main__':
-  V = 50
-  h = 6
-  bptt = 10
-  batch_size = 2
+    V = 50
+    h = 5
+    bptt = 10
+    batch_size = 2
 
-  embed = torch.nn.Embedding(V, h)
+    lin = WeightDropLinear(h, h, weight_dropout=0.5)
+    origY = torch.randn(5,5)
+    ipdb.set_trace()
+    Y = lin(origY)
 
-  words = np.random.random_integers(low=0, high=V-1, size=(batch_size, bptt))
-  words = torch.LongTensor(words)
+    embed = torch.nn.Embedding(V, h)
 
-  origX = embed(words)
-  X = embedded_dropout(embed, words)
+    words = np.random.randint(low=0, high=V-1, size=(batch_size, bptt))
+    words = torch.LongTensor(words)
 
-  print(origX)
-  print(X)
+    origX = embed(words)
+    X = embedded_dropout(embed, words)
+
+    #print(origX)
+    #print(X)

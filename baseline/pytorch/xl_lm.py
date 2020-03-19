@@ -274,12 +274,15 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                                                                        eval_ppl))
                 if eval_ppl < best_eval_ppl: 
                     best_eval_ppl = eval_ppl
-                    torch.save({
+                    save_dict = {
                         "model_args": args,
                         "model_state_dict": module.state_dict(),
                         "criterion": criterion.state_dict()
-                        }, 
-                        args.savepath + "/" + args.save + "_best.pt")
+                        } 
+                    if args.apex:
+                        save_dict["amp"] = amp.state_dict()
+                    torch.save(save_dict, 
+                               args.savepath + "/" + args.save + "_best.pt")
                     print("save best model")
                 print('-' * 60)
             start_time = time.time()
@@ -608,6 +611,7 @@ def main(args):
             best_eval_ppl = float('inf')
             best_eval_ppls = []
             train_step = 0
+            module = model.module if args.distributed else model
             for epoch in range(1, args.epochs+1):
                 epoch_start_time = time.time()
                 best_eval_ppl, train_step  = train(model, 
@@ -632,15 +636,17 @@ def main(args):
                     eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
                     if args.rank == 0:
-                        module = model.module if args.distributed else model
                         if eval_ppl < best_eval_ppl:
                             best_eval_ppl = eval_ppl
-                            torch.save({
+                            save_dict = {
                                 "model_args": args,
                                 "model_state_dict": module.state_dict(),
                                 "criterion": criterion.state_dict()
-                                }, 
-                                args.savepath + "/" + args.save + "_best.pt")
+                                } 
+                            if args.apex:
+                                save_dict["amp"] = amp.state_dict()
+                            torch.save(save_dict, 
+                                       args.savepath + "/" + args.save + "_best.pt")
                             print("save best model")
 
                     # restore param
@@ -650,15 +656,17 @@ def main(args):
                     eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
                     if args.rank == 0:
-                        module = model.module if args.distributed else model
                         if eval_ppl < best_eval_ppl:
                             best_eval_ppl = eval_ppl
-                            torch.save({
+                            save_dict = {
                                 "model_args": args,
                                 "model_state_dict": module.state_dict(),
                                 "criterion": criterion.state_dict()
-                                }, 
-                                args.savepath + "/" + args.save + "_best.pt")
+                                } 
+                            if args.apex:
+                                save_dict["amp"] = amp.state_dict()
+                            torch.save(save_dict, 
+                                       args.savepath + "/" + args.save + "_best.pt")
                             print("save best model")
 
                     if args.nt_asgd and "t0" not in optimizer.param_groups[0] and len(best_eval_ppls) > args.nonmono and eval_ppl > min(best_eval_ppls[:-args.nonmono]):
@@ -696,6 +704,16 @@ def main(args):
             print('-' * 89)
             print('Exiting from training early')
 
+        # save final model
+        save_dict = {
+            "model_args": args,
+            "model_state_dict": module.state_dict(),
+            "criterion": criterion.state_dict()
+            } 
+        if args.apex:
+            save_dict["amp"] = amp.state_dict()
+        torch.save(save_dict, args.savepath + "/" + args.save + "_final.pt")
+
     ### Reload best model
 
     if args.rank == 0:
@@ -712,6 +730,8 @@ def main(args):
 
         if args.adaptive:
             criterion.load_state_dict(eval_checkpoint["criterion"])
+        if args.apex:
+            amp.load_state_dict(eval_checkpoint["amp"])
 
         print("=" * 89)
         print("experiment name: {}".format(args.save))
