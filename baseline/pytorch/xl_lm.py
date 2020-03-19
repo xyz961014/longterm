@@ -231,17 +231,18 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         if args.apex:
             with amp.scale_loss(loss, optimizer) as scaled_loss:
                 scaled_loss.backward()
+            torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
         else:
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
-
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
 
         total_loss += loss.item()
 
         step += 1
         if step <= args.warmup_steps:
+            # warmup steps
             curr_lr = args.lr * step / args.warmup_steps
             optimizer.param_groups[0]['lr'] = curr_lr
         else:
@@ -585,7 +586,9 @@ def main(args):
                               weight_decay=args.weight_decay)
     
     if args.apex:
-        model, optimizer = amp.initialize(model, optimizer, opt_level=args.opt_level)
+        [model, criterion], optimizer = amp.initialize([model, criterion], 
+                                                       optimizer, 
+                                                       opt_level=args.opt_level)
 
     if args.distributed:
         if args.apex:
