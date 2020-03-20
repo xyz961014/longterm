@@ -59,7 +59,7 @@ class WeightDropLinear(torch.nn.Linear):
         if not self.training:
             return super().forward(inputs)
         drop_w = F.dropout(self.weight, p=self.dropout, training=self.training)
-        output = F.linear(inputs, Parameter(drop_w), self.bias)
+        output = F.linear(inputs, drop_w, self.bias)
         return output
 
 
