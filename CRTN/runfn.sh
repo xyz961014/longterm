@@ -4,14 +4,14 @@ python main.py \
     --datasets ptb \
     --adam \
     --epochs 200 \
-    --lr 5e-4 \
+    --lr 8e-4 \
     --warmup_steps 5000 \
-    --dropout 0.4 \
-    --dropatt 0.4 \
-    --dropemb 0.1 \
-    --dropinp 0.4 \
-    --dropwei 0.1 \
-    --drophid 0.4 \
+    --dropout 0.6 \
+    --dropatt 0.3 \
+    --dropemb 0.15 \
+    --dropinp 0.65 \
+    --dropwei 0.05 \
+    --drophid 0.25 \
     --weight_decay 1e-5 \
     --nlayers 12 \
     --d_ff 1024 \
@@ -20,8 +20,8 @@ python main.py \
     --nhid 400 \
     --batch_size 128 \
     --eval_batch_size 128 \
-    --num_steps 20 \
-    --neighbor_len 20 \
+    --num_steps 30 \
+    --neighbor_len 30 \
     --cache_k 2 \
     --cache_N 5 \
     --tied \
