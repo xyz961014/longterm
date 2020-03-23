@@ -4,7 +4,7 @@ python main.py \
     --datasets ptb \
     --adam \
     --epochs 200 \
-    --lr 8e-4 \
+    --lr 1e-3 \
     --warmup_steps 5000 \
     --dropout 0.6 \
     --dropatt 0.3 \

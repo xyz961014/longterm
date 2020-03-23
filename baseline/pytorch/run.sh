@@ -4,7 +4,7 @@ python xl_lm.py \
     --datasets ptb \
     --adam \
     --epochs 200 \
-    --lr 8e-4 \
+    --lr 1e-3 \
     --warmup_steps 5000 \
     --dropout 0.6 \
     --dropatt 0.3 \
@@ -21,7 +21,7 @@ python xl_lm.py \
     --batch_size 128 \
     --eval_batch_size 128 \
     --num_steps 30 \
-    --mem_len 91 \
+    --mem_len 90 \
     --tied \
     --attn_type 1 \
     --seed 1111 \
