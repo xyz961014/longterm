@@ -479,7 +479,6 @@ class TransformerLM(nn.Module):
 
         self.dropout = LockedDropout(args.dropout)
         self.dropinp = LockedDropout(args.dropinp)
-        #self.drophid = LockedDropout(args.drophid)
 
 
         if attn_type == 1:
@@ -565,12 +564,6 @@ class TransformerLM(nn.Module):
             total_len = seq_len + mem_len
 
         
-        mask = torch.triu(word_emb.new_ones(seq_len, total_len), 
-                          diagonal=1+mem_len+nei_len) 
-        if torch.__version__ < "1.2.0":
-            mask = mask.byte()[:,:,None]
-        else:
-            mask = mask.bool()[:,:,None]
 
         if indices is not None:
             #pos_seq
@@ -655,27 +648,21 @@ class TransformerLM(nn.Module):
                 weights = weights.index_fill(
                             2, (weights.new_ones(1) * mem_num).long(), 1.0)
             
-            #zones
-            #values.unsqueeze_(2)
-            #values = values.expand(-1, -1, seq_len, -1, -1)
-            #values = values.reshape(values.size(0), seq_len, -1, self.args.nlayers+1, self.args.nhid)
-            #values.transpose_(1, 2)
-            #indices = indices[:,:,None,None,None]
-            #indices = indices.expand(-1, -1, values.size(-3), values.size(-2), values.size(-1))
-            #zones = torch.gather(values, 0, indices)
-            #zones = torch.einsum("kblyh->yklbh", zones)
-            #zones = zones.reshape(zones.size(0), -1, zone_bsz, zones.size(-1))
         else:
             pos_seq = torch.arange(total_len-1, -1, -1.0, device=inputs.device)
             pos_seq = pos_seq.expand(batch_size, -1)
-            #pos_seq = torch.einsum("b,k->bk", 
-            #                       torch.ones(batch_size, device=inputs.device), 
-            #                       torch.arange(total_len-1, -1, -1.0, 
-            #                       device=inputs.device))
             pos_indices = indices
             indice_bool = None
+
+        mask = torch.triu(word_emb.new_ones(seq_len, total_len), 
+                          diagonal=1+mem_len+nei_len) 
+        mask = mask.bool()[:,:,None]
+
+
         pos_seq = pos_seq.view(batch_size, -1)
 
+        if self.args.clamp_len > 0:
+            pos_seq = pos_seq.clamp(max=self.args.clamp_len)
         pos_emb = self.pos_emb(pos_seq)
 
         pos_emb = self.dropinp(pos_emb)

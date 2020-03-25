@@ -129,6 +129,10 @@ def parse_args():
                         help='tied embedding weights')
     parser.add_argument('--attn_type', type=int, default=1, choices=[0, 1],
                         help='attention type, 0 for vaswani;1 for transformer-xl')
+    parser.add_argument('--clamp_len', type=int, default=-1,
+                        help='use the same pos embeddings after clamp_len')
+    parser.add_argument('--same_length', action='store_true',
+                        help='use the same attn length for all tokens')
     parser.add_argument("--cache_N", type=int, default=5, 
                         help="size of Cache, default: 5")
     parser.add_argument("--cache_dk", type=int, default=240, 
@@ -598,6 +602,10 @@ def main(args):
             batch_size = args.batch_size
             model_args.eval_batch_size = args.eval_batch_size
 
+        if not model_args.num_steps == args.num_steps:
+            print("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
+                                                            args.num_steps))
+            model_args.num_steps = args.num_steps
         if not model_args.neighbor_len == args.neighbor_len:
             print("REDEFINE neighbor_len: {} --> {}".format(model_args.neighbor_len, 
                                                             args.neighbor_len))
@@ -610,6 +618,11 @@ def main(args):
             print("REDEFINE cache_k: {} --> {}".format(model_args.cache_k, 
                                                        args.cache_k))
             model_args.cache_k = args.cache_k
+        if not model_args.clamp_len == args.clamp_len:
+            print("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
+                                                         args.clamp_len))
+            model_args.clamp_len = args.clamp_len
+        model_args.same_length = args.same_length
 
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
