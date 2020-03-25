@@ -124,6 +124,10 @@ def parse_args():
                         help='tied embedding weights')
     parser.add_argument('--attn_type', type=int, default=0, choices=[0, 1],
                         help='attention type, 0 for vaswani;1 for transformer-xl')
+    parser.add_argument('--clamp_len', type=int, default=-1,
+                        help='use the same pos embeddings after clamp_len')
+    parser.add_argument('--same_length', action='store_true',
+                        help='use the same attn length for all tokens')
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--devices', type=int, default=[0], nargs="+",
@@ -317,7 +321,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
     with torch.no_grad():
         with tqdm(total=total_len) as pbar:
             for i, data in enumerate(eval_loader):
-                if not data.text.size(0) == args.num_steps:
+                if not data.text.size(0) == model.num_steps:
                     pbar.update(1)
                     continue
                                
@@ -464,10 +468,19 @@ def main(args):
 
         model_args.rank = args.rank
 
+        if not model_args.num_steps == args.num_steps:
+            print("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
+                                                       args.num_steps))
+            model_args.num_steps = args.num_steps
         if not model_args.mem_len == args.mem_len:
             print("REDEFINE mem_len: {} --> {}".format(model_args.mem_len, 
                                                        args.mem_len))
             model_args.mem_len = args.mem_len
+        if not model_args.clamp_len == args.clamp_len:
+            print("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
+                                                         args.clamp_len))
+            model_args.clamp_len = args.clamp_len
+        model_args.same_length = args.same_length
 
         model_args.batch_size = args.batch_size
         model_args.eval_batch_size = args.eval_batch_size
@@ -500,6 +513,8 @@ def main(args):
                 num_steps=args.num_steps,
                 mem_len=model_args.mem_len,
                 attn_type=model_args.attn_type,
+                clamp_len=model_args.clamp_len,
+                same_length=model_args.same_length,
                 init_std=model_args.init_std,
                 adaptive=model_args.adaptive,
                 div_val=model_args.div_val,
@@ -528,6 +543,8 @@ def main(args):
                 num_steps=args.num_steps,
                 mem_len=args.mem_len,
                 attn_type=args.attn_type,
+                clamp_len=args.clamp_len,
+                same_length=args.same_length,
                 init_std=args.init_std,
                 adaptive=args.adaptive,
                 div_val=args.div_val,

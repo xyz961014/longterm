@@ -292,7 +292,7 @@ class TransformerUnit(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, attn_type, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, drophid=0.0, apex=False):
+    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, attn_type, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, drophid=0.0, apex=False):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layer = num_layer
@@ -305,6 +305,8 @@ class TransformerLM(nn.Module):
         self.num_steps = num_steps
         self.mem_len = mem_len
         self.attn_type = attn_type
+        self.clamp_len = clamp_len
+        self.same_length = same_length
 
         self.init_std = init_std
         self.adaptive = adaptive
@@ -391,14 +393,18 @@ class TransformerLM(nn.Module):
 
         word_emb = self.embedding(inputs)
 
-        mask = torch.triu(word_emb.new_ones(seq_len, total_len), diagonal=1+mem_len)
+        if self.same_length:
+            all_ones = word_emb.new_ones(seq_len, total_len)
+            simple_mask = torch.triu(all_ones, diagonal=1+mem_len)
+            mask = simple_mask + torch.tril(all_ones, diagonal=0)
+        else:
+            mask = torch.triu(word_emb.new_ones(seq_len, total_len), 
+                              diagonal=1+mem_len)
         mask = mask.bool()[:,:,None]
-        #if torch.__version__ < "1.2.0":
-        #    mask = mask.byte()[:,:,None]
-        #else:
-        #    mask = mask.bool()[:,:,None]
 
         pos_seq = torch.arange(total_len-1, -1, -1.0, device=word_emb.device, dtype=word_emb.dtype)
+        if self.clamp_len > 0:
+            pos_seq = pos_seq.clamp(max=self.clamp_len)
         pos_emb = self.pos_emb(pos_seq)
 
         pos_emb = self.dropinp(pos_emb)
