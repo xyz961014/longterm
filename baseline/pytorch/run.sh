@@ -8,7 +8,7 @@ python xl_lm.py \
     --warmup_steps 20000 \
     --dropout 0.6 \
     --dropatt 0.3 \
-    --dropemb 0.1 \
+    --dropemb 0.15 \
     --dropinp 0.65 \
     --dropwei 0.05 \
     --drophid 0.25 \
