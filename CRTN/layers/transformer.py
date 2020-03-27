@@ -284,6 +284,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
                 else:
                     AC = torch.einsum("kibnd,kjbnd->ikjbn", pre_AC, pre_k)
                     BD = torch.einsum("kibnd,kjbnd->ikjbn", pre_BD, pre_rel)
+                AC_mask = indice_bool.eq(0).transpose(1, 2)[:,:,None,:,None]
+                AC.masked_fill_(AC_mask, -float("inf")) 
             else:
                 rel_emb_matrix = rel_emb_matrix.view(total_len, batch_size, 
                                                      self.num_head, self.d_head)
@@ -640,11 +642,8 @@ class TransformerLM(nn.Module):
                 weights = torch.cat((weights, 
                                     torch.ones_like(
                                         weights[:,:,0,None]) * -float("inf")), 2)
-                if torch.__version__ < "1.2.0":
-                    weights.masked_fill_((1 - indice_bool).byte(), -float("inf"))
-                else:
-                    weights.masked_fill_((1 - indice_bool).bool(), -float("inf"))
-                weights = F.softmax(weights, 2)
+                weights.masked_fill_(indice_bool.eq(0), -float("inf"))
+                weights = F.softmax(weights, 2) * self.args.cache_k
                 weights = weights.index_fill(
                             2, (weights.new_ones(1) * mem_num).long(), 1.0)
             
