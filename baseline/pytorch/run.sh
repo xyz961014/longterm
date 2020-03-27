@@ -5,10 +5,10 @@ python xl_lm.py \
     --adam \
     --epochs 200 \
     --lr 1e-3 \
-    --warmup_steps 5000 \
+    --warmup_steps 20000 \
     --dropout 0.6 \
     --dropatt 0.3 \
-    --dropemb 0.15 \
+    --dropemb 0.1 \
     --dropinp 0.65 \
     --dropwei 0.05 \
     --drophid 0.25 \
@@ -18,10 +18,10 @@ python xl_lm.py \
     --nhead 10 \
     --emsize 400 \
     --nhid 400 \
-    --batch_size 128 \
-    --eval_batch_size 128 \
-    --num_steps 30 \
-    --mem_len 90 \
+    --batch_size 40 \
+    --eval_batch_size 40 \
+    --num_steps 80 \
+    --mem_len 240 \
     --tied \
     --attn_type 1 \
     --seed 1111 \

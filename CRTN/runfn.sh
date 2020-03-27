@@ -5,10 +5,10 @@ python main.py \
     --adam \
     --epochs 200 \
     --lr 1e-3 \
-    --warmup_steps 5000 \
+    --warmup_steps 20000 \
     --dropout 0.6 \
     --dropatt 0.3 \
-    --dropemb 0.15 \
+    --dropemb 0.1 \
     --dropinp 0.65 \
     --dropwei 0.05 \
     --drophid 0.25 \
@@ -18,10 +18,10 @@ python main.py \
     --nhead 10 \
     --emsize 400 \
     --nhid 400 \
-    --batch_size 128 \
-    --eval_batch_size 128 \
-    --num_steps 30 \
-    --neighbor_len 30 \
+    --batch_size 40 \
+    --eval_batch_size 40 \
+    --num_steps 80 \
+    --neighbor_len 80 \
     --cache_k 2 \
     --cache_N 5 \
     --tied \
