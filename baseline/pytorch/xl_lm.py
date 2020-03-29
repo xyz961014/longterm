@@ -321,7 +321,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
     with torch.no_grad():
         with tqdm(total=total_len) as pbar:
             for i, data in enumerate(eval_loader):
-                if not data.text.size(0) == model.num_steps:
+                if not data.text.size(0) == args.num_steps:
                     pbar.update(1)
                     continue
                                
