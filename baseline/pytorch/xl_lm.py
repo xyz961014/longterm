@@ -195,19 +195,6 @@ def batch_division(batch_size, rank=0, world_size=None, single_value=False):
         else:
             return batch_size - batch_div * rank
 
-def init_weights(model):
-    classname = model.__class__.__name__
-    if classname in ["Linear", "WeightDropLinear", "Embedding"]:
-        if hasattr(model, 'weight') and model.weight is not None:
-            nn.init.normal_(model.weight, 0.0, args.init_std)
-        if hasattr(model, 'bias') and model.bias is not None:
-            nn.init.constant_(model.bias, 0.0)
-    elif classname == "LayerNorm":
-        if hasattr(model, 'weight') and model.weight is not None:
-            nn.init.normal_(model.weight, 1.0, args.init_std)
-        if hasattr(model, 'bias') and model.bias is not None:
-            nn.init.constant_(model.bias, 0.0)
-
 
 def train(model, train_loader, valid_loader, criterion, scheduler, 
           args, epoch, step, optimizer, best_eval_ppl, writer):
@@ -396,6 +383,19 @@ def evaluate(model, eval_loader, criterion, writer, args):
 
 
 def main(args):
+
+    def init_weights(model):
+        classname = model.__class__.__name__
+        if classname in ["Linear", "WeightDropLinear", "Embedding"]:
+            if hasattr(model, 'weight') and model.weight is not None:
+                nn.init.normal_(model.weight, 0.0, args.init_std)
+            if hasattr(model, 'bias') and model.bias is not None:
+                nn.init.constant_(model.bias, 0.0)
+        elif classname == "LayerNorm":
+            if hasattr(model, 'weight') and model.weight is not None:
+                nn.init.normal_(model.weight, 1.0, args.init_std)
+            if hasattr(model, 'bias') and model.bias is not None:
+                nn.init.constant_(model.bias, 0.0)
 
     writer = SummaryWriter("./log/" + args.save + args.timestr)
 
