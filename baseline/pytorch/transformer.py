@@ -345,12 +345,13 @@ class TransformerLM(nn.Module):
                 drophid=drophid,
                 apex=apex))
 
-
         self.init_weights(init_std)
+
 
     def init_weights(self, init_std):
         nn.init.normal_(self.pos_bias_u, 0.0, init_std)
         nn.init.normal_(self.pos_bias_v, 0.0, init_std)
+
 
     def init_hidden(self, batch_size):
         return self.init_memory(batch_size)

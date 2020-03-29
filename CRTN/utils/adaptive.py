@@ -12,7 +12,7 @@ CUDA_MAJOR = int(torch.version.cuda.split('.')[0])
 CUDA_MINOR = int(torch.version.cuda.split('.')[1])
 
 class AdaptiveEmbedding(nn.Module):
-    def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1, init_std=0.1,
+    def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1, init_std=0.02,
                  dropemb=0.0, sample_softmax=False):
         super().__init__()
 
@@ -49,9 +49,6 @@ class AdaptiveEmbedding(nn.Module):
     def init_weights(self, init_std):
         for i in range(len(self.emb_projs)):
             nn.init.normal_(self.emb_projs[i], 0.0, init_std)
-
-        for i in range(len(self.emb_layers)):
-            nn.init.normal_(self.emb_layers[i].weight, 0.0, init_std)
 
 
     def forward(self, inp):
@@ -92,8 +89,8 @@ class AdaptiveEmbedding(nn.Module):
 
 
 class ProjectedAdaptiveLogSoftmax(nn.Module):
-    def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1, init_std=0.1,
-                 keep_order=False):
+    def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1, init_std=0.02,
+                 proj_init_std=0.01, keep_order=False):
         super().__init__()
 
         self.n_token = n_token
@@ -103,6 +100,8 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
         self.cutoffs = cutoffs + [n_token]
         self.cutoff_ends = [0] + self.cutoffs
         self.div_val = div_val
+        self.init_std = init_std
+        self.proj_init_std = proj_init_std
 
         self.shortlist_size = self.cutoffs[0]
         self.n_clusters = len(self.cutoffs) - 1
@@ -137,18 +136,18 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                 self.out_layers.append(nn.Linear(d_emb_i, r_idx-l_idx))
 
         self.keep_order = keep_order
-        self.init_weights(init_std)
+        self.init_weights()
 
-    def init_weights(self, init_std):
+    def init_weights(self):
         if self.n_clusters > 0:
-            nn.init.normal_(self.cluster_weight, 0.0, init_std)
+            nn.init.normal_(self.cluster_weight, 0.0, self.init_std)
             nn.init.constant_(self.cluster_bias, 0.0)
         for i in range(len(self.out_projs)):
             if self.out_projs[i] is not None:
-                nn.init.normal_(self.out_projs[i], 0.0, init_std)
+                nn.init.normal_(self.out_projs[i], 0.0, self.proj_init_std)
 
         for i in range(len(self.out_layers)):
-            nn.init.normal_(self.out_layers[i].weight)
+            nn.init.normal_(self.out_layers[i].weight, 0.0, self.init_std)
             nn.init.constant_(self.out_layers[i].bias, 0.0)
 
     def _compute_logit(self, hidden, weight, bias, proj):

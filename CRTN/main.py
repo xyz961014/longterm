@@ -125,6 +125,8 @@ def parse_args():
                         help='hidden layers dropout')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
+    parser.add_argument('--proj_init_std', type=float, default=0.01,
+                        help='parameters initialized by N(0.0, proj_init_std)')
     parser.add_argument('--tied', action="store_true",
                         help='tied embedding weights')
     parser.add_argument('--clamp_len', type=int, default=-1,
@@ -240,6 +242,18 @@ def batch_division(batch_size, rank=0, world_size=None, single_value=False):
         else:
             return batch_size - batch_div * rank
 
+def init_weights(model):
+    classname = model.__class__.__name__
+    if classname in ["Linear", "WeightDropLinear", "Embedding"]:
+        if hasattr(model, 'weight') and model.weight is not None:
+            nn.init.normal_(model.weight, 0.0, args.init_std)
+        if hasattr(model, 'bias') and model.bias is not None:
+            nn.init.constant_(model.bias, 0.0)
+    elif classname == "LayerNorm":
+        if hasattr(model, 'weight') and model.weight is not None:
+            nn.init.normal_(model.weight, 1.0, args.init_std)
+        if hasattr(model, 'bias') and model.bias is not None:
+            nn.init.constant_(model.bias, 0.0)
 
 def init_cache_info(args, device, evaluate=False):
     """
@@ -674,7 +688,9 @@ def main(args):
                                                 args.nhid, 
                                                 args.cutoffs, 
                                                 div_val=args.div_val, 
-                                                init_std=args.init_std) 
+                                                init_std=args.init_std,
+                                                proj_init_std=args.proj_init_std
+                                                ) 
         if args.tied:
             for i in range(len(criterion.out_layers)):
                 criterion.out_layers[i].weight = model.encoder.embedding.emb_layers[i].weight
@@ -690,6 +706,8 @@ def main(args):
 
     else:
         criterion = nn.CrossEntropyLoss()
+
+    model.apply(init_weights)
 
     model.cuda()
     criterion.cuda()
