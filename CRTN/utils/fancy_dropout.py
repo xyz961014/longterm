@@ -100,7 +100,6 @@ if __name__ == '__main__':
 
     lin = WeightDropLinear(h, h, weight_dropout=0.5)
     origY = torch.randn(5,5)
-    ipdb.set_trace()
     Y = lin(origY)
 
     embed = torch.nn.Embedding(V, h)
@@ -111,5 +110,5 @@ if __name__ == '__main__':
     origX = embed(words)
     X = embedded_dropout(embed, words)
 
-    #print(origX)
-    #print(X)
+    print(origX)
+    print(X)

@@ -386,7 +386,7 @@ def main(args):
 
     def init_weights(model):
         classname = model.__class__.__name__
-        if classname in ["Linear", "WeightDropLinear", "Embedding"]:
+        if classname in ["WeightDropLinear", "Embedding"]:
             if hasattr(model, 'weight') and model.weight is not None:
                 nn.init.normal_(model.weight, 0.0, args.init_std)
             if hasattr(model, 'bias') and model.bias is not None:
@@ -396,6 +396,11 @@ def main(args):
                 nn.init.normal_(model.weight, 1.0, args.init_std)
             if hasattr(model, 'bias') and model.bias is not None:
                 nn.init.constant_(model.bias, 0.0)
+        elif classname == "Linear":
+            if hasattr(model, 'weight') and model.weight is not None:
+                nn.init.normal_(model.weight, 0.0, args.init_std)
+            if hasattr(model, 'bias') and model.bias is not None:
+                nn.init.normal_(model.bias, 0.0, args.init_std)
 
     writer = SummaryWriter("./log/" + args.save + args.timestr)
 
