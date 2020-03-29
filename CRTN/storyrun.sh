@@ -29,7 +29,6 @@ python story_tail.py \
     --cache_N 5 \
     --cache_k 2 \
     --tied \
-    --attn_type 1 \
     --seed 1111 \
     --epochs 50 \
     --save story_run \

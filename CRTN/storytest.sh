@@ -12,7 +12,6 @@ python story_tail.py \
     --eval_batch_size 50 \
     --num_steps 20 \
     --tied \
-    --attn_type 1 \
     --cache_k 3 \
     --cache_N 5 \
     --seed 1111 \

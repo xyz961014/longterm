@@ -127,8 +127,6 @@ def parse_args():
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--tied', action="store_true",
                         help='tied embedding weights')
-    parser.add_argument('--attn_type', type=int, default=1, choices=[0, 1],
-                        help='attention type, 0 for vaswani;1 for transformer-xl')
     parser.add_argument('--clamp_len', type=int, default=-1,
                         help='use the same pos embeddings after clamp_len')
     parser.add_argument('--same_length', action='store_true',

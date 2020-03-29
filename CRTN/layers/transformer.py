@@ -398,33 +398,25 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout, dropatt, dropwei, drophid, apex):
+    def __init__(self, num_head, d_model, d_head, d_ff, dropout, dropatt, dropwei, drophid, apex):
         super().__init__()
 
-        self.attn_type = attn_type
 
-        if attn_type == 0:
-            self.attn = MultiheadSelfAttention(num_head, d_model, d_head, dropout)
-        elif attn_type == 1:
-            self.attn = LearnableMultiheadSelfAttention(num_head, d_model, 
-                                                        d_head, dropout, dropatt, 
-                                                        dropwei, drophid, apex)
+        self.attn = LearnableMultiheadSelfAttention(num_head, d_model, 
+                                                    d_head, dropout, dropatt, 
+                                                    dropwei, drophid, apex)
 
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, drophid, apex)
 
     def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, indices=None, weights=None, neighbor_mem=None, inf_ind=None):
         
-        if self.attn_type == 0:
-            output = self.attn(inputs, pos_emb, mask=mask, memory=memory, 
-                                indice_bool=indices, weights=weights)
-        elif self.attn_type == 1:
-            output, attn_matrix = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, 
-                                            mask=mask, memory=memory, 
-                                            indice_bool=indices, 
-                                            weights=weights, 
-                                            neighbor_mem=neighbor_mem,
-                                            inf_ind=inf_ind)
+        output, attn_matrix = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, 
+                                        mask=mask, memory=memory, 
+                                        indice_bool=indices, 
+                                        weights=weights, 
+                                        neighbor_mem=neighbor_mem,
+                                        inf_ind=inf_ind)
 
         output = self.pos_ff(output)
 
@@ -446,12 +438,10 @@ class TransformerLM(nn.Module):
         num_layer = self.args.nlayers
         num_steps = self.args.num_steps
         mem_len = self.args.mem_len
-        attn_type = self.args.attn_type
         cutoffs = self.args.cutoffs
         div_val = self.args.div_val
         init_std = self.args.init_std
 
-        attn_type = self.args.attn_type
         adaptive = self.args.adaptive
 
         #dropout = self.args.dropout
@@ -483,9 +473,8 @@ class TransformerLM(nn.Module):
         self.dropinp = LockedDropout(args.dropinp)
 
 
-        if attn_type == 1:
-            self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
-            self.pos_bias_v = nn.Parameter(torch.Tensor(num_head, d_head))
+        self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
+        self.pos_bias_v = nn.Parameter(torch.Tensor(num_head, d_head))
 
         if args.stat:
             self.select_stat = nn.Parameter(torch.zeros(args.cache_N), 
@@ -501,7 +490,6 @@ class TransformerLM(nn.Module):
                 d_model=d_model,
                 d_head=d_head,
                 d_ff=d_ff,
-                attn_type=attn_type,
                 dropout=args.dropout,
                 dropatt=args.dropatt,
                 dropwei=args.dropwei,
@@ -512,9 +500,8 @@ class TransformerLM(nn.Module):
         self.init_weights(init_std)
 
     def init_weights(self, init_std):
-        if self.args.attn_type == 1:
-            nn.init.normal_(self.pos_bias_u, 0.0, init_std)
-            nn.init.normal_(self.pos_bias_v, 0.0, init_std)
+        nn.init.normal_(self.pos_bias_u, 0.0, init_std)
+        nn.init.normal_(self.pos_bias_v, 0.0, init_std)
         if not self.args.adaptive:
             nn.init.normal_(self.embedding.weight, 0.0, init_std)
             nn.init.normal_(self.decoder.weight, 0.0, init_std)
@@ -694,28 +681,24 @@ class TransformerLM(nn.Module):
             else:
                 block_i = inf_blocks[i]
 
-            if self.args.attn_type == 0:
-                core_out = layer(core_out, pos_emb, mask=mask, memory=value_i, 
-                                 indices=pos_indices, weights=weights)
-            elif self.args.attn_type == 1:
-                if inf_ind is None:
-                    core_out, attn_matrix = layer(core_out, pos_emb, self.pos_bias_u, 
-                                                  self.pos_bias_v, 
-                                                  mask=mask, 
-                                                  memory=value_i, 
-                                                  indices=indice_bool, 
-                                                  weights=weights,
-                                                  neighbor_mem=neighbor_mem_i)
-                else:
-                    block_i[inf_ind] = core_out.squeeze(0)
-                    core_out, attn_matrix = layer(block_i, pos_emb, self.pos_bias_u, 
-                                                  self.pos_bias_v, 
-                                                  mask=mask, 
-                                                  memory=value_i, 
-                                                  indices=indice_bool, 
-                                                  weights=weights,
-                                                  neighbor_mem=neighbor_mem_i,
-                                                  inf_ind=inf_ind)
+            if inf_ind is None:
+                core_out, attn_matrix = layer(core_out, pos_emb, self.pos_bias_u, 
+                                              self.pos_bias_v, 
+                                              mask=mask, 
+                                              memory=value_i, 
+                                              indices=indice_bool, 
+                                              weights=weights,
+                                              neighbor_mem=neighbor_mem_i)
+            else:
+                block_i[inf_ind] = core_out.squeeze(0)
+                core_out, attn_matrix = layer(block_i, pos_emb, self.pos_bias_u, 
+                                              self.pos_bias_v, 
+                                              mask=mask, 
+                                              memory=value_i, 
+                                              indices=indice_bool, 
+                                              weights=weights,
+                                              neighbor_mem=neighbor_mem_i,
+                                              inf_ind=inf_ind)
 
 
             mem = core_out

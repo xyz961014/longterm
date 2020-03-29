@@ -27,7 +27,6 @@ python story_tail.py \
     --num_steps 20 \
     --mem_len 60 \
     --tied \
-    --attn_type 1 \
     --seed 1111 \
     --epochs 50 \
     --log-interval 50 \

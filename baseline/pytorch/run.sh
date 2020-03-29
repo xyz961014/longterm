@@ -23,7 +23,6 @@ python xl_lm.py \
     --num_steps 80 \
     --mem_len 240 \
     --tied \
-    --attn_type 1 \
     --seed 1111 \
     --adaptive \
     --cutoffs 2000 4000 8000 \

@@ -266,25 +266,16 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, attn_type, dropout, dropatt, dropwei, drophid, apex):
+    def __init__(self, num_head, d_model, d_head, d_ff, dropout, dropatt, dropwei, drophid, apex):
         super().__init__()
 
-        self.attn_type = attn_type
-
-        if attn_type == 0:
-            self.attn = MultiheadSelfAttention(num_head, d_model, d_head, dropout)
-        elif attn_type == 1:
-            self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropout, dropatt, dropwei, drophid, apex)
-
+        self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropout, dropatt, dropwei, drophid, apex)
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, drophid, apex)
 
     def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None):
         
-        if self.attn_type == 0:
-            output = self.attn(inputs, pos_emb, mask=mask, memory=memory)
-        elif self.attn_type == 1:
-            output = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, mask=mask, memory=memory)
+        output = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, mask=mask, memory=memory)
 
         output = self.pos_ff(output)
 
@@ -292,7 +283,7 @@ class TransformerUnit(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, attn_type, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, drophid=0.0, apex=False):
+    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, drophid=0.0, apex=False):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layer = num_layer
@@ -304,7 +295,6 @@ class TransformerLM(nn.Module):
         self.tied_weights = tied_weights
         self.num_steps = num_steps
         self.mem_len = mem_len
-        self.attn_type = attn_type
         self.clamp_len = clamp_len
         self.same_length = same_length
 
@@ -334,9 +324,8 @@ class TransformerLM(nn.Module):
 
         self.pos_emb = PostionalEmbedding(d_model)
 
-        if attn_type == 1:
-            self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
-            self.pos_bias_v = nn.Parameter(torch.Tensor(num_head, d_head))
+        self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
+        self.pos_bias_v = nn.Parameter(torch.Tensor(num_head, d_head))
 
         self.dropout = LockedDropout(dropout)
         self.dropinp = LockedDropout(dropinp)
@@ -350,7 +339,6 @@ class TransformerLM(nn.Module):
                 d_model=d_model,
                 d_head=d_head,
                 d_ff=d_ff,
-                attn_type=attn_type,
                 dropout=dropout,
                 dropatt=dropatt,
                 dropwei=dropwei,
@@ -361,9 +349,8 @@ class TransformerLM(nn.Module):
         self.init_weights(init_std)
 
     def init_weights(self, init_std):
-        if self.attn_type == 1:
-            nn.init.normal_(self.pos_bias_u, 0.0, init_std)
-            nn.init.normal_(self.pos_bias_v, 0.0, init_std)
+        nn.init.normal_(self.pos_bias_u, 0.0, init_std)
+        nn.init.normal_(self.pos_bias_v, 0.0, init_std)
 
     def init_hidden(self, batch_size):
         return self.init_memory(batch_size)
@@ -416,10 +403,7 @@ class TransformerLM(nn.Module):
 
         for i, layer in enumerate(self.layers):
             memory_i = None if memory is None else memory[i]
-            if self.attn_type == 0:
-                core_out = layer(core_out, pos_emb, mask=mask, memory=memory_i)
-            elif self.attn_type == 1:
-                core_out = layer(core_out, pos_emb, self.pos_bias_u, self.pos_bias_v, mask=mask, memory=memory_i)
+            core_out = layer(core_out, pos_emb, self.pos_bias_u, self.pos_bias_v, mask=mask, memory=memory_i)
 
             if memory is not None:
                 mem = core_out.view([1]+list(core_out.size())).detach()

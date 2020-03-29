@@ -25,7 +25,6 @@ python main.py \
     --cache_k 2 \
     --cache_N 5 \
     --tied \
-    --attn_type 1 \
     --seed 1111 \
     --adaptive \
     --cutoffs 2000 4000 8000 \

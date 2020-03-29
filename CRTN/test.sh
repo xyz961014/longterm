@@ -17,7 +17,6 @@ python main.py \
     --num_steps 20 \
     --neighbor_len 20 \
     --tied \
-    --attn_type 1 \
     --cache_k 2 \
     --cache_N 5 \
     --seed 1111 \

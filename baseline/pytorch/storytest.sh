@@ -13,7 +13,6 @@ python story_tail.py \
     --num_steps 20 \
     --mem_len 80 \
     --tied \
-    --attn_type 1 \
     --seed 1111 \
     --epochs 100 \
     --log-interval 50 \

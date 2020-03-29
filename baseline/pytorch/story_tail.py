@@ -98,8 +98,6 @@ def parse_args():
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--tied', action="store_true",
                         help='tied embedding weights')
-    parser.add_argument('--attn_type', type=int, default=1, choices=[0, 1],
-                        help='attention type, 0 for vaswani; 1 for transformer-xl')
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--adaptive', action="store_true",
@@ -840,7 +838,6 @@ def main(args):
                     tied_weights=model_args.tied,
                     num_steps=args.num_steps,
                     mem_len=model_args.mem_len,
-                    attn_type=model_args.attn_type,
                     init_std=model_args.init_std,
                     adaptive=model_args.adaptive,
                     div_val=model_args.div_val,
@@ -863,7 +860,6 @@ def main(args):
                     tied_weights=args.tied,
                     num_steps=args.num_steps,
                     mem_len=args.mem_len,
-                    attn_type=args.attn_type,
                     init_std=args.init_std,
                     adaptive=args.adaptive,
                     div_val=args.div_val,

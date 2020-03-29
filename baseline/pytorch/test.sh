@@ -18,7 +18,6 @@ python xl_lm.py \
     --num_steps 20 \
     --mem_len 60 \
     --tied \
-    --attn_type 1 \
     --seed 1111 \
     --adaptive \
     --log-interval 30 \
