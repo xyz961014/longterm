@@ -399,8 +399,8 @@ def main(args):
         elif classname == "Linear":
             if hasattr(model, 'weight') and model.weight is not None:
                 nn.init.normal_(model.weight, 0.0, args.init_std)
-            if hasattr(model, 'bias') and model.bias is not None:
-                nn.init.normal_(model.bias, 0.0, args.init_std)
+            #if hasattr(model, 'bias') and model.bias is not None:
+            #    nn.init.constant_(model.bias, 0.0)
 
     writer = SummaryWriter("./log/" + args.save + args.timestr)
 
