@@ -359,13 +359,17 @@ class TransformerLM(nn.Module):
     def init_memory(self, batch_size):
         if self.mem_len > 0:
             param = next(self.parameters())
-            return torch.zeros(self.num_layer+1, self.mem_len, batch_size, self.d_model, dtype=param.dtype, device=param.device)
+            return torch.zeros(self.num_layer+1, 
+                               self.mem_len, 
+                               batch_size, 
+                               self.d_model, 
+                               dtype=param.dtype, 
+                               device=param.device)
         else:
             return None
 
     def forward(self, inputs, memory=None):
         seq_len, batch_size = inputs.size()
-        length = torch.tensor([seq_len] * batch_size, dtype=torch.int64)
 
         if memory is None:
             memory = self.init_memory(batch_size)
@@ -390,7 +394,9 @@ class TransformerLM(nn.Module):
                               diagonal=1+mem_len)
         mask = mask.bool()[:,:,None]
 
-        pos_seq = torch.arange(total_len-1, -1, -1.0, device=word_emb.device, dtype=word_emb.dtype)
+        pos_seq = torch.arange(total_len-1, -1, -1.0, 
+                               device=word_emb.device, 
+                               dtype=word_emb.dtype)
         if self.clamp_len > 0:
             pos_seq = pos_seq.clamp(max=self.clamp_len)
         pos_emb = self.pos_emb(pos_seq)
@@ -399,23 +405,28 @@ class TransformerLM(nn.Module):
         core_out = self.dropinp(word_emb)
         
         if memory is not None:
-            memories = word_emb.clone().detach()
-            memories = memories.view([1]+list(word_emb.size()))
+            memories = [core_out.unsqueeze(0)]
 
         for i, layer in enumerate(self.layers):
             memory_i = None if memory is None else memory[i]
-            core_out = layer(core_out, pos_emb, self.pos_bias_u, self.pos_bias_v, mask=mask, memory=memory_i)
+            core_out = layer(core_out, 
+                             pos_emb, 
+                             self.pos_bias_u, 
+                             self.pos_bias_v, 
+                             mask=mask, 
+                             memory=memory_i)
 
             if memory is not None:
-                mem = core_out.view([1]+list(core_out.size())).detach()
-                memories = torch.cat((memories, mem), 0)
-
-        if memory is not None:
-            new_memory = memories[:,-self.mem_len:,:,:]
-        else:
-            new_memory = None
+                memories.append(core_out.unsqueeze(0))
+        memories = torch.cat(memories, dim=0)
 
         core_out = self.dropout(core_out)
+
+        if memory is not None:
+            whole_seq = torch.cat((memory, memories), dim=1)
+            new_memory = whole_seq[:,-self.mem_len:,:,:].detach()
+        else:
+            new_memory = None
         
         if not self.adaptive:
             output = self.decoder(core_out)

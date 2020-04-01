@@ -654,7 +654,7 @@ class TransformerLM(nn.Module):
         pos_emb = self.dropinp(pos_emb)
         core_out = self.dropinp(word_emb)
         
-        memory = word_emb.clone()
+        memory = core_out.clone()
         if inf_ind is None:
             memories = [memory]
         else:

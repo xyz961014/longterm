@@ -240,7 +240,7 @@ class CRTNModel(nn.Module):
         if self.args.farnear and inf_ind is None:
             total_mem = torch.cat((neighbor_mem, hidden), 1)
             hidden, neighbor_mem = total_mem.split([seq_len, self.args.neighbor_len], 
-                                                 dim=1)
+                                                   dim=1)
             neighbor_mem = neighbor_mem.reshape(-1, bsz, nhid)
 
         hidden = hidden.transpose(1, 2)
