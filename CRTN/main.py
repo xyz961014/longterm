@@ -347,7 +347,8 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
 
         if step % args.theta_annealing_steps == 0:
             module.cache.theta_annealing_step()
-            print("STEP {:5d}, annealing theta to {:3.3f}".format(step, module.cache.theta))
+            print("STEP {:5d}, annealing theta to {:3.4f}".format(step, module.cache.theta))
+
 
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
