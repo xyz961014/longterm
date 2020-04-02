@@ -205,7 +205,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         return x
 
 
-    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, indice_bool=None, weights=None, neighbor_mem=None, inf_ind=None):
+    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, indice_bool=None, weights=None, neighbor_mem=None, inf_ind=None, theta=1.0):
         """
         3 usage: 
             - compute query
@@ -335,6 +335,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         attn_score = AC + BD
         attn_score.mul_(self.scale)
+        attn_score.mul_(theta)
         attn_score = attn_score.reshape(attn_score.size(0), -1, 
                                         batch_size, self.num_head)
 
@@ -409,14 +410,15 @@ class TransformerUnit(nn.Module):
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, drophid, apex)
 
-    def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, indices=None, weights=None, neighbor_mem=None, inf_ind=None):
+    def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, indices=None, weights=None, neighbor_mem=None, inf_ind=None, theta=1.0):
         
         output, attn_matrix = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, 
                                         mask=mask, memory=memory, 
                                         indice_bool=indices, 
                                         weights=weights, 
                                         neighbor_mem=neighbor_mem,
-                                        inf_ind=inf_ind)
+                                        inf_ind=inf_ind,
+                                        theta=theta)
 
         output = self.pos_ff(output)
 
@@ -444,12 +446,11 @@ class TransformerLM(nn.Module):
 
         adaptive = self.args.adaptive
 
-        #dropout = self.args.dropout
-        #dropatt = self.args.dropatt
         
         self.corpus = corpus
         self.demo = self.args.demo
 
+        self.theta = self.args.theta
 
         if adaptive:
             self.embedding = AdaptiveEmbedding(vocab_size, d_embedding, d_model, 
@@ -688,7 +689,8 @@ class TransformerLM(nn.Module):
                                               memory=value_i, 
                                               indices=indice_bool, 
                                               weights=weights,
-                                              neighbor_mem=neighbor_mem_i)
+                                              neighbor_mem=neighbor_mem_i,
+                                              theta=self.theta)
             else:
                 block_i[inf_ind] = core_out.squeeze(0)
                 core_out, attn_matrix = layer(block_i, pos_emb, self.pos_bias_u, 
@@ -698,7 +700,8 @@ class TransformerLM(nn.Module):
                                               indices=indice_bool, 
                                               weights=weights,
                                               neighbor_mem=neighbor_mem_i,
-                                              inf_ind=inf_ind)
+                                              inf_ind=inf_ind,
+                                              theta=self.theta)
 
 
             mem = core_out

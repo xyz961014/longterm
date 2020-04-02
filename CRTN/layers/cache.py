@@ -28,13 +28,10 @@ class Cache(nn.Module):
         self.N = self.args.cache_N
         self.dv = self.args.nhid
         self.topk = self.args.cache_k
-        self.theta = self.args.cache_theta
-        self.theta_alpha = self.args.theta_annealing_alpha
+        self.theta = self.args.theta
 
         self.pos_emb = PositionalEmbedding(args.nhid)
 
-    def theta_annealing_step(self):
-        self.theta = self.theta * self.theta_alpha
 
     def new_key_and_values(self):
         cache_key = torch.zeros(self.N, 

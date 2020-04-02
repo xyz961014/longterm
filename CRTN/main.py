@@ -135,12 +135,12 @@ def parse_args():
                         help="dimension of key, default: 240")
     parser.add_argument("--cache_k", type=int, default=3, 
                         help="select top k values, default: 3")
-    parser.add_argument("--cache_theta", type=float, default=1.0, 
-                        help="cache theta, default: 1.0")
+    parser.add_argument("--theta", type=float, default=1.0, 
+                        help="attention theta, default: 1.0")
     parser.add_argument("--theta_annealing_alpha", type=float, default=1.0, 
-                        help="cache theta annealing alpha, default: 1.0")
+                        help="attention theta annealing alpha, default: 1.0")
     parser.add_argument("--theta_annealing_steps", type=int, default=200, 
-                        help="cache theta annealing steps, default: 200")
+                        help="attention theta annealing steps, default: 200")
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--adaptive', action="store_true",
@@ -342,7 +342,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 scheduler.step()
 
         if step % args.theta_annealing_steps == 0 and args.theta_annealing_alpha < 1:
-            module.cache.theta_annealing_step()
+            module.theta_annealing_step()
             print("STEP {:5d}, annealing theta to {:3.4f}".format(step, module.cache.theta))
 
 
@@ -647,10 +647,10 @@ def main(args):
             print("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
                                                          args.clamp_len))
             model_args.clamp_len = args.clamp_len
-        if not model_args.cache_theta == args.cache_theta:
-            print("REDEFINE cache_theta: {} --> {}".format(model_args.cache_theta, 
-                                                         args.cache_theta))
-            model_args.cache_theta = args.cache_theta
+        if not model_args.theta == args.theta:
+            print("REDEFINE theta: {} --> {}".format(model_args.theta, 
+                                                         args.theta))
+            model_args.theta = args.theta
         model_args.same_length = args.same_length
 
         model_args.log_interval = args.log_interval
@@ -661,7 +661,7 @@ def main(args):
         
     args.mem_len = args.cache_k * args.num_steps
     if not args.eval:
-        args.cache_theta *= (1 / args.theta_annealing_alpha) ** (total_steps // args.theta_annealing_steps)
+        args.theta *= (1 / args.theta_annealing_alpha) ** (total_steps // args.theta_annealing_steps)
 
     #Print Params
     if args.rank == 0:

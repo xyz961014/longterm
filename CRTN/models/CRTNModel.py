@@ -27,6 +27,9 @@ class CRTNModel(nn.Module):
 
         self.encoder = TransformerLM(args, corpus)
 
+        self.theta = args.theta
+        self.theta_alpha = args.theta_annealing_alpha
+
         if args.query_method == "linear":
             if args.farnear:
                 self.shorten = nn.Linear(self.args.num_steps + self.args.neighbor_len, 
@@ -41,6 +44,11 @@ class CRTNModel(nn.Module):
         super().to(device)
         self.cache.to(device)
         self.encoder.to(device)
+
+    def theta_annealing_step(self):
+        self.theta = self.theta * self.theta_alpha
+        self.cache.theta = self.theta
+        self.encoder.theta = self.theta
 
     def set_batch_size(self, batch_size):
         self.cache.set_batch_size(batch_size)
