@@ -647,6 +647,10 @@ def main(args):
             print("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
                                                          args.clamp_len))
             model_args.clamp_len = args.clamp_len
+        if not model_args.cache_theta == args.cache_theta:
+            print("REDEFINE cache_theta: {} --> {}".format(model_args.cache_theta, 
+                                                         args.cache_theta))
+            model_args.cache_theta = args.cache_theta
         model_args.same_length = args.same_length
 
         model_args.log_interval = args.log_interval
@@ -656,7 +660,8 @@ def main(args):
         args = model_args
         
     args.mem_len = args.cache_k * args.num_steps
-    args.cache_theta *= (1 / args.theta_annealing_alpha) ** (total_steps // args.theta_annealing_steps)
+    if not args.eval:
+        args.cache_theta *= (1 / args.theta_annealing_alpha) ** (total_steps // args.theta_annealing_steps)
 
     #Print Params
     if args.rank == 0:
