@@ -124,6 +124,12 @@ def parse_args():
                         help='use the same pos embeddings after clamp_len')
     parser.add_argument('--same_length', action='store_true',
                         help='use the same attn length for all tokens')
+    parser.add_argument("--theta", type=float, default=1.0, 
+                        help="attention theta, default: 1.0")
+    parser.add_argument("--theta_annealing_alpha", type=float, default=1.0, 
+                        help="attention theta annealing alpha, default: 1.0")
+    parser.add_argument("--theta_annealing_steps", type=int, default=200, 
+                        help="attention theta annealing steps, default: 200")
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--devices', type=int, default=[0], nargs="+",
@@ -248,6 +254,11 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         else:
             if args.scheduler == "cosine":
                 scheduler.step()
+
+        if step % args.theta_annealing_steps == 0 and args.theta_annealing_alpha < 1:
+            module.theta_annealing_step()
+            if args.rank == 0:
+                print("STEP {:5d}, annealing theta to {:3.4f}".format(step, module.theta))
 
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
@@ -462,6 +473,8 @@ def main(args):
 
     datatime_end = time.time()
 
+    total_steps = len(train_loader) * args.epochs
+
     if args.load:
         # Load Model
         checkpoint = torch.load(args.load, map_location=device)
@@ -494,6 +507,10 @@ def main(args):
             print("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
                                                          args.clamp_len))
             model_args.clamp_len = args.clamp_len
+        if not model_args.theta == args.theta:
+            print("REDEFINE theta: {} --> {}".format(model_args.theta, 
+                                                     args.theta))
+            model_args.theta = args.theta
         model_args.same_length = args.same_length
 
         model_args.batch_size = args.batch_size
@@ -505,6 +522,9 @@ def main(args):
         model_args.apex = args.apex
 
         args = model_args
+
+    if not args.eval:
+        args.theta *= (1 / args.theta_annealing_alpha) ** (total_steps // args.theta_annealing_steps)
 
     #Print Params
     if args.rank == 0:
@@ -538,6 +558,8 @@ def main(args):
                 dropinp=model_args.dropinp,
                 dropwei=model_args.dropwei,
                 drophid=model_args.drophid,
+                theta=model_args.theta,
+                theta_alpha=model_args.theta_annealing_alpha,
                 apex=model_args.apex
                 )
 
@@ -567,6 +589,8 @@ def main(args):
                 dropinp=args.dropinp,
                 dropwei=args.dropwei,
                 drophid=args.drophid,
+                theta=args.theta,
+                theta_alpha=args.theta_annealing_alpha,
                 apex=args.apex
                 )
 
@@ -632,9 +656,9 @@ def main(args):
                                             dim=1)
 
     if args.scheduler == "cosine":
-        total_steps = args.epochs * len(train_loader) - args.warmup_steps
+        scheduler_steps = total_steps - args.warmup_steps
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 
-                                                         T_max=total_steps,
+                                                         T_max=scheduler_steps,
                                                          eta_min=args.eta_min)
     elif args.scheduler == "constant":
         scheduler = None

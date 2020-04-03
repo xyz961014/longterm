@@ -202,7 +202,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         return x
 
 
-    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None):
+    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, theta=1.0):
         seq_len = x.size(0)
 
         if memory is not None:
@@ -240,6 +240,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         attn_score = AC + BD
         attn_score.mul_(self.scale)
+        attn_score.mul_(theta)
 
         if mask is not None and mask.any().item():
             attn_score.masked_fill_(mask[:,:,:,None], -float('inf'))
@@ -273,9 +274,9 @@ class TransformerUnit(nn.Module):
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, drophid, apex)
 
-    def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None):
+    def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, theta=1.0):
         
-        output = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, mask=mask, memory=memory)
+        output = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, mask=mask, memory=memory, theta=theta)
 
         output = self.pos_ff(output)
 
@@ -283,7 +284,7 @@ class TransformerUnit(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, drophid=0.0, apex=False):
+    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, drophid=0.0, theta=1.0, theta_alpha=1.0, apex=False):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layer = num_layer
@@ -303,12 +304,8 @@ class TransformerLM(nn.Module):
         self.div_val = div_val
         self.cutoffs = cutoffs
 
-        #self.dropout = dropout
-        #self.dropatt = dropatt
-        #self.dropemb = dropemb
-        #self.dropinp = dropinp
-        #self.dropwei = dropwei
-        #self.drophid = drophid
+        self.theta = theta
+        self.theta_alpha = theta_alpha
 
         self.adaptive = adaptive
 
@@ -347,6 +344,8 @@ class TransformerLM(nn.Module):
 
         self.init_weights(init_std)
 
+    def theta_annealing_step(self):
+        self.theta = self.theta * self.theta_alpha
 
     def init_weights(self, init_std):
         nn.init.normal_(self.pos_bias_u, 0.0, init_std)
@@ -414,7 +413,8 @@ class TransformerLM(nn.Module):
                              self.pos_bias_u, 
                              self.pos_bias_v, 
                              mask=mask, 
-                             memory=memory_i)
+                             memory=memory_i,
+                             theta=self.theta)
 
             if memory is not None:
                 memories.append(core_out.unsqueeze(0))

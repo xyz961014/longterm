@@ -19,7 +19,7 @@ python main.py \
     --emsize 400 \
     --nhid 400 \
     --batch_size 40 \
-    --eval_batch_size 40 \
+    --eval_batch_size 10 \
     --num_steps 80 \
     --neighbor_len 80 \
     --cache_k 2 \

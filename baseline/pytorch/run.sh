@@ -19,7 +19,7 @@ python xl_lm.py \
     --emsize 400 \
     --nhid 400 \
     --batch_size 40 \
-    --eval_batch_size 40 \
+    --eval_batch_size 10 \
     --num_steps 80 \
     --mem_len 240 \
     --tied \
