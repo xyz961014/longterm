@@ -158,7 +158,7 @@ def parse_args():
                         help='use max pooling to justice importance' 
                         'of segments in the cache')
     parser.add_argument('--query_method', type=str, default='vanilla', 
-                        choices=['fixed_length', 'last_l', 'middle_l', 
+                        choices=['last_l', 'middle_l', 
                                  'linear', 'single_linear', 'single_sum', 'vanilla'],
                         help='query method to use. vanilla indicates just use '
                         'current segment to query, other methods link previous '

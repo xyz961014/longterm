@@ -69,7 +69,7 @@ class Cache(nn.Module):
             attention = attention.view(-1, self.args.num_steps ** 2, 1, self.N)
             attention = attention.max(1)[0]
         else:
-            attention, _ = self.attn(query, keys, values, scale=self.theta)
+            attention, _ = self.attn(query, keys, values, scale=self.theta) 
 
         attention = attention.view(-1, 1, attention.size(-1))
         

@@ -97,35 +97,6 @@ class CRTNModel(nn.Module):
                 else:
                     mask = mask.bool()[:,:,None,None]
                 query = query.masked_fill(mask, 0)
-            elif self.args.query_method == "fixed_length":
-                # abandoned
-                if self.args.farnear:
-                    if self.args.neighbor_len < self.args.num_steps:
-                        raise ValueError("neighbor_len < num_steps, "
-                                         "not compatible with method fixed_length")
-                    else:
-                        prev = neighbor_mem[0].split([nei_len-seq_len, 
-                                                      seq_len], dim=0)[1]
-                else:
-                    prev = cache_value[-1].transpose(0, 1)
-                    prev = prev.view(seq_len, -1, self.args.nlayers+1, nhid)
-                    prev = prev[:,:,0,:]
-                inputs = self.encoder.embedding(inputs)
-                new_input = torch.cat((prev, inputs), 0)
-                index_matrix = torch.arange(seq_len, 
-                                            device=new_input.device).unsqueeze(0)
-                if inf_ind is None:
-                    index_matrix = index_matrix.expand(seq_len, -1)
-                    index_matrix = index_matrix.t() + index_matrix + index_matrix.new_ones(seq_len, seq_len) 
-                else:
-                    index_matrix = index_matrix + inf_ind + 1
-                index_matrix = index_matrix.view(-1, 1, 1)
-                index_matrix = index_matrix.expand(-1, bsz, nhid)
-                query = torch.gather(new_input, 0, index_matrix)
-                if inf_ind is None:
-                    query = query.view(seq_len, seq_len, -1, nhid)
-                else:
-                    query = query.view(1, seq_len, -1, nhid)
             else:
                 if self.args.farnear:
                     prev_value = torch.einsum("nlbh->lbnh", neighbor_mem)
@@ -209,7 +180,9 @@ class CRTNModel(nn.Module):
                     wise_inputs = wise_inputs[-1][:,None,:,:]
                     if inf_ind is not None:
                         wise_inputs = wise_inputs[inf_ind].unsqueeze(0)
-                    query = wise_inputs.expand(-1, seq_len, -1, -1)
+                    query = wise_inputs
+                    #query = wise_inputs.expand(-1, seq_len, -1, -1)
+                    cache_key = cache_key.reshape(*cache_key.size()[:2], self.args.num_steps, -1).sum(dim=2)
                 elif self.args.query_method == "single_linear":
                     wise_inputs = wise_inputs[-1]
                     if inf_ind is not None:
