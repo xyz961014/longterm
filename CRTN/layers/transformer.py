@@ -539,10 +539,6 @@ class TransformerLM(nn.Module):
             mem_len = 0
             #zone_bsz = batch_size
 
-
-        if self.args.not_weighted:
-            weights = None
-
         if inf_blocks is not None:
             inf_blocks = inf_blocks.transpose(1, 2)
 
@@ -559,7 +555,7 @@ class TransformerLM(nn.Module):
             #pos_seq
             pos_indices = torch.cat((indices, 
                                     (torch.ones_like(indices[0]) * values.size(0)
-                                    ).view(1, -1)))
+                                    ).unsqueeze(0)))
 
             pos_seq = torch.arange(total_len-1, -1, -1.0, device=inputs.device)
             if self.args.merge_shift:
@@ -606,7 +602,6 @@ class TransformerLM(nn.Module):
             #one-hot pos_indices
             mem_num = values.size(0)
             indice_len = pos_indices.size(0)
-            pos_indices = pos_indices.view(indice_len, -1, batch_size)
             tfbase = torch.eye(mem_num + 1, device=pos_indices.device)
             indice_bool = torch.index_select(tfbase, 0, pos_indices.view(-1))
             indice_bool = indice_bool.view(indice_len, -1, batch_size, mem_num + 1)
@@ -626,7 +621,7 @@ class TransformerLM(nn.Module):
 
             if weights is not None:
                 x_len = inputs.size(0) if inf_ind is None else 1
-                weights = weights.view(x_len, batch_size, -1)
+                #weights = weights.view(x_len, batch_size, -1)
                 weights = torch.cat((weights, 
                                     torch.ones_like(
                                         weights[:,:,0,None]) * -float("inf")), 2)

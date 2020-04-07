@@ -64,8 +64,7 @@ class CRTNModel(nn.Module):
         neighbor_mem: (nlayers+1) * batch_size * nei_len * nhid
         inf_blocks: (nlayers+1) * batch_size * num_steps * nhid
         """
-        seq_len = self.args.num_steps
-        bsz = inputs.size(1)
+        seq_len, bsz = inputs.size(0), inputs.size(1)
         nhid = self.args.nhid
 
         if cache_key is None and cache_value is None:
@@ -79,7 +78,7 @@ class CRTNModel(nn.Module):
                                                     bsz, nhid)
             else:
                 neighbor_mem = torch.zeros(self.args.nlayers+1,
-                                           self.args.neighbor_len,
+                                           nei_len,
                                            bsz, nhid, device=inputs.device)
 
         if self.args.wise_summary:
@@ -99,9 +98,7 @@ class CRTNModel(nn.Module):
                 query = query.masked_fill(mask, 0)
             else:
                 if self.args.farnear:
-                    prev_value = torch.einsum("nlbh->lbnh", neighbor_mem)
-                    prev_value = prev_value.reshape(1, self.args.neighbor_len, bsz, 
-                                                    (self.args.nlayers+1) * nhid)
+                    #prev_value = torch.einsum("nlbh->lbnh", neighbor_mem)
                     near_output, wise_inputs, _ = self.encoder(inputs, 
                                                         neighbor_mem=neighbor_mem)
                 else:
@@ -110,8 +107,8 @@ class CRTNModel(nn.Module):
                     prev_indice = torch.zeros_like(inputs).view(-1)
                     prev_indice.unsqueeze_(0)
                     near_output, wise_inputs, _ = self.encoder(inputs, 
-                                                                values=prev_value,
-                                                                indices=prev_indice)
+                                                               values=prev_value,
+                                                               indices=prev_indice)
                 if self.args.query_method == "last_l":
                     query = wise_inputs[-1]
                     mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
@@ -120,20 +117,20 @@ class CRTNModel(nn.Module):
                     else:
                         query = query.unsqueeze(0)
                         mask = mask[inf_ind].unsqueeze(0)
-                    if torch.__version__ < "1.2.0":
-                        mask = mask.byte()[:,:,None,None]
-                    else:
-                        mask = mask.bool()[:,:,None,None]
+                    mask = mask.bool()[:,:,None,None]
                     query = query.masked_fill(mask, 0)
                 elif self.args.query_method == "middle_l":
                     if self.args.farnear and self.args.neighbor_len < seq_len:
                         raise ValueError("neighbor_len < num_steps, "
                                          "not compatible with method middle_l")
                     wise_inputs = wise_inputs[-1]
-                    prev = prev_value.transpose(1, 2).contiguous()
-                    prev = prev.view(-1, prev.size(2), self.args.nlayers+1, nhid)
-                    prev = prev[:,:,-1,:]
-                    prev.transpose_(0, 1)
+                    if not self.args.farnear:
+                        prev = prev_value.transpose(1, 2).contiguous()
+                        prev = prev.view(-1, prev.size(2), self.args.nlayers+1, nhid)
+                        prev = prev[:,:,-1,:]
+                        prev.transpose_(0, 1)
+                    else:
+                        prev = neighbor_mem[-1]
                     query_base = torch.cat((prev, wise_inputs), 0)
                     index_range = torch.arange(seq_len, 
                                                device=inputs.device).unsqueeze(0)
@@ -155,10 +152,13 @@ class CRTNModel(nn.Module):
                         query = query.view(1, seq_len, -1, nhid)
                 elif self.args.query_method == "linear":
                     wise_inputs = wise_inputs[-1]
-                    prev = prev_value.transpose(1, 2).contiguous()
-                    prev = prev.view(bsz, prev.size(2), self.args.nlayers+1, nhid)
-                    prev = prev[:,:,-1,:]
-                    prev = prev.transpose(0, 1)
+                    if not self.args.farnear:
+                        prev = prev_value.transpose(1, 2).contiguous()
+                        prev = prev.view(bsz, prev.size(2), self.args.nlayers+1, nhid)
+                        prev = prev[:,:,-1,:]
+                        prev = prev.transpose(0, 1)
+                    else:
+                        prev = neighbor_mem[-1]
                     query_base = torch.cat((prev, wise_inputs), 0)
                     query_base = query_base.transpose(0, 2)
                     mask = torch.triu(query_base.new_ones(
@@ -182,7 +182,7 @@ class CRTNModel(nn.Module):
                         wise_inputs = wise_inputs[inf_ind].unsqueeze(0)
                     query = wise_inputs
                     #query = wise_inputs.expand(-1, seq_len, -1, -1)
-                    cache_key = cache_key.reshape(*cache_key.size()[:2], self.args.num_steps, -1).sum(dim=2)
+                    #cache_key = cache_key.reshape(*cache_key.size()[:2], seq_len, -1).sum(dim=2)
                 elif self.args.query_method == "single_linear":
                     wise_inputs = wise_inputs[-1]
                     if inf_ind is not None:
@@ -194,19 +194,16 @@ class CRTNModel(nn.Module):
             query = self.encoder.embedding(inputs)
             query = query.expand(query.size(0), -1, -1, -1)
             mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
-            if torch.__version__ < "1.2.0":
-                mask = mask.byte()[:,:,None,None]
-            else:
-                mask = mask.bool()[:,:,None,None]
+            mask = mask.bool()[:,:,None,None]
             query = query.masked_fill(mask, 0)
 
         values = cache_value.transpose(1, 2).contiguous()
 
-        # look into cache
+        # look up from cache
         if self.demo:
-            weights, indices, words = self.cache(query, cache_key, values)
+            weights, indices, words = self.cache(query, cache_key)
         else:
-            weights, indices = self.cache(query, cache_key, values)
+            weights, indices = self.cache(query, cache_key)
             words = None
 
 

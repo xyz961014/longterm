@@ -11,66 +11,11 @@ class DotProductAttention(nn.Module):
     def __init__(self):
         super().__init__()
 
-    def forward(self, query, keys, values, mask=None, scale=1.0):
+    def forward(self, query, keys, mask=None, scale=1.0):
         weights = torch.einsum("...bh,bnh->...bn", query, keys)
         weights = F.softmax(scale * weights / np.sqrt(keys.size(-1)), 2)
-        #outputs = torch.einsum("...bn,bnlh->...blh", weights, values)
-        outputs = None
-        weights = weights.unsqueeze(-2)
 
-        #keys_T = keys.transpose(-2, -1)
-        #keys_T = keys_T.view(-1, keys_T.size(-2), keys_T.size(-1))
-        #values_attn = values.view(list(values.size())[:2]+[-1])
-        #query_attn = query.view(values_attn.size(0), -1, query.size(-1))
-        #try:
-        #    assert (query_attn.size(0) == keys_T.size(0) and query_attn.size(0) == values_attn.size(0) and keys_T.size(0) == values_attn.size(0)), "Batch size not justified, please check"
-        #except:
-        #    print("Q:%s, K:%s, V:%s" % (query_attn.shape, keys_T.shape, values_attn.shape))
-        #assert (query_attn.size(0) == keys_T.size(0) and query_attn.size(0) == values_attn.size(0) and keys_T.size(0) == values_attn.size(0)), "Batch size not justified, please check"
-        #if mask is not None:
-        #    mask = torch.cat(tuple(mask.view([1]+list(mask.size())) for _ in range(keys_T.size(0))), 0)
-        #    keys_T = torch.matmul(keys_T, mask)
-        #weights = F.softmax(torch.matmul(query_attn, keys_T) / np.sqrt(keys_T.size(-2)), 2)
-        ##print(query_attn, keys_T, weights)
-        #outputs = torch.matmul(weights, values_attn)
-        #outputs = outputs.view([-1]+list(values.size())[2:])
-        return weights, outputs
-
-
-#class MultiheadSelfAttention(nn.Module):
-#    def __init__(self, d_model, num_head, num_steps, dropout):
-#        super().__init__()
-#        self.d_model = d_model
-#        self.num_head = num_head
-#        self.drop = nn.Dropout(dropout)
-#        self.attn = DotProductAttention()
-#        self.LinO = nn.Linear(d_model, d_model)
-#        self.LinQs = nn.ModuleList(
-#                [nn.Linear(d_model, d_model // num_head) for i in range(num_head)])
-#        self.LinKs = nn.ModuleList(
-#                [nn.Linear(d_model, d_model // num_head) for i in range(num_head)])
-#        self.LinVs = nn.ModuleList(
-#                [nn.Linear(d_model, d_model // num_head) for i in range(num_head)])
-#
-#        self.mask_matrix = torch.tensor([[1.0 if j < i else 0.0 for j in range(num_steps)] for i in range(num_steps)])
-#
-#    def forward(self, inputs, mask=False):
-#        inputs = inputs.transpose(0, 1).contiguous()
-#        size = inputs.size()
-#        if mask:
-#            self.mask_matrix = self.mask_matrix.to(inputs.device)
-#            heads = tuple(self.attn(self.LinQs[i](self.drop(inputs)), 
-#                            self.LinKs[i](self.drop(inputs)), 
-#                            self.LinVs[i](self.drop(inputs)), 
-#                            self.mask_matrix)[1] for i in range(self.num_head))
-#        else:
-#            heads = tuple(self.attn(self.LinQs[i](self.drop(inputs)), 
-#                            self.LinKs[i](self.drop(inputs)), 
-#                            self.LinVs[i](self.drop(inputs)))[1] for i in range(self.num_head))
-#        concat = torch.cat(heads, -1)
-#        return self.LinO(concat).view(size).transpose(0, 1).contiguous()
-#
-#
+        return weights
 
 
 class Transformer(nn.Module):

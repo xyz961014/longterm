@@ -15,7 +15,10 @@ class Cache(nn.Module):
         self.corpus = corpus
         #self.demo = self.args.demo
         if self.args.no_summary:
-            self.dk = self.args.num_steps * self.args.nhid
+            if self.args.query_method == "single_sum":
+                self.dk = self.args.nhid
+            else:
+                self.dk = self.args.num_steps * self.args.nhid
         else:
             self.dk = self.args.cache_dk
 
@@ -49,7 +52,7 @@ class Cache(nn.Module):
     def set_batch_size(self, batch_size):
         self.batch_size = batch_size
 
-    def forward(self, query, keys, values):
+    def forward(self, query, keys):
 
         query = query.transpose(1, 2)
         query_len, bsz = query.size(0), query.size(1)
@@ -59,7 +62,6 @@ class Cache(nn.Module):
             query = self.summary(query.reshape(query_len, -1, self.L * self.dv))
         
         keys = keys.transpose(0, 1)
-        values = torch.einsum("klbh->bklh", values)
         
         #print(query.device, keys.device, values.device)
         if self.args.max_pooling:
@@ -69,12 +71,10 @@ class Cache(nn.Module):
             attention = attention.view(-1, self.args.num_steps ** 2, 1, self.N)
             attention = attention.max(1)[0]
         else:
-            attention, _ = self.attn(query, keys, values, scale=self.theta) 
+            attention = self.attn(query, keys, scale=self.theta) 
 
-        attention = attention.view(-1, 1, attention.size(-1))
-        
-        _, topk_indices = attention.topk(self.topk)
-        topk_indices = topk_indices.squeeze(1).t()
+        _, topk_indices = attention.topk(self.topk, dim=-1)
+        topk_indices = topk_indices.permute(2, 0, 1)
 
         return attention, topk_indices
 
@@ -97,7 +97,10 @@ class Cache(nn.Module):
             key_blocks, value_blocks = self.eliminate_last(keys, values)
 
         if self.args.no_summary:
-            new_key = inputs[-1].reshape(self.batch_size, -1)
+            if self.args.query_method == "single_sum":
+                new_key = inputs[-1].sum(dim=1)
+            else:
+                new_key = inputs[-1].reshape(self.batch_size, -1)
         else:
             new_key = self.summary(inputs[-1].reshape(-1, self.L * self.dv))
 
