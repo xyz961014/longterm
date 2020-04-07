@@ -58,66 +58,79 @@ import ipdb
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    # data
     parser.add_argument('--data', type=str,
                         default='/home/xyz/Documents/Dataset/ptb_sample/',
                         help='location of the data corpus')
     parser.add_argument('--datasets', type=str, choices=["fromfile", "ptb", "wt103"], 
                         default="fromfile", help='load datasets from torchtext')
+    # setting
     parser.add_argument('--eval', action='store_true',
                         help='skip training')
     parser.add_argument('--demo', action='store_true',
                         help='demo mode')
+    # optimization
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
-    parser.add_argument('--emsize', type=int, default=256,
-                        help='size of word embeddings')
-    parser.add_argument('--nhid', type=int, default=256,
-                        help='number of hidden units per layer')
-    parser.add_argument('--nlayers', type=int, default=12,
-                        help='number of layers')
-    parser.add_argument('--nhead', type=int, default=8,
-                        help='number of heads')
-    parser.add_argument('--d_ff', type=int, default=1024,
-                        help='dimension of feed-forward')
-    parser.add_argument('--mem_len', type=int, default=60,
-                        help='length of memory')
-    parser.add_argument('--lr', type=float, default=25e-5,
+    parser.add_argument('--lr', type=float, default=3e-4,
                         help='initial learning rate')
-    parser.add_argument('--weight_decay', type=float, default=1e-5,
-                        help='weight decay')
+    parser.add_argument('--eta_min', type=float, default=1e-4,
+                        help='lr_min for cosine scheduler')
     parser.add_argument('--scheduler', type=str, default='cosine', 
                         choices=['cosine', 'constant'],
                         help='lr scheduler to use')
-    parser.add_argument('--eta_min', type=float, default=0.0,
-                        help='lr_min for cosine scheduler')
-    parser.add_argument('--warmup_steps', type=int, default=0,
+    parser.add_argument('--emb_mult', type=float, default=2,
+                        help='multiplier for the learning rate of embeddings')
+    parser.add_argument('--warmup_steps', type=int, default=3000,
                         help='linear warmup steps')
     parser.add_argument('--clip', type=float, default=0.25,
                         help='gradient clipping')
-    parser.add_argument('--epochs', type=int, default=100,
-                        help='upper epoch limit')
-    parser.add_argument('--batch_size', type=int, default=50, metavar='N',
-                        help='batch size')
-    parser.add_argument('--eval_batch_size', type=int, default=10, 
-                        help='eval batch size')
-    parser.add_argument('--num_steps', type=int, default=20,
-                        help='sequence length')
-    parser.add_argument('--dropout', type=float, default=0.4,
+    # regularization
+    parser.add_argument('--weight_decay', type=float, default=12e-7,
+                        help='weight decay')
+    parser.add_argument('--alpha', type=float, default=0.2,
+                        help='alpha L2 regularization on activation')
+    parser.add_argument('--beta', type=float, default=0.1,
+                        help='beta slowness regularization applied on activiation')
+    parser.add_argument('--dropout', type=float, default=0.5,
                         help='dropout applied to layers (0 = no dropout)')
     parser.add_argument('--dropatt', type=float, default=0.2,
                         help='dropout applied to attention (0 = no dropout)')
-    parser.add_argument('--dropemb', type=float, default=0.1,
+    parser.add_argument('--dropemb', type=float, default=0.2,
                         help='embedding dropout, random remove whole words')
-    parser.add_argument('--dropinp', type=float, default=0.65,
+    parser.add_argument('--dropinp', type=float, default=0.6,
                         help='input layer dropout')
-    parser.add_argument('--dropwei', type=float, default=0.5,
+    parser.add_argument('--dropwei', type=float, default=0.1,
                         help='linear weight dropout')
-    parser.add_argument('--drophid', type=float, default=0.3,
+    parser.add_argument('--dropfor', type=float, default=0.2,
+                        help='forward layers dropout')
+    parser.add_argument('--drophid', type=float, default=0.0,
                         help='hidden layers dropout')
+    # hyperparams
+    parser.add_argument('--emsize', type=int, default=380,
+                        help='size of word embeddings')
+    parser.add_argument('--nhid', type=int, default=380,
+                        help='number of hidden units per layer')
+    parser.add_argument('--nlayers', type=int, default=16,
+                        help='number of layers')
+    parser.add_argument('--nhead', type=int, default=10,
+                        help='number of heads')
+    parser.add_argument('--d_ff', type=int, default=900,
+                        help='dimension of feed-forward')
+    parser.add_argument('--num_steps', type=int, default=70,
+                        help='sequence length')
+    parser.add_argument('--mem_len', type=int, default=70,
+                        help='length of memory')
+    parser.add_argument('--batch_size', type=int, default=10, metavar='N',
+                        help='batch size')
+    parser.add_argument('--eval_batch_size', type=int, default=10, 
+                        help='eval batch size')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--proj_init_std', type=float, default=0.01,
                         help='parameters initialized by N(0.0, proj_init_std)')
+    parser.add_argument('--epochs', type=int, default=100,
+                        help='upper epoch limit')
     parser.add_argument('--tied', action="store_true",
                         help='tied embedding weights')
     parser.add_argument('--clamp_len', type=int, default=-1,
@@ -139,7 +152,7 @@ def parse_args():
     parser.add_argument('--vocab_size', type=int, default=10000,
                         help='size of vocabulary, excluding special chars')
     parser.add_argument('--cutoffs', type=int, 
-                        default=[2000, 4000, 6000], nargs="+",
+                        default=[2000, 4000, 8000], nargs="+",
                         help='cutoffs for adaptive embedding')
     parser.add_argument('--div_val', type=int, default=1,
                         help='divident value for adaptive input and softmax')
@@ -233,6 +246,15 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             loss = loss.mean()
         else:
             loss = criterion(output.view(-1, args.vocab_size), targets.view(-1))
+
+        # Activiation Regularization
+        if args.alpha:
+            loss = loss + args.alpha * output.pow(2).mean()
+
+        # Temporal Activation Regularization (slowness)
+        if args.beta:
+            loss = loss + args.beta * (output[1:] - output[:-1]).pow(2).mean()
+
 
         if args.apex:
             with amp.scale_loss(loss, optimizer) as scaled_loss:
@@ -461,7 +483,7 @@ def main(args):
                 bptt_len=args.num_steps)
         vocab = train_loader.dataset.fields["text"].vocab
         args.vocab_size = len(vocab.itos)
-    else:
+    elif argd.datasets == "fromfile":
         if args.rank == 0:
             print("Loading data from %s" % args.data)
         corpus = TextDataset(args.data, args.vocab_size, args.num_steps)
@@ -557,6 +579,7 @@ def main(args):
                 dropemb=model_args.dropemb,
                 dropinp=model_args.dropinp,
                 dropwei=model_args.dropwei,
+                dropfor=model_args.dropfor,
                 drophid=model_args.drophid,
                 theta=model_args.theta,
                 theta_alpha=model_args.theta_annealing_alpha,
@@ -588,23 +611,12 @@ def main(args):
                 dropemb=args.dropemb,
                 dropinp=args.dropinp,
                 dropwei=args.dropwei,
+                dropfor=args.dropfor,
                 drophid=args.drophid,
                 theta=args.theta,
                 theta_alpha=args.theta_annealing_alpha,
                 apex=args.apex
                 )
-
-    if args.rank == 0:
-        all_param = sum([p.numel() for p in model.parameters()])
-        nonemb_param = sum([p.numel() for p in model.layers.parameters()])
-        print("#model params = {}".format(all_param))
-        print('#non emb params = {}'.format(nonemb_param))
-
-        if args.eval:
-            print("SKIP TRAINING")
-        else:
-            print("TRAINING......")
-
 
     
     if args.adaptive:
@@ -630,17 +642,35 @@ def main(args):
     else:
         criterion = nn.CrossEntropyLoss()
 
+
+    params = list(model.parameters()) + list(criterion.parameters())
+    nonemb_param = list(model.layers.parameters())
+    emb_param = list(model.embedding.parameters())
+    if args.rank == 0:
+        all_param_num = sum([p.numel() for p in params])
+        nonemb_param_num = sum([p.numel() for p in nonemb_param])
+        print("#model params = {}".format(all_param_num))
+        print('#non emb params = {}'.format(nonemb_param_num))
+
+        if args.eval:
+            print("SKIP TRAINING")
+        else:
+            print("TRAINING......")
+
+
     model.apply(init_weights)
         
     model = model.to(device)
     criterion = criterion.to(device)
 
+    param_list = [nonemb_param, emb_param]
+    lr_list = [args.lr, args.lr * args.emb_mult]
     if args.adam:
-        optimizer = optim.Adam(model.parameters(), lr=args.lr,
+        optimizer = optim.Adam([{"params": p, "lr": lr} for p, lr in zip(param_list, lr_list)], 
                                weight_decay=args.weight_decay)
     else:
-        optimizer = optim.SGD(model.parameters(), lr=args.lr,
-                              weight_decay=args.weight_decay)
+        optimizer = optim.SGD([{"params": p, "lr": lr} for p, lr in zip(param_list, lr_list)], 
+                               weight_decay=args.weight_decay)
     
     if args.apex:
         [model, criterion], optimizer = amp.initialize([model, criterion], 

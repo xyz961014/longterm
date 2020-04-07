@@ -77,7 +77,7 @@ def bmm_einsum(tensor1, tensor2, eqn="ibnd,jbnd->ijbn"):
 
 
 class PostionwiseFF(nn.Module):
-    def __init__(self, d_model, d_ff, drophid, apex):
+    def __init__(self, d_model, d_ff, dropfor, apex):
         super().__init__()
 
         self.d_model = d_model
@@ -86,9 +86,9 @@ class PostionwiseFF(nn.Module):
         self.FFNet = nn.Sequential(
                 nn.Linear(d_model, d_ff),
                 nn.ReLU(inplace=True),
-                LockedDropout(drophid),
+                LockedDropout(dropfor),
                 nn.Linear(d_ff, d_model),
-                LockedDropout(drophid)
+                LockedDropout(dropfor)
                 )
 
         if apex:
@@ -163,16 +163,15 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropout, dropatt, dropwei, drophid, apex=False):
+    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, apex=False):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
         self.d_head = d_head
         self.apex = apex
 
-        self.dropout = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
-        self.drophid = LockedDropout(drophid)
+        self.dropattnout = LockedDropout(dropatt)
 
         self.lin_qkv = WeightDropLinear(d_model, 3 * num_head * d_head, bias=False, 
                                         weight_dropout=dropwei)
@@ -255,7 +254,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         attn_vec = attn_vec.contiguous().view(seq_len, batch_size, self.num_head * self.d_head)
 
         attn_out = self.lin_o(attn_vec)
-        attn_out = self.drophid(attn_out)
+        attn_out = self.dropattnout(attn_out)
 
         output = self.layer_norm(x + attn_out)
 
@@ -267,12 +266,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, dropout, dropatt, dropwei, drophid, apex):
+    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, apex):
         super().__init__()
 
-        self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropout, dropatt, dropwei, drophid, apex)
+        self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropatt, dropwei, apex)
 
-        self.pos_ff = PostionwiseFF(d_model, d_ff, drophid, apex)
+        self.pos_ff = PostionwiseFF(d_model, d_ff, dropfor, apex)
 
     def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, theta=1.0):
         
@@ -284,7 +283,7 @@ class TransformerUnit(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, drophid=0.0, theta=1.0, theta_alpha=1.0, apex=False):
+    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, dropfor=0.0, drophid=0.0, theta=1.0, theta_alpha=1.0, apex=False):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layer = num_layer
@@ -326,7 +325,7 @@ class TransformerLM(nn.Module):
 
         self.dropout = LockedDropout(dropout)
         self.dropinp = LockedDropout(dropinp)
-        #self.drophid = LockedDropout(drophid)
+        self.drophid = LockedDropout(drophid)
 
         self.layers = nn.ModuleList()
 
@@ -336,10 +335,9 @@ class TransformerLM(nn.Module):
                 d_model=d_model,
                 d_head=d_head,
                 d_ff=d_ff,
-                dropout=dropout,
                 dropatt=dropatt,
                 dropwei=dropwei,
-                drophid=drophid,
+                dropfor=dropfor,
                 apex=apex))
 
         self.init_weights(init_std)
@@ -415,12 +413,14 @@ class TransformerLM(nn.Module):
                              mask=mask, 
                              memory=memory_i,
                              theta=self.theta)
+            if i < len(self.layers) - 1:
+                core_out = self.drophid(core_out)
+            else:
+                core_out = self.dropout(core_out)
 
             if memory is not None:
                 memories.append(core_out.unsqueeze(0))
         memories = torch.cat(memories, dim=0)
-
-        core_out = self.dropout(core_out)
 
         if memory is not None:
             whole_seq = torch.cat((memory, memories), dim=1)
