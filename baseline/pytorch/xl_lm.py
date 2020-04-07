@@ -483,7 +483,7 @@ def main(args):
                 bptt_len=args.num_steps)
         vocab = train_loader.dataset.fields["text"].vocab
         args.vocab_size = len(vocab.itos)
-    elif argd.datasets == "fromfile":
+    elif args.datasets == "fromfile":
         if args.rank == 0:
             print("Loading data from %s" % args.data)
         corpus = TextDataset(args.data, args.vocab_size, args.num_steps)
