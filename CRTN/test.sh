@@ -22,10 +22,9 @@ python main.py \
     --seed 1111 \
     --log-interval 30 \
     --adaptive \
-    --no_summary \
-    --wise_summary \
     --farnear \
-    --query_method single_sum \
+    --summary_method sum \
+    --query_method single \
     --distributed \
     --save demo \
     ${@:1}

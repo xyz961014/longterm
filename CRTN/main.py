@@ -150,20 +150,19 @@ def parse_args():
     parser.add_argument('--cutoffs', type=int, 
                         default=[2000, 4000, 6000], nargs="+",
                         help='cutoffs for adaptive embedding')
-    parser.add_argument('--no_summary', action="store_true",
-                        help='use the output of the transformer layer as key')
-    parser.add_argument('--wise_summary', action="store_true",
-                        help='use encoder function(transformer-xl) to summary the key')
     parser.add_argument('--max_pooling', action="store_true",
                         help='use max pooling to justice importance' 
                         'of segments in the cache')
+    parser.add_argument('--summary_method', type=str, default='no_summary', 
+                        choices=['no_summary', 'max', 'mean', 'sum', 
+                                 'last_state', 'linear'],
+                        help='method to summary key of segments')
     parser.add_argument('--query_method', type=str, default='vanilla', 
-                        choices=['last_l', 'middle_l', 
-                                 'linear', 'single_linear', 'single_sum', 'vanilla'],
-                        help='query method to use. vanilla indicates just use '
-                        'current segment to query, other methods link previous '
-                        'segment. last_l and middle_l only work in wise_summary '
-                        'mode')
+                        choices=['last_l', 'middle_l', 'linear', 'single', 
+                                 'single_linear', 'vanilla'],
+                        help='method to compute query of words. vanilla indicates '
+                        'use current segment to query, other methods link previous '
+                        'segment.')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
     parser.add_argument('--farnear', action="store_true",

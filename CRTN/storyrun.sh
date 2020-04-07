@@ -35,9 +35,8 @@ python story_tail.py \
     --adaptive \
     --vocab_size 50000 \
     --cutoffs 10000 20000 30000 \
-    --no_summary \
-    --wise_summary \
     --farnear \
+    --summary_method no_summary \
     --query_method single_sum \
     --eval_steps 3000 \
     --log-interval 100 \

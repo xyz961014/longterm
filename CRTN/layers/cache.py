@@ -14,17 +14,15 @@ class Cache(nn.Module):
         self.args = deepcopy(args)
         self.corpus = corpus
         #self.demo = self.args.demo
-        if self.args.no_summary:
-            if self.args.query_method == "single_sum":
-                self.dk = self.args.nhid
-            else:
-                self.dk = self.args.num_steps * self.args.nhid
-        else:
+        if self.args.summary_method == "no_summary":
+            self.dk = self.args.num_steps * self.args.nhid
+        elif self.args.summary_method in ["sum", "max", "mean", "last_state"]:
+            self.dk = self.args.nhid
+        elif self.args.summary_method == "linear":
             self.dk = self.args.cache_dk
+            self.summary = nn.Linear(args.nhid * args.num_steps, args.cache_dk)
 
         self.attn = DotProductAttention()
-        if not args.no_summary:
-            self.summary = nn.Linear(args.nhid * args.num_steps, args.cache_dk)
 
         self.batch_size = args.batch_size
         self.L = self.args.num_steps
@@ -56,10 +54,7 @@ class Cache(nn.Module):
 
         query = query.transpose(1, 2)
         query_len, bsz = query.size(0), query.size(1)
-        if self.args.no_summary:
-            query = query.reshape(query_len, bsz, -1)
-        else:
-            query = self.summary(query.reshape(query_len, -1, self.L * self.dv))
+        query = query.reshape(query_len, bsz, -1)
         
         keys = keys.transpose(0, 1)
         
@@ -96,12 +91,13 @@ class Cache(nn.Module):
         else:
             key_blocks, value_blocks = self.eliminate_last(keys, values)
 
-        if self.args.no_summary:
-            if self.args.query_method == "single_sum":
-                new_key = inputs[-1].sum(dim=1)
-            else:
-                new_key = inputs[-1].reshape(self.batch_size, -1)
-        else:
+        if self.args.summary_method == "no_summary":
+            new_key = inputs[-1].reshape(self.batch_size, -1)
+        elif self.args.summary_method == "sum":
+            new_key = inputs[-1].sum(dim=1)
+        elif self.args.summary_method == "last_state":
+            new_key = inputs[-1,:,-1,:]
+        elif self.args.summary_method == "linear":
             new_key = self.summary(inputs[-1].reshape(-1, self.L * self.dv))
 
         new_value = torch.einsum("mblh->lbmh", 

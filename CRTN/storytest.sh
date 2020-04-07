@@ -21,7 +21,6 @@ python story_tail.py \
     --adaptive \
     --vocab_size 25000 \
     --cutoffs 5000 10000 15000 \
-    --wise_summary \
     --farnear \
     --query_method single_sum \
     --neighbor_len 20 \

@@ -21,8 +21,6 @@ class CRTNModel(nn.Module):
         self.corpus = corpus
         self.demo = self.args.demo
 
-        self.drop = nn.Dropout(args.dropout)
-
         self.cache = Cache(args, corpus)
 
         self.encoder = TransformerLM(args, corpus)
@@ -36,9 +34,6 @@ class CRTNModel(nn.Module):
                                          self.args.num_steps)
             else:
                 self.shorten = nn.Linear(2 * self.args.num_steps, self.args.num_steps)
-        elif args.query_method == "single_linear":
-            self.enlarge = nn.Linear(self.args.nhid, 
-                                     self.args.nhid * self.args.num_steps)
 
     def to(self, device):
         super().to(device)
@@ -64,6 +59,7 @@ class CRTNModel(nn.Module):
         neighbor_mem: (nlayers+1) * batch_size * nei_len * nhid
         inf_blocks: (nlayers+1) * batch_size * num_steps * nhid
         """
+        ### preparing ###
         seq_len, bsz = inputs.size(0), inputs.size(1)
         nhid = self.args.nhid
 
@@ -80,126 +76,103 @@ class CRTNModel(nn.Module):
                 neighbor_mem = torch.zeros(self.args.nlayers+1,
                                            nei_len,
                                            bsz, nhid, device=inputs.device)
+        ### computing query ###
 
-        if self.args.wise_summary:
-            if self.args.query_method == "vanilla":
-                near_output, wise_inputs, _ = self.encoder(inputs)
+        if self.args.query_method == "vanilla":
+            near_output, wise_inputs, _ = self.encoder(inputs)
+            query = wise_inputs[-1]
+            mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
+            if inf_ind is None:
+                query = query.expand(query.size(0), -1, -1, -1)
+            else:
+                query = query.unsqueeze(0)
+                mask = mask[inf_ind].unsqueeze(0)
+            mask = mask.bool()[:,:,None,None]
+            query = query.masked_fill(mask, 0)
+        else:
+            if self.args.farnear:
+                near_output, wise_inputs, _ = self.encoder(inputs, 
+                                                    neighbor_mem=neighbor_mem)
+            else:
+                prev_value = cache_value[-1].transpose(0, 1)
+                prev_value.unsqueeze_(0)
+                prev_indice = torch.zeros_like(inputs).view(-1)
+                prev_indice.unsqueeze_(0)
+                near_output, wise_inputs, _ = self.encoder(inputs, 
+                                                           values=prev_value,
+                                                           indices=prev_indice)
+            if self.args.query_method == "last_l":
                 query = wise_inputs[-1]
                 mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
                 if inf_ind is None:
-                    query = query.expand(query.size(0), -1, -1, -1)
+                    query = query.expand(seq_len, seq_len, bsz, nhid)
                 else:
                     query = query.unsqueeze(0)
                     mask = mask[inf_ind].unsqueeze(0)
-                if torch.__version__ < "1.2.0":
-                    mask = mask.byte()[:,:,None,None]
-                else:
-                    mask = mask.bool()[:,:,None,None]
+                mask = mask.bool()[:,:,None,None]
                 query = query.masked_fill(mask, 0)
-            else:
-                if self.args.farnear:
-                    #prev_value = torch.einsum("nlbh->lbnh", neighbor_mem)
-                    near_output, wise_inputs, _ = self.encoder(inputs, 
-                                                        neighbor_mem=neighbor_mem)
+            elif self.args.query_method == "middle_l":
+                if self.args.farnear and self.args.neighbor_len < seq_len:
+                    raise ValueError("neighbor_len < num_steps, "
+                                     "not compatible with method middle_l")
+                wise_inputs = wise_inputs[-1]
+                if not self.args.farnear:
+                    prev = prev_value.transpose(1, 2).contiguous()
+                    prev = prev.view(-1, prev.size(2), self.args.nlayers+1, nhid)
+                    prev = prev[:,:,-1,:]
+                    prev.transpose_(0, 1)
                 else:
-                    prev_value = cache_value[-1].transpose(0, 1)
-                    prev_value.unsqueeze_(0)
-                    prev_indice = torch.zeros_like(inputs).view(-1)
-                    prev_indice.unsqueeze_(0)
-                    near_output, wise_inputs, _ = self.encoder(inputs, 
-                                                               values=prev_value,
-                                                               indices=prev_indice)
-                if self.args.query_method == "last_l":
-                    query = wise_inputs[-1]
-                    mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
-                    if inf_ind is None:
-                        query = query.expand(seq_len, seq_len, bsz, nhid)
-                    else:
-                        query = query.unsqueeze(0)
-                        mask = mask[inf_ind].unsqueeze(0)
-                    mask = mask.bool()[:,:,None,None]
-                    query = query.masked_fill(mask, 0)
-                elif self.args.query_method == "middle_l":
-                    if self.args.farnear and self.args.neighbor_len < seq_len:
-                        raise ValueError("neighbor_len < num_steps, "
-                                         "not compatible with method middle_l")
-                    wise_inputs = wise_inputs[-1]
-                    if not self.args.farnear:
-                        prev = prev_value.transpose(1, 2).contiguous()
-                        prev = prev.view(-1, prev.size(2), self.args.nlayers+1, nhid)
-                        prev = prev[:,:,-1,:]
-                        prev.transpose_(0, 1)
-                    else:
-                        prev = neighbor_mem[-1]
-                    query_base = torch.cat((prev, wise_inputs), 0)
-                    index_range = torch.arange(seq_len, 
-                                               device=inputs.device).unsqueeze(0)
-                    if inf_ind is None:
-                        index_matrix = index_range.expand(seq_len, -1)
-                        index_matrix = (index_matrix.t() + index_matrix + 
-                                        index_matrix.new_ones(seq_len, seq_len)) 
-                    else:
-                        index_matrix = index_range + inf_ind + 1
-                    index_matrix = index_matrix.view(-1, 1, 1)
-                    index_matrix = index_matrix.expand(-1, query_base.size(1), 
-                                                       query_base.size(2))
-                    if self.args.farnear:
-                        index_matrix = index_matrix + nei_len - seq_len
-                    query = torch.gather(query_base, 0, index_matrix)
-                    if inf_ind is None:
-                        query = query.view(seq_len, seq_len, -1, nhid)
-                    else:
-                        query = query.view(1, seq_len, -1, nhid)
-                elif self.args.query_method == "linear":
-                    wise_inputs = wise_inputs[-1]
-                    if not self.args.farnear:
-                        prev = prev_value.transpose(1, 2).contiguous()
-                        prev = prev.view(bsz, prev.size(2), self.args.nlayers+1, nhid)
-                        prev = prev[:,:,-1,:]
-                        prev = prev.transpose(0, 1)
-                    else:
-                        prev = neighbor_mem[-1]
-                    query_base = torch.cat((prev, wise_inputs), 0)
-                    query_base = query_base.transpose(0, 2)
-                    mask = torch.triu(query_base.new_ones(
-                                        seq_len, query_base.size(-1)), 
-                                        diagonal=1+query_base.size(-1)-seq_len)
-                    if inf_ind is None:
-                        query_base = query_base.expand(seq_len, -1, -1, -1)
-                    else:
-                        query_base = query_base.unsqueeze(0)
-                        mask = mask[inf_ind].unsqueeze(0)
-                    if torch.__version__ < "1.2.0":
-                        mask = mask.byte()[:,None,None,:]
-                    else:
-                        mask = mask.bool()[:,None,None,:]
-                    query_base = query_base.masked_fill(mask, 0)
-                    query = torch.sigmoid(self.shorten(query_base))
-                    query = torch.einsum("khbl->klbh", query)
-                elif self.args.query_method == "single_sum":
-                    wise_inputs = wise_inputs[-1][:,None,:,:]
-                    if inf_ind is not None:
-                        wise_inputs = wise_inputs[inf_ind].unsqueeze(0)
-                    query = wise_inputs
-                    #query = wise_inputs.expand(-1, seq_len, -1, -1)
-                    #cache_key = cache_key.reshape(*cache_key.size()[:2], seq_len, -1).sum(dim=2)
-                elif self.args.query_method == "single_linear":
-                    wise_inputs = wise_inputs[-1]
-                    if inf_ind is not None:
-                        wise_inputs = wise_inputs[inf_ind].unsqueeze(0)
-                    query = self.enlarge(wise_inputs)
-                    query = query.view(query.size(0), -1, seq_len, nhid)
-                    query = query.transpose(1, 2)
-        else:
-            query = self.encoder.embedding(inputs)
-            query = query.expand(query.size(0), -1, -1, -1)
-            mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
-            mask = mask.bool()[:,:,None,None]
-            query = query.masked_fill(mask, 0)
+                    prev = neighbor_mem[-1]
+                query_base = torch.cat((prev, wise_inputs), 0)
+                index_range = torch.arange(seq_len, 
+                                           device=inputs.device).unsqueeze(0)
+                if inf_ind is None:
+                    index_matrix = index_range.expand(seq_len, -1)
+                    index_matrix = (index_matrix.t() + index_matrix + 
+                                    index_matrix.new_ones(seq_len, seq_len)) 
+                else:
+                    index_matrix = index_range + inf_ind + 1
+                index_matrix = index_matrix.view(-1, 1, 1)
+                index_matrix = index_matrix.expand(-1, query_base.size(1), 
+                                                   query_base.size(2))
+                if self.args.farnear:
+                    index_matrix = index_matrix + nei_len - seq_len
+                query = torch.gather(query_base, 0, index_matrix)
+                if inf_ind is None:
+                    query = query.view(seq_len, seq_len, -1, nhid)
+                else:
+                    query = query.view(1, seq_len, -1, nhid)
+            elif self.args.query_method == "linear":
+                wise_inputs = wise_inputs[-1]
+                if not self.args.farnear:
+                    prev = prev_value.transpose(1, 2).contiguous()
+                    prev = prev.view(bsz, prev.size(2), self.args.nlayers+1, nhid)
+                    prev = prev[:,:,-1,:]
+                    prev = prev.transpose(0, 1)
+                else:
+                    prev = neighbor_mem[-1]
+                query_base = torch.cat((prev, wise_inputs), 0)
+                query_base = query_base.transpose(0, 2)
+                mask = torch.triu(query_base.new_ones(
+                                    seq_len, query_base.size(-1)), 
+                                    diagonal=1+query_base.size(-1)-seq_len)
+                if inf_ind is None:
+                    query_base = query_base.expand(seq_len, -1, -1, -1)
+                else:
+                    query_base = query_base.unsqueeze(0)
+                    mask = mask[inf_ind].unsqueeze(0)
+                mask = mask.bool()[:,None,None,:]
+                query_base = query_base.masked_fill(mask, 0)
+                query = torch.sigmoid(self.shorten(query_base))
+                query = torch.einsum("khbl->klbh", query)
+            elif self.args.query_method == "single":
+                wise_inputs = wise_inputs[-1][:,None,:,:]
+                if inf_ind is not None:
+                    wise_inputs = wise_inputs[inf_ind].unsqueeze(0)
+                query = wise_inputs
 
-        values = cache_value.transpose(1, 2).contiguous()
-
-        # look up from cache
+        ### look up from cache ###
+        
         if self.demo:
             weights, indices, words = self.cache(query, cache_key)
         else:
@@ -209,6 +182,8 @@ class CRTNModel(nn.Module):
 
         if self.args.not_weighted:
             weights = None
+
+        values = cache_value.transpose(1, 2).contiguous()
 
         output, hidden, attn_map = self.encoder(inputs, cache_info, values, weights, 
                                               indices, words, draw, neighbor_mem,
