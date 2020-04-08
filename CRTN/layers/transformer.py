@@ -449,6 +449,8 @@ class TransformerLM(nn.Module):
         
         self.corpus = corpus
         self.demo = self.args.demo
+        self.same_length = args.same_length
+        self.same_length_query = args.same_length_query
 
         self.theta = self.args.theta
 
@@ -524,6 +526,7 @@ class TransformerLM(nn.Module):
 
     def forward(self, inputs, cache_info=None, values=None, weights=None, indices=None, words=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None):
         #input shape should be seq_len * bsz or seq_len * bsz * emsize
+
         if inputs.dim() == 2:
             word_emb = self.embedding(inputs)
             seq_len, batch_size = inputs.size()
@@ -636,8 +639,13 @@ class TransformerLM(nn.Module):
             pos_indices = indices
             indice_bool = None
 
-        mask = torch.triu(word_emb.new_ones(seq_len, total_len), 
-                          diagonal=1+mem_len+nei_len) 
+        if self.same_length_query and indices is None:
+            all_ones = word_emb.new_ones(seq_len, total_len)
+            simple_mask = torch.triu(all_ones, diagonal=1+nei_len)
+            mask = simple_mask + torch.tril(all_ones, diagonal=-1)
+        else:
+            mask = torch.triu(word_emb.new_ones(seq_len, total_len), 
+                              diagonal=1+mem_len+nei_len) 
         mask = mask.bool()[:,:,None]
 
 

@@ -129,6 +129,8 @@ def parse_args():
                         help='use the same pos embeddings after clamp_len')
     parser.add_argument('--same_length', action='store_true',
                         help='use the same attn length for all tokens')
+    parser.add_argument('--same_length_query', action='store_true',
+                        help='use the same attn length for all tokens in query')
     parser.add_argument("--cache_N", type=int, default=5, 
                         help="size of Cache, default: 5")
     parser.add_argument("--cache_dk", type=int, default=240, 
@@ -652,6 +654,7 @@ def main(args):
                                                      args.theta))
             model_args.theta = args.theta
         model_args.same_length = args.same_length
+        model_args.same_length_query = args.same_length_query
 
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
@@ -784,6 +787,12 @@ def main(args):
 
                 if args.rank == 0:
                     module = model.module if args.distributed else model
+
+                    print('-' * 89)
+                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
+                          '{:8.2f}'.format(epoch, 
+                                           (time.time() - epoch_start_time),
+                                           eval_ppl))
                     if eval_ppl < best_eval_ppl:
                         best_eval_ppl = eval_ppl
                         torch.save({
@@ -793,12 +802,6 @@ def main(args):
                             }, 
                             args.savepath + "/" + args.save + "_best.pt")
                         print("save best model")
-
-                    print('-' * 89)
-                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
-                          '{:8.2f}'.format(epoch, 
-                                           (time.time() - epoch_start_time),
-                                           eval_ppl))
                     print('-' * 89)
 
                     writer.add_scalar("valid/ppl", eval_ppl, 

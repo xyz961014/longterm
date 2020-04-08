@@ -744,6 +744,12 @@ def main(args):
                 eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
                 if args.rank == 0:
+
+                    print('-' * 89)
+                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
+                          '{:8.2f}'.format(epoch, 
+                                           (time.time() - epoch_start_time),
+                                           eval_ppl))
                     if eval_ppl < best_eval_ppl:
                         best_eval_ppl = eval_ppl
                         save_dict = {
@@ -756,12 +762,6 @@ def main(args):
                         torch.save(save_dict, 
                                    args.savepath + "/" + args.save + "_best.pt")
                         print("save best model")
-
-                    print('-' * 89)
-                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
-                          '{:8.2f}'.format(epoch, 
-                                           (time.time() - epoch_start_time),
-                                           eval_ppl))
                     print('-' * 89)
 
                     writer.add_scalar("valid/ppl", eval_ppl, 

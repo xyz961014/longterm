@@ -385,7 +385,7 @@ class TransformerLM(nn.Module):
         if self.same_length:
             all_ones = word_emb.new_ones(seq_len, total_len)
             simple_mask = torch.triu(all_ones, diagonal=1+mem_len)
-            mask = simple_mask + torch.tril(all_ones, diagonal=0)
+            mask = simple_mask + torch.tril(all_ones, diagonal=-1)
         else:
             mask = torch.triu(word_emb.new_ones(seq_len, total_len), 
                               diagonal=1+mem_len)
