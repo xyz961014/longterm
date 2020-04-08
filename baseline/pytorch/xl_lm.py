@@ -129,14 +129,31 @@ def parse_args():
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--proj_init_std', type=float, default=0.01,
                         help='parameters initialized by N(0.0, proj_init_std)')
-    parser.add_argument('--epochs', type=int, default=100,
-                        help='upper epoch limit')
     parser.add_argument('--tied', action="store_true",
                         help='tied embedding weights')
+    parser.add_argument('--adaptive', action="store_true",
+                        help='use adaptive embedding and softmax')
+    parser.add_argument('--vocab_size', type=int, default=10000,
+                        help='size of vocabulary, excluding special chars')
+    parser.add_argument('--cutoffs', type=int, 
+                        default=[2000, 4000, 8000], nargs="+",
+                        help='cutoffs for adaptive embedding')
+    parser.add_argument('--div_val', type=int, default=1,
+                        help='divident value for adaptive input and softmax')
     parser.add_argument('--clamp_len', type=int, default=-1,
                         help='use the same pos embeddings after clamp_len')
     parser.add_argument('--same_length', action='store_true',
                         help='use the same attn length for all tokens')
+    # training setting
+    parser.add_argument('--std_epochs', type=int, default=150,
+                        help='number of epochs of standard training')
+    parser.add_argument('--ema_epochs', type=int, default=50,
+                        help='number of epochs with ema of params')
+    parser.add_argument('--mu', type=float, default=-1,
+                        help='mu used for EMA. set to -1 to use 1 / step.')
+    parser.add_argument('--ema_lr_mult', type=float, default=0.5,
+                        help='lr multiplier when switching to EMA.')
+
     parser.add_argument("--theta", type=float, default=1.0, 
                         help="attention theta, default: 1.0")
     parser.add_argument("--theta_annealing_alpha", type=float, default=1.0, 
@@ -147,15 +164,6 @@ def parse_args():
                         help='enable distributed multiple gpus')
     parser.add_argument('--devices', type=int, default=[0], nargs="+",
                         help='device list')
-    parser.add_argument('--adaptive', action="store_true",
-                        help='use adaptive embedding and softmax')
-    parser.add_argument('--vocab_size', type=int, default=10000,
-                        help='size of vocabulary, excluding special chars')
-    parser.add_argument('--cutoffs', type=int, 
-                        default=[2000, 4000, 8000], nargs="+",
-                        help='cutoffs for adaptive embedding')
-    parser.add_argument('--div_val', type=int, default=1,
-                        help='divident value for adaptive input and softmax')
     parser.add_argument('--seed', type=int, default=1111,
                         help='random seed')
     parser.add_argument('--log-interval', type=int, default=50, metavar='N',
@@ -212,7 +220,7 @@ def batch_division(batch_size, rank=0, world_size=None, single_value=False):
 
 
 def train(model, train_loader, valid_loader, criterion, scheduler, 
-          args, epoch, step, optimizer, best_eval_ppl, writer):
+          args, epoch, step, optimizer, best_eval_ppl, writer, ema=None):
 
     model.train()
     start_time = time.time()
@@ -267,8 +275,17 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         optimizer.step()
 
         total_loss += loss.item()
-
         step += 1
+
+        if ema is not None:
+            # parameters average
+            if args.mu < 0:
+                ema_mu = 1 / max(1, step - args.decay_steps)
+            else:
+                ema_mu = args.mu
+            for p in model.parameters():
+                ema[p].add_(p.data.sub(ema[p]).mul(ema_mu))
+
         if step <= args.warmup_steps:
             # warmup steps
             curr_lr = args.lr * step / args.warmup_steps
@@ -321,7 +338,10 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 print('-' * 60)
             start_time = time.time()
 
-    return best_eval_ppl, step
+    if ema is not None:
+        return best_eval_ppl, step, ema
+    else:
+        return best_eval_ppl, step
 
 
 
@@ -406,6 +426,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
         dist.reduce(len_eval, 0)
         total_loss = total_loss.item()
         len_eval = len_eval.item()
+    print(total_loss / len_eval)
     ppl = math.exp(total_loss / len_eval)
     model.train()
     return ppl
@@ -495,7 +516,8 @@ def main(args):
 
     datatime_end = time.time()
 
-    total_steps = len(train_loader) * args.epochs
+    decay_steps = len(train_loader) * args.std_epochs
+    args.decay_steps = decay_steps
 
     if args.load:
         # Load Model
@@ -508,9 +530,13 @@ def main(args):
         model_args.load = args.load
         model_args.adam = args.adam
         model_args.lr = args.lr
+        model_args.emb_mult = args.emb_mult
         model_args.scheduler = args.scheduler
         model_args.clip = args.clip
-        model_args.epochs = args.epochs
+        model_args.std_epochs = args.std_epochs
+        model_args.ema_epochs = args.ema_epochs
+        model_args.mu = args.mu
+        model_args.ema_lr_mult = args.ema_lr_mult
         model_args.distributed = args.distributed
         model_args.devices = args.devices
         model_args.save = args.save
@@ -546,7 +572,7 @@ def main(args):
         args = model_args
 
     if not args.eval:
-        args.theta *= (1 / args.theta_annealing_alpha) ** (total_steps // args.theta_annealing_steps)
+        args.theta *= (1 / args.theta_annealing_alpha) ** (decay_steps // args.theta_annealing_steps)
 
     #Print Params
     if args.rank == 0:
@@ -643,14 +669,14 @@ def main(args):
         criterion = nn.CrossEntropyLoss()
 
 
-    params = list(model.parameters()) + list(criterion.parameters())
     nonemb_param = list(model.layers.parameters())
     emb_param = list(model.embedding.parameters())
     if args.rank == 0:
-        all_param_num = sum([p.numel() for p in params])
         nonemb_param_num = sum([p.numel() for p in nonemb_param])
-        print("#model params = {}".format(all_param_num))
+        emb_param_num = sum([p.numel() for p in emb_param])
+        print("#model params = {}".format(nonemb_param_num + emb_param_num))
         print('#non emb params = {}'.format(nonemb_param_num))
+        print('#emb params = {}'.format(emb_param_num))
 
         if args.eval:
             print("SKIP TRAINING")
@@ -686,7 +712,7 @@ def main(args):
                                             dim=1)
 
     if args.scheduler == "cosine":
-        scheduler_steps = total_steps - args.warmup_steps
+        scheduler_steps = decay_steps - args.warmup_steps
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 
                                                          T_max=scheduler_steps,
                                                          eta_min=args.eta_min)
@@ -699,10 +725,10 @@ def main(args):
     if not args.eval:
         try:
             best_eval_ppl = float('inf')
-            best_eval_ppls = []
             train_step = 0
+            ema = dict()
             module = model.module if args.distributed else model
-            for epoch in range(1, args.epochs+1):
+            for epoch in range(1, args.std_epochs+1):
                 epoch_start_time = time.time()
                 best_eval_ppl, train_step  = train(model, 
                                                    train_loader, 
@@ -743,7 +769,67 @@ def main(args):
                                       epoch * len(train_loader))
                     writer.flush()                
 
-                    best_eval_ppls.append(eval_ppl)
+            print("Starting EMA at epoch {}".format(epoch))
+            for p in model.parameters():
+                ema[p] = p.data.clone()
+            for k in range(len(optimizer.param_groups)):
+                optimizer.param_groups[k]["lr"] *= args.ema_lr_mult
+
+            for epoch in range(args.std_epochs+1, args.epochs+1):
+                epoch_start_time = time.time()
+                best_eval_ppl, train_step, ema = train(model, 
+                                                       train_loader, 
+                                                       valid_loader, 
+                                                       criterion,
+                                                       scheduler,
+                                                       args, 
+                                                       epoch, 
+                                                       train_step,
+                                                       optimizer, 
+                                                       best_eval_ppl, 
+                                                       writer,
+                                                       ema=ema)
+                tmp = dict()
+
+                # load ema params
+                for prm in model.parameters():
+                    tmp[prm] = prm.data.clone()
+                    prm.data.copy_(ema[prm])
+
+                eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+
+                if args.rank == 0:
+                    if eval_ppl < best_eval_ppl:
+                        best_eval_ppl = eval_ppl
+                        save_dict = {
+                            "model_args": args,
+                            "model_state_dict": module.state_dict(),
+                            "criterion": criterion.state_dict()
+                            } 
+                        if args.apex:
+                            save_dict["amp"] = amp.state_dict()
+                        torch.save(save_dict, 
+                                   args.savepath + "/" + args.save + "_best.pt")
+                        print("save averaged model")
+
+                    print('-' * 89)
+                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
+                          '{:8.2f}'.format(epoch, 
+                                           (time.time() - epoch_start_time),
+                                           eval_ppl))
+                    print('-' * 89)
+
+                    writer.add_scalar("valid/ppl", eval_ppl, 
+                                      epoch * len(train_loader))
+                    writer.flush()                
+
+                # restore params
+                for prm in model.parameters():
+                    prm.data.copy_(tmp[prm])
+
+
+
+
 
         except KeyboardInterrupt:
             print('-' * 89)
@@ -814,6 +900,7 @@ if __name__ == "__main__":
     
     args.savepath = savepath
     args.timestr = timestr
+    args.epochs = args.std_epochs + args.ema_epochs
     
     if not os.path.exists("./log/" + args.save + timestr):
         os.mkdir("./log/" + args.save + timestr)

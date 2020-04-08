@@ -4,7 +4,8 @@ python xl_lm.py \
     --adam \
     --datasets ptb \
     --lr 25e-5 \
-    --epochs 50 \
+    --std_epochs 50 \
+    --ema_epochs 10 \
     --lr 0.00025 \
     --dropout 0.2 \
     --dropatt 0.2 \

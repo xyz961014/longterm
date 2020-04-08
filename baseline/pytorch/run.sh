@@ -3,7 +3,8 @@
 python xl_lm.py \
     --datasets ptb \
     --adam \
-    --epochs 200 \
+    --std_epochs 150 \
+    --ema_epochs 150 \
     --lr 3e-4 \
     --warmup_steps 3000 \
     --dropout 0.5 \
