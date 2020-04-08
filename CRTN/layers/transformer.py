@@ -221,7 +221,6 @@ class LearnableMultiheadSelfAttention(nn.Module):
             mem_num = memory.size(0)
             memory = memory.view(mem_num * memory.size(1), -1, nhid)
             mem_len = memory.size(0)
-            #memory = memory.detach()
             if not batch_size == memory.size(1):
                 memory.unsqueeze_(1)
                 memory = memory.expand(-1, batch_size // memory.size(2), -1, -1)
@@ -253,6 +252,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
                                                                 nei_len, x_len],
                                                                 dim=0)
             rel_emb_matrix = torch.cat((rel_cache, rel_inp), 0)
+
 
         heads_q = heads_q.view(heads_q.size(0), batch_size, self.num_head, self.d_head)
 
@@ -286,6 +286,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
                     BD = torch.einsum("kibnd,kjbnd->ikjbn", pre_BD, pre_rel)
                 AC_mask = indice_bool.eq(0).transpose(1, 2)[:,:,None,:,None]
                 AC.masked_fill_(AC_mask, -float("inf")) 
+
+                # if neighbor_mem is empty(0) or cache key is empty(0), mask it
+                if memory.sum(dim=[1,2]).eq(0).sum() > 0:
+                    nei_mask = neighbor_mem.eq(0).sum().eq(neighbor_mem.numel()).expand(nei_len)
+                    cache_mask = memory.eq(0).reshape(mem_len, -1).min(dim=-1)[0]
+                    mask = mask + torch.cat((cache_mask, nei_mask, mask.new_zeros(x_len)), 0).expand(mask.size(0), -1).unsqueeze(-1)
             else:
                 rel_emb_matrix = rel_emb_matrix.view(total_len, batch_size, 
                                                      self.num_head, self.d_head)
@@ -299,6 +305,11 @@ class LearnableMultiheadSelfAttention(nn.Module):
                 else:
                     AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
                     BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
+
+                # if neighbor_mem is empty(0), mask it
+                if neighbor_mem.eq(0).sum() == neighbor_mem.numel():
+                    nei_mask = torch.cat((mask.new_ones(nei_len), mask.new_zeros(x_len)), 0)
+                    mask = mask + nei_mask.expand(mask.size(0), -1).unsqueeze(-1)
                 
                 AC.unsqueeze_(1)
                 BD.unsqueeze_(1)
@@ -375,7 +386,11 @@ class LearnableMultiheadSelfAttention(nn.Module):
                 if neighbor_mem is not None and nei_len > 0:
                     attn_vec = attn_vec + nei_vec
             else:
-                attn_vec = nei_vec
+                if self.apex:
+                    attn_vec = bmm_einsum(attn_prob, heads_v, "ilbn,lbnd->ibnd")
+                else:
+                    attn_vec = torch.einsum("ilbn,lbnd->ibnd", attn_prob, heads_v)
+                attn_vec = attn_vec + nei_vec
 
         attn_vec = attn_vec.reshape(attn_vec.size(0), batch_size, 
                                     self.num_head * self.d_head)
