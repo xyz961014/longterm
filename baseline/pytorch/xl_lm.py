@@ -286,13 +286,15 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             for p in model.parameters():
                 ema[p].add_(p.data.sub(ema[p]).mul(ema_mu))
 
-        if step <= args.warmup_steps:
-            # warmup steps
-            curr_lr = args.lr * step / args.warmup_steps
-            optimizer.param_groups[0]['lr'] = curr_lr
         else:
-            if args.scheduler == "cosine":
-                scheduler.step()
+            if step <= args.warmup_steps:
+                # warmup steps
+                curr_lr = args.lr * step / args.warmup_steps
+                optimizer.param_groups[0]['lr'] = curr_lr
+                optimizer.param_groups[1]['lr'] = curr_lr * args.emb_mult
+            else:
+                if args.scheduler == "cosine":
+                    scheduler.step()
 
         if step % args.theta_annealing_steps == 0 and args.theta_annealing_alpha < 1:
             module.theta_annealing_step()
@@ -310,7 +312,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 print('| epoch {:1d} | {:5d}/{:5d} batches | lr {:02.2e} | '
                         'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
                     epoch, batch, len(train_loader), 
-                    optimizer.state_dict()["param_groups"][0]["lr"],
+                    optimizer.param_groups[0]["lr"],
                     elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
             writer.add_scalar("train/ppl", math.exp(cur_loss), 
                               batch + (epoch - 1) * len(train_loader))
