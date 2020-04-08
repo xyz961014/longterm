@@ -4,7 +4,7 @@ python xl_lm.py \
     --datasets ptb \
     --adam \
     --std_epochs 150 \
-    --ema_epochs 150 \
+    --ema_epochs 50 \
     --lr 3e-4 \
     --warmup_steps 3000 \
     --dropout 0.5 \
