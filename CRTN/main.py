@@ -155,9 +155,9 @@ def parse_args():
                         'of segments in the cache')
     parser.add_argument('--summary_method', type=str, default='no_summary', 
                         choices=['no_summary', 'max', 'mean', 'sum', 
-                                 'last_state', 'linear'],
+                                 'weighted_sum', 'last_state', 'linear'],
                         help='method to summary key of segments')
-    parser.add_argument('--query_method', type=str, default='vanilla', 
+    parser.add_argument('--query_method', type=str, default='single', 
                         choices=['last_l', 'middle_l', 'linear', 'single', 
                                  'single_linear', 'vanilla'],
                         help='method to compute query of words. vanilla indicates '

@@ -426,7 +426,6 @@ def evaluate(model, eval_loader, criterion, writer, args):
         dist.reduce(len_eval, 0)
         total_loss = total_loss.item()
         len_eval = len_eval.item()
-    print(total_loss / len_eval)
     ppl = math.exp(total_loss / len_eval)
     model.train()
     return ppl

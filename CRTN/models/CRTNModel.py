@@ -30,10 +30,18 @@ class CRTNModel(nn.Module):
 
         if args.query_method == "linear":
             if args.farnear:
-                self.shorten = nn.Linear(self.args.num_steps + self.args.neighbor_len, 
-                                         self.args.num_steps)
+                if args.summary_method == "no_summary":
+                    self.shorten = nn.Linear(args.num_steps + args.neighbor_len, 
+                                             args.num_steps)
+                elif args.summary_method == "linear":
+                    self.shorten = nn.Linear((args.num_steps + args.neighbor_len) * args.nhid, 
+                                              args.cache_dk) 
+                else:
+                    self.shorten = nn.Linear(args.num_steps + args.neighbor_len, 1) 
             else:
-                self.shorten = nn.Linear(2 * self.args.num_steps, self.args.num_steps)
+                self.shorten = nn.Linear(2 * args.num_steps, args.num_steps)
+        elif args.query_method == "single_linear":
+            self.shorten = nn.Linear(args.nhid, args.cache_dk)
 
     def to(self, device):
         super().to(device)
@@ -163,13 +171,21 @@ class CRTNModel(nn.Module):
                     mask = mask[inf_ind].unsqueeze(0)
                 mask = mask.bool()[:,None,None,:]
                 query_base = query_base.masked_fill(mask, 0)
+                if self.args.summary_method == "linear":
+                    query_base = query_base.permute(0, 2, 3, 1).reshape(seq_len, bsz, -1)
                 query = torch.sigmoid(self.shorten(query_base))
-                query = torch.einsum("khbl->klbh", query)
+                if self.args.summary_method == "linear":
+                    query = query.unsqueeze(1)
+                else:
+                    query = torch.einsum("khbl->klbh", query)
             elif self.args.query_method == "single":
                 wise_inputs = wise_inputs[-1][:,None,:,:]
                 if inf_ind is not None:
                     wise_inputs = wise_inputs[inf_ind].unsqueeze(0)
                 query = wise_inputs
+            elif self.args.query_method == "single_linear":
+                wise_inputs = wise_inputs[-1][:,None,:,:]
+                query = F.sigmoid(self.shorten(wise_inputs))
 
         ### look up from cache ###
         

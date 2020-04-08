@@ -18,6 +18,9 @@ class Cache(nn.Module):
             self.dk = self.args.num_steps * self.args.nhid
         elif self.args.summary_method in ["sum", "max", "mean", "last_state"]:
             self.dk = self.args.nhid
+        elif self.args.summary_method == "weighted_sum":
+            self.dk = self.args.nhid
+            self.summary = nn.Linear(args.num_steps, 1)
         elif self.args.summary_method == "linear":
             self.dk = self.args.cache_dk
             self.summary = nn.Linear(args.nhid * args.num_steps, args.cache_dk)
@@ -95,10 +98,16 @@ class Cache(nn.Module):
             new_key = inputs[-1].reshape(self.batch_size, -1)
         elif self.args.summary_method == "sum":
             new_key = inputs[-1].sum(dim=1)
+        elif self.args.summary_method == "max":
+            new_key, _ = inputs[-1].max(dim=1)
+        elif self.args.summary_method == "mean":
+            new_key = inputs[-1].mean(dim=1)
         elif self.args.summary_method == "last_state":
             new_key = inputs[-1,:,-1,:]
+        elif self.args.summary_method == "weighted_sum":
+            new_key = F.sigmoid(self.summary(inputs[-1].transpose(1, 2)).squeeze(-1))
         elif self.args.summary_method == "linear":
-            new_key = self.summary(inputs[-1].reshape(-1, self.L * self.dv))
+            new_key = F.sigmoid(self.summary(inputs[-1].reshape(-1, self.L * self.dv)))
 
         new_value = torch.einsum("mblh->lbmh", 
                                  inputs
