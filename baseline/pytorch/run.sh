@@ -6,7 +6,8 @@ python xl_lm.py \
     --std_epochs 150 \
     --ema_epochs 50 \
     --lr 3e-4 \
-    --warmup_steps 3000 \
+    --eta_min 6e-5 \
+    --warmup_steps 5000 \
     --dropout 0.5 \
     --dropatt 0.2 \
     --dropemb 0.2 \
@@ -19,7 +20,7 @@ python xl_lm.py \
     --nhead 10 \
     --emsize 380 \
     --nhid 380 \
-    --batch_size 10 \
+    --batch_size 20 \
     --eval_batch_size 10 \
     --num_steps 70 \
     --mem_len 70 \
