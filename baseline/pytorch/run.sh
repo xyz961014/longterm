@@ -6,7 +6,7 @@ python xl_lm.py \
     --std_epochs 150 \
     --ema_epochs 50 \
     --lr 4e-4 \
-    --eta_min46e-5 \
+    --eta_min 4e-5 \
     --warmup_steps 5000 \
     --dropout 0.5 \
     --dropatt 0.2 \
