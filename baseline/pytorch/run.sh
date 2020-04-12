@@ -5,15 +5,15 @@ python xl_lm.py \
     --adam \
     --std_epochs 150 \
     --ema_epochs 50 \
-    --lr 3e-4 \
-    --eta_min 6e-5 \
+    --lr 4e-4 \
+    --eta_min46e-5 \
     --warmup_steps 5000 \
     --dropout 0.5 \
     --dropatt 0.2 \
     --dropemb 0.2 \
     --dropinp 0.6 \
-    --dropwei 0.1 \
-    --dropfor 0.2 \
+    --dropwei 0.3 \
+    --dropfor 0.25 \
     --weight_decay 12e-7 \
     --nlayers 16 \
     --d_ff 900 \
@@ -27,7 +27,7 @@ python xl_lm.py \
     --tied \
     --seed 1111 \
     --adaptive \
-    --cutoffs 2000 4000 8000 \
+    --cutoffs 2000 4001 8000 \
     --eval_steps 3000 \
     --log-interval 200 \
     --distributed \
