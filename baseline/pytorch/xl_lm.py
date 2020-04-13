@@ -125,6 +125,8 @@ def parse_args():
                         help='batch size')
     parser.add_argument('--eval_batch_size', type=int, default=10, 
                         help='eval batch size')
+    parser.add_argument('--eval_temperature', type=float, default=1.0, 
+                        help='eval temperature, divide logits')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--proj_init_std', type=float, default=0.01,
@@ -394,7 +396,8 @@ def evaluate(model, eval_loader, criterion, writer, args):
                 if args.adaptive:
                     loss_tensor = criterion(output.view(-1, args.nhid), 
                                             targets.view(-1),
-                                            keep_order=True)
+                                            keep_order=True,
+                                            temperature=args.eval_temperature)
                     loss = loss_tensor.sum()
                 else:
                     loss = criterion(output.view(-1, args.vocab_size), 
@@ -564,6 +567,7 @@ def main(args):
 
         model_args.batch_size = args.batch_size
         model_args.eval_batch_size = args.eval_batch_size
+        model_args.eval_temperature = args.eval_temperature
 
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps

@@ -164,7 +164,7 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
 
         return logit
 
-    def forward(self, hidden, target, keep_order=False, output=False):
+    def forward(self, hidden, target, keep_order=False, output=False, temperature=1.0):
         '''
             hidden :: [len*bsz x d_proj]
             target :: [len*bsz]
@@ -176,6 +176,7 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
         if self.n_clusters == 0:
             logit = self._compute_logit(hidden, self.out_layers[0].weight,
                                         self.out_layers[0].bias, self.out_projs[0])
+            logit = logit / temperature
             nll = -F.log_softmax(logit, dim=-1) \
                     .gather(1, target.unsqueeze(1)).squeeze(1)
         else:
@@ -202,6 +203,7 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
             head_weight, head_bias, head_proj = weights[0], biases[0], self.out_projs[0]
 
             head_logit = self._compute_logit(hidden, head_weight, head_bias, head_proj)
+            head_logit = head_logit / temperature
             head_logprob = F.log_softmax(head_logit, dim=1)
 
             nll = torch.zeros_like(target,
@@ -232,9 +234,11 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                     hidden_i = hidden.index_select(0, indices_i)
 
                     tail_logit_i = self._compute_logit(hidden_i, weight_i, bias_i, proj_i)
+                    tail_logit_i = tail_logit_i / temperature
                     tail_logprob_i = F.log_softmax(tail_logit_i, dim=1)
 
                     tail_logit_output = self._compute_logit(hidden, weight_i, bias_i, proj_i)
+                    tail_logit_output = tail_logit_output / temperature
                     tail_logprob_output = F.log_softmax(tail_logit_output, dim=1)
                     tail_probs.append(tail_logprob_output)
 
