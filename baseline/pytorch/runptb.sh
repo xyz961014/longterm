@@ -9,8 +9,8 @@ python xl_lm.py \
     --eta_min 4e-5 \
     --warmup_steps 5000 \
     --dropout 0.5 \
-    --dropatt 0.2 \
-    --dropemb 0.15 \
+    --dropatt 0.15 \
+    --dropemb 0.2 \
     --dropinp 0.6 \
     --dropwei 0.3 \
     --dropfor 0.25 \
