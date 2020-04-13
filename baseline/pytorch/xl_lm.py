@@ -572,6 +572,8 @@ def main(args):
         model_args.batch_size = args.batch_size
         model_args.eval_batch_size = args.eval_batch_size
         model_args.eval_temperature = args.eval_temperature
+        model_args.eval_temp_search = args.eval_temp_search
+        model_args.eval_theta_search = args.eval_theta_search
 
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
@@ -844,15 +846,15 @@ def main(args):
             print('-' * 89)
             print('Exiting from training early')
 
-        # save final model
-        save_dict = {
-            "model_args": args,
-            "model_state_dict": module.state_dict(),
-            "criterion": criterion.state_dict()
-            } 
-        if args.apex:
-            save_dict["amp"] = amp.state_dict()
-        torch.save(save_dict, args.savepath + "/" + args.save + "_final.pt")
+        ## save final model
+        #save_dict = {
+        #    "model_args": args,
+        #    "model_state_dict": module.state_dict(),
+        #    "criterion": criterion.state_dict()
+        #    } 
+        #if args.apex:
+        #    save_dict["amp"] = amp.state_dict()
+        #torch.save(save_dict, args.savepath + "/" + args.save + "_final.pt")
 
     ### Reload best model
 
