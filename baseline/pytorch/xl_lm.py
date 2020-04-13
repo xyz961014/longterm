@@ -126,7 +126,9 @@ def parse_args():
     parser.add_argument('--eval_batch_size', type=int, default=10, 
                         help='eval batch size')
     parser.add_argument('--eval_temperature', type=float, default=1.0, 
-                        help='eval temperature, divide logits')
+                        help='eval temperature, divide logits.')
+    parser.add_argument('--eval_temp_search', action="store_true",
+                        help='search best temperature on valid set during test. 1-1.2/0.02')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--proj_init_std', type=float, default=0.01,
@@ -162,6 +164,8 @@ def parse_args():
                         help="attention theta annealing alpha, default: 1.0")
     parser.add_argument("--theta_annealing_steps", type=int, default=200, 
                         help="attention theta annealing steps, default: 200")
+    parser.add_argument('--eval_theta_search', action="store_true",
+                        help='search best theta on valid set during test. 0.8-1/0.02')
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--devices', type=int, default=[0], nargs="+",
@@ -876,6 +880,35 @@ def main(args):
     if args.distributed:
         broadcast(model)
         broadcast(criterion)
+
+    args.eval_batch_size = 1
+
+    if args.eval_temp_search:
+        best_temp_ppl = float("inf")
+        best_temp = 1.0
+        print("temperature search")
+        for temp in np.arange(1.0, 1.2, 0.02):
+            args.eval_temperature = temp
+            temp_ppl = evaluate(model, valid_loader, criterion, writer, args)
+            if temp_ppl < best_temp_ppl:
+                best_temp_ppl = temp_ppl
+                best_temp = temp
+                print("UPDATE best temp {:5.2f} | valid ppl {:8.2f}".format(temp, temp_ppl))
+        args.eval_temperature = best_temp
+
+    if args.eval_theta_search:
+        module = model.module if args.distributed else model
+        best_theta_ppl = float("inf")
+        best_theta = 1.0
+        print("theta search")
+        for theta in np.arange(1.0, 0.8, -0.02):
+            module.theta = theta
+            theta_ppl = evaluate(model, valid_loader, criterion, writer, args)
+            if theta_ppl < best_theta_ppl:
+                best_theta_ppl = theta_ppl
+                best_theta = theta
+                print("UPDATE best theta {:5.2f} | valid ppl {:8.2f}".format(theta, theta_ppl))
+        module.theta = best_theta
 
     best_eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 

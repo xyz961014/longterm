@@ -7,6 +7,7 @@ python xl_lm.py \
     --std_epochs 50 \
     --ema_epochs 10 \
     --lr 0.00025 \
+    --warmup_steps 0 \
     --dropout 0.2 \
     --dropatt 0.2 \
     --nlayers 3 \
