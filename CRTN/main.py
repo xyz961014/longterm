@@ -63,19 +63,48 @@ import ipdb
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    # data
     parser.add_argument('--data', type=str,
                         default='/home/xyz/Documents/Dataset/ptb_sample/',
                         help='location of the data corpus')
     parser.add_argument('--datasets', type=str, choices=["fromfile", "ptb", "wt103"], 
                         default="fromfile", help='load datasets from torchtext')
-    parser.add_argument('--eval', action='store_true',
-                        help='skip training')
-    parser.add_argument('--demo', action='store_true',
-                        help='demo mode')
-    parser.add_argument('--stat', action='store_true',
-                        help='stat memory choices')
+    # optimization
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
+    parser.add_argument('--lr', type=float, default=25e-5,
+                        help='initial learning rate')
+    parser.add_argument('--scheduler', type=str, default='cosine', 
+                        choices=['cosine', 'constant'],
+                        help='lr scheduler to use')
+    parser.add_argument('--eta_min', type=float, default=0.0,
+                        help='lr_min for cosine scheduler')
+    parser.add_argument('--warmup_steps', type=int, default=0,
+                        help='linear warmup steps')
+    parser.add_argument('--clip', type=float, default=0.25,
+                        help='gradient clipping')
+    # regularization
+    parser.add_argument('--weight_decay', type=float, default=1e-5,
+                        help='weight decay')
+    parser.add_argument('--alpha', type=float, default=0.2,
+                        help='alpha L2 regularization on activation')
+    parser.add_argument('--beta', type=float, default=0.1,
+                        help='beta slowness regularization applied on activiation')
+    parser.add_argument('--dropout', type=float, default=0.4,
+                        help='dropout applied to layers (0 = no dropout)')
+    parser.add_argument('--dropatt', type=float, default=0.2,
+                        help='dropout applied to attention (0 = no dropout)')
+    parser.add_argument('--dropemb', type=float, default=0.1,
+                        help='embedding dropout, random remove whole words')
+    parser.add_argument('--dropinp', type=float, default=0.66,
+                        help='input layer dropout')
+    parser.add_argument('--dropwei', type=float, default=0.1,
+                        help='linear weight dropout')
+    parser.add_argument('--dropfor', type=float, default=0.2,
+                        help='forward layers dropout')
+    parser.add_argument('--drophid', type=float, default=0.0,
+                        help='hidden layers dropout')
+    # hyperparams
     parser.add_argument('--emsize', type=int, default=256,
                         help='size of word embeddings')
     parser.add_argument('--nhid', type=int, default=256,
@@ -86,39 +115,10 @@ def parse_args():
                         help='number of heads')
     parser.add_argument('--d_ff', type=int, default=1024,
                         help='dimension of feed-forward')
-    parser.add_argument('--lr', type=float, default=25e-5,
-                        help='initial learning rate')
-    parser.add_argument('--weight_decay', type=float, default=1e-5,
-                        help='weight decay')
-    parser.add_argument('--scheduler', type=str, default='cosine', 
-                        choices=['cosine', 'constant'],
-                        help='lr scheduler to use')
-    parser.add_argument('--eta_min', type=float, default=0.0,
-                        help='lr_min for cosine scheduler')
-    parser.add_argument('--warmup_steps', type=int, default=0,
-                        help='linear warmup steps')
-    parser.add_argument('--clip', type=float, default=0.25,
-                        help='gradient clipping')
-    parser.add_argument('--epochs', type=int, default=100,
-                        help='upper epoch limit')
-    parser.add_argument('--batch_size', type=int, default=50, metavar='N',
-                        help='batch size')
-    parser.add_argument('--eval_batch_size', type=int, default=10, 
-                        help='eval batch size')
     parser.add_argument('--num_steps', type=int, default=20,
                         help='sequence length')
-    parser.add_argument('--dropout', type=float, default=0.4,
-                        help='dropout applied to layers (0 = no dropout)')
-    parser.add_argument('--dropatt', type=float, default=0.2,
-                        help='dropout applied to attention (0 = no dropout)')
-    parser.add_argument('--dropemb', type=float, default=0.1,
-                        help='embedding dropout, random remove whole words')
-    parser.add_argument('--dropinp', type=float, default=0.65,
-                        help='input layer dropout')
-    parser.add_argument('--dropwei', type=float, default=0.5,
-                        help='linear weight dropout')
-    parser.add_argument('--drophid', type=float, default=0.3,
-                        help='hidden layers dropout')
+    parser.add_argument('--batch_size', type=int, default=50, metavar='N',
+                        help='batch size')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--proj_init_std', type=float, default=0.01,
@@ -137,14 +137,6 @@ def parse_args():
                         help="dimension of key, default: 240")
     parser.add_argument("--cache_k", type=int, default=3, 
                         help="select top k values, default: 3")
-    parser.add_argument("--theta", type=float, default=1.0, 
-                        help="attention theta, default: 1.0")
-    parser.add_argument("--theta_annealing_alpha", type=float, default=1.0, 
-                        help="attention theta annealing alpha, default: 1.0")
-    parser.add_argument("--theta_annealing_steps", type=int, default=200, 
-                        help="attention theta annealing steps, default: 200")
-    parser.add_argument('--distributed', action="store_true",
-                        help='enable distributed multiple gpus')
     parser.add_argument('--adaptive', action="store_true",
                         help='use adaptive embedding and softmax')
     parser.add_argument('--vocab_size', type=int, default=10000,
@@ -155,16 +147,16 @@ def parse_args():
     parser.add_argument('--max_pooling', action="store_true",
                         help='use max pooling to justice importance' 
                         'of segments in the cache')
-    parser.add_argument('--summary_method', type=str, default='no_summary', 
-                        choices=['no_summary', 'max', 'mean', 'sum', 
-                                 'weighted_sum', 'last_state', 'linear'],
-                        help='method to summary key of segments')
     parser.add_argument('--query_method', type=str, default='single', 
                         choices=['last_l', 'middle_l', 'linear', 'single', 
                                  'single_linear', 'vanilla'],
                         help='method to compute query of words. vanilla indicates '
                         'use current segment to query, other methods link previous '
                         'segment.')
+    parser.add_argument('--summary_method', type=str, default='no_summary', 
+                        choices=['no_summary', 'max', 'mean', 'sum', 
+                                 'weighted_sum', 'last_state', 'linear'],
+                        help='method to summary key of segments')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
     parser.add_argument('--farnear', action="store_true",
@@ -184,16 +176,47 @@ def parse_args():
                         help='compute position encoding according to realtime pos')
     parser.add_argument('--div_val', type=int, default=1,
                         help='divident value for adaptive input and softmax')
-    parser.add_argument('--seed', type=int, default=1111,
-                        help='random seed')
+    # training setting
+    parser.add_argument('--std_epochs', type=int, default=150,
+                        help='number of epochs of standard training')
+    parser.add_argument('--ema_epochs', type=int, default=50,
+                        help='number of epochs with ema of params')
+    parser.add_argument('--mu', type=float, default=-1,
+                        help='mu used for EMA. set to -1 to use 1 / step.')
+    parser.add_argument("--theta_annealing_alpha", type=float, default=1.0, 
+                        help="attention theta annealing alpha, default: 1.0")
+    parser.add_argument("--theta_annealing_steps", type=int, default=200, 
+                        help="attention theta annealing steps, default: 200")
+    parser.add_argument('--distributed', action="store_true",
+                        help='enable distributed multiple gpus')
     parser.add_argument('--devices', type=int, default=[0], nargs="+",
                         help='device list')
+    # eval setting
+    parser.add_argument('--eval_batch_size', type=int, default=10, 
+                        help='eval batch size')
+    parser.add_argument('--eval_steps', type=int, default=2000, metavar='N',
+                        help='evaluation steps')
+    parser.add_argument('--eval_temperature', type=float, default=1.0, 
+                        help='eval temperature, divide logits.')
+    parser.add_argument('--eval_temp_search', action="store_true",
+                        help='search best temperature on valid set during test. 1-1.2/0.02')
+    parser.add_argument('--eval_theta_search', action="store_true",
+                        help='search best theta on valid set during test. 0.8-1/0.02')
+    # setting
+    parser.add_argument("--theta", type=float, default=1.0, 
+                        help="attention theta, default: 1.0")
+    parser.add_argument('--eval', action='store_true',
+                        help='skip training')
+    parser.add_argument('--demo', action='store_true',
+                        help='demo mode')
+    parser.add_argument('--stat', action='store_true',
+                        help='stat memory choices')
+    parser.add_argument('--seed', type=int, default=1111,
+                        help='random seed')
     parser.add_argument('--log-interval', type=int, default=50, metavar='N',
                         help='report interval')
     parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
-    parser.add_argument('--eval_steps', type=int, default=2000, metavar='N',
-                        help='evaluation steps')
     parser.add_argument('--word_loss', action="store_true",
                         help='output loss of every word')
     parser.add_argument('--compare_farnear', action="store_true",
@@ -270,7 +293,7 @@ def update_cache(model, batch_size, key, value, hidden, text, cache_info):
 
 
 def train(model, train_loader, valid_loader, criterion, scheduler, 
-          args, epoch, step, optimizer, best_eval_ppl, writer):
+          args, epoch, step, optimizer, best_eval_ppl, writer, ema=None):
 
     model.train()
     start_time = time.time()
@@ -323,6 +346,14 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         else:
             loss = criterion(output.reshape(-1, args.vocab_size), targets.reshape(-1))
 
+        # Activiation Regularization
+        if args.alpha:
+            loss = loss + args.alpha * output.pow(2).mean()
+
+        # Temporal Activation Regularization (slowness)
+        if args.beta:
+            loss = loss + args.beta * (output[1:] - output[:-1]).pow(2).mean()
+
         if args.apex:
             with amp.scale_loss(loss, optimizer) as scaled_loss:
                 scaled_loss.backward()
@@ -335,12 +366,22 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         total_loss += loss.item()
 
         step += 1
-        if step <= args.warmup_steps:
-            curr_lr = args.lr * step / args.warmup_steps
-            optimizer.param_groups[0]['lr'] = curr_lr
+        if ema is not None:
+            # parameters average
+            if args.mu < 0:
+                ema_mu = 1 / max(1, step - args.decay_steps)
+            else:
+                ema_mu = args.mu
+            for p in model.parameters():
+                ema[p].add_(p.data.sub(ema[p]).mul(ema_mu))
         else:
-            if args.scheduler == "cosine":
-                scheduler.step()
+            if step <= args.warmup_steps:
+                # warmup steps
+                curr_lr = args.lr * step / args.warmup_steps
+                optimizer.param_groups[0]['lr'] = curr_lr
+            else:
+                if args.scheduler == "cosine":
+                    scheduler.step()
 
         if step % args.theta_annealing_steps == 0 and args.theta_annealing_alpha < 1:
             module.theta_annealing_step()
@@ -386,7 +427,10 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 print('-' * 60)
             start_time = time.time()
 
-    return best_eval_ppl, step
+    if ema is not None:
+        return best_eval_ppl, step, ema
+    else:
+        return best_eval_ppl, step
 
 
 def evaluate(model, eval_loader, criterion, writer, args):
@@ -458,7 +502,8 @@ def evaluate(model, eval_loader, criterion, writer, args):
                 if args.adaptive:
                     loss_tensor = criterion(output.view(-1, args.nhid), 
                                             targets.view(-1),
-                                            keep_order=True)
+                                            keep_order=True,
+                                            temperature=args.eval_temperature)
                     loss = loss_tensor.sum()
                 else:
                     loss = criterion(output.view(-1, args.vocab_size), 
@@ -598,7 +643,8 @@ def main(args):
     print("Data loading finished. time: {:.3f} s".format(data_time))
     train_loader, valid_loader, test_loader = datasets
 
-    total_steps = len(train_loader) * args.epochs
+    decay_steps = len(train_loader) * args.std_epochs
+    args.decay_steps = decay_steps
 
     if args.load:
         # Load Model
@@ -614,7 +660,9 @@ def main(args):
         model_args.lr = args.lr
         model_args.scheduler = args.scheduler
         model_args.clip = args.clip
-        model_args.epochs = args.epochs
+        model_args.std_epochs = args.std_epochs
+        model_args.ema_epochs = args.ema_epochs
+        model_args.mu = args.mu
         model_args.distributed = args.distributed
         model_args.apex = args.apex
         model_args.devices = args.devices
@@ -659,12 +707,15 @@ def main(args):
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
         model_args.word_loss = args.word_loss
+        model_args.eval_temperature = args.eval_temperature
+        model_args.eval_temp_search = args.eval_temp_search
+        model_args.eval_theta_search = args.eval_theta_search
 
         args = model_args
         
     args.mem_len = args.cache_k * args.num_steps
     if not args.eval:
-        args.theta *= (1 / args.theta_annealing_alpha) ** (total_steps // args.theta_annealing_steps)
+        args.theta *= (1 / args.theta_annealing_alpha) ** (decay_steps // args.theta_annealing_steps)
 
     #Print Params
     if args.rank == 0:
@@ -754,7 +805,7 @@ def main(args):
         model.set_batch_size(args.batch_size)
     
     if args.scheduler == "cosine":
-        scheduler_steps = total_steps - args.warmup_steps
+        scheduler_steps = decay_steps - args.warmup_steps
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, 
                                                          T_max=scheduler_steps,
                                                          eta_min=args.eta_min)
@@ -769,7 +820,9 @@ def main(args):
             best_eval_ppl = float('inf')
             best_eval_ppls = []
             train_step = 0
-            for epoch in range(1, args.epochs+1):
+            ema = dict()
+            module = model.module if args.distributed else model
+            for epoch in range(1, args.std_epochs+1):
                 epoch_start_time = time.time()
                 best_eval_ppl, train_step = train(model, 
                                                   train_loader, 
@@ -786,7 +839,6 @@ def main(args):
                 eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
                 if args.rank == 0:
-                    module = model.module if args.distributed else model
 
                     print('-' * 89)
                     print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
@@ -809,6 +861,63 @@ def main(args):
                     writer.flush()
                 
                     best_eval_ppls.append(eval_ppl)
+
+            print("Starting EMA at epoch {}".format(epoch))
+            for p in model.parameters():
+                ema[p] = p.data.clone()
+
+            for epoch in range(args.std_epochs+1, args.epochs+1):
+                epoch_start_time = time.time()
+                best_eval_ppl, train_step, ema = train(model, 
+                                                       train_loader, 
+                                                       valid_loader, 
+                                                       criterion,
+                                                       scheduler,
+                                                       args, 
+                                                       epoch, 
+                                                       train_step,
+                                                       optimizer, 
+                                                       best_eval_ppl, 
+                                                       writer,
+                                                       ema=ema)
+                tmp = dict()
+
+                # load ema params
+                for prm in model.parameters():
+                    tmp[prm] = prm.data.clone()
+                    prm.data.copy_(ema[prm])
+
+                eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+
+                if args.rank == 0:
+                    if eval_ppl < best_eval_ppl:
+                        best_eval_ppl = eval_ppl
+                        save_dict = {
+                            "model_args": args,
+                            "model_state_dict": module.state_dict(),
+                            "criterion": criterion.state_dict()
+                            } 
+                        if args.apex:
+                            save_dict["amp"] = amp.state_dict()
+                        torch.save(save_dict, 
+                                   args.savepath + "/" + args.save + "_best.pt")
+                        print("save averaged model")
+
+                    print('-' * 89)
+                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
+                          '{:8.2f}'.format(epoch, 
+                                           (time.time() - epoch_start_time),
+                                           eval_ppl))
+                    print('-' * 89)
+
+                    writer.add_scalar("valid/ppl", eval_ppl, 
+                                      epoch * len(train_loader))
+                    writer.flush()                
+
+                # restore params
+                for prm in model.parameters():
+                    prm.data.copy_(tmp[prm])
+
 
         except KeyboardInterrupt:
             print('-' * 89)
@@ -839,6 +948,36 @@ def main(args):
         broadcast(model)
         broadcast(criterion)
 
+    if args.eval_temp_search:
+        best_temp_ppl = float("inf")
+        best_temp = 1.0
+        print("temperature search")
+        for temp in np.arange(1.0, 1.2, 0.02):
+            args.eval_temperature = temp
+            temp_ppl = evaluate(model, valid_loader, criterion, writer, args)
+            if temp_ppl < best_temp_ppl:
+                best_temp_ppl = temp_ppl
+                best_temp = temp
+                print("UPDATE best temp {:5.2f} | valid ppl {:8.2f}".format(temp, temp_ppl))
+            else:
+                break
+        args.eval_temperature = best_temp
+
+    if args.eval_theta_search:
+        module = model.module if args.distributed else model
+        best_theta_ppl = float("inf")
+        best_theta = 1.0
+        print("theta search")
+        for theta in np.arange(1.0, 0.8, -0.02):
+            module.theta = theta
+            theta_ppl = evaluate(model, valid_loader, criterion, writer, args)
+            if theta_ppl < best_theta_ppl:
+                best_theta_ppl = theta_ppl
+                best_theta = theta
+                print("UPDATE best theta {:5.2f} | valid ppl {:8.2f}".format(theta, theta_ppl))
+            else:
+                break
+        module.theta = best_theta
 
     best_eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
@@ -869,6 +1008,7 @@ if __name__ == "__main__":
 
     args.savepath = savepath
     args.timestr = timestr
+    args.epochs = args.std_epochs + args.ema_epochs
     
     if not os.path.exists("./log/" + args.save + timestr):
         os.mkdir("./log/" + args.save + timestr)

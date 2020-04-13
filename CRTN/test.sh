@@ -3,7 +3,7 @@
 python main.py \
     --adam \
     --datasets ptb \
-    --epochs 50 \
+    --std_epochs 50 \
     --lr 25e-5 \
     --dropout 0.2 \
     --dropatt 0.2 \

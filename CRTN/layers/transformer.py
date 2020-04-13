@@ -77,7 +77,7 @@ def bmm_einsum(tensor1, tensor2, eqn="ibnd,jbnd->ijbn"):
 
 
 class PostionwiseFF(nn.Module):
-    def __init__(self, d_model, d_ff, drophid, apex=False):
+    def __init__(self, d_model, d_ff, dropfor, apex=False):
         super().__init__()
 
         self.d_model = d_model
@@ -86,9 +86,9 @@ class PostionwiseFF(nn.Module):
         self.FFNet = nn.Sequential(
                 nn.Linear(d_model, d_ff),
                 nn.ReLU(inplace=True),
-                LockedDropout(drophid),
+                LockedDropout(dropfor),
                 nn.Linear(d_ff, d_model),
-                LockedDropout(drophid)
+                LockedDropout(dropfor)
                 )
 
         if apex:
@@ -163,16 +163,15 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropout, dropatt, dropwei, drophid, apex=False):
+    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, apex=False):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
         self.d_head = d_head
         self.apex = apex
 
-        self.dropout = nn.Dropout(dropout)
         self.dropatt = nn.Dropout(dropatt)
-        self.drophid = LockedDropout(drophid)
+        self.dropattout = LockedDropout(dropatt)
 
         #self.lin_q = nn.Linear(d_model, num_head * d_head, bias=False)
         #self.lin_kv = nn.Linear(d_model, 2 * num_head * d_head, bias=False)
@@ -396,7 +395,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
                                     self.num_head * self.d_head)
 
         attn_out = self.lin_o(attn_vec)
-        attn_out = self.drophid(attn_out)
+        attn_out = self.dropattout(attn_out)
 
         output = self.layer_norm(x + attn_out)
 
@@ -414,16 +413,15 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, dropout, dropatt, dropwei, drophid, apex):
+    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, apex):
         super().__init__()
 
 
-        self.attn = LearnableMultiheadSelfAttention(num_head, d_model, 
-                                                    d_head, dropout, dropatt, 
-                                                    dropwei, drophid, apex)
+        self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropatt, 
+                                                    dropwei, apex)
 
 
-        self.pos_ff = PostionwiseFF(d_model, d_ff, drophid, apex)
+        self.pos_ff = PostionwiseFF(d_model, d_ff, dropfor, apex)
 
     def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, indices=None, weights=None, neighbor_mem=None, inf_ind=None, theta=1.0):
         
@@ -487,6 +485,7 @@ class TransformerLM(nn.Module):
 
         self.pos_emb = PositionalEmbedding(d_model)
 
+        self.drophid = LockedDropout(args.drophid)
         self.dropout = LockedDropout(args.dropout)
         self.dropinp = LockedDropout(args.dropinp)
 
@@ -508,10 +507,9 @@ class TransformerLM(nn.Module):
                 d_model=d_model,
                 d_head=d_head,
                 d_ff=d_ff,
-                dropout=args.dropout,
                 dropatt=args.dropatt,
                 dropwei=args.dropwei,
-                drophid=args.drophid,
+                dropfor=args.dropfor,
                 apex=args.apex))
 
 
@@ -722,8 +720,11 @@ class TransformerLM(nn.Module):
                                               theta=self.theta)
 
 
-            mem = core_out
-            memories.append(mem)
+            if i < len(self.layers) - 1:
+                core_out = self.drophid(core_out)
+            else:
+                core_out = self.dropout(core_out)
+            memories.append(core_out)
 
         memories = torch.cat(memories, 0)
         memories = memories.view(self.args.nlayers+1, core_out.size(0), -1, 
@@ -734,10 +735,6 @@ class TransformerLM(nn.Module):
         else:
             attn_map = None
 
-
-
-        core_out = self.dropout(core_out)
-        
         if not self.args.adaptive:
             output = self.decoder(core_out)
             output = self.dropout(output)

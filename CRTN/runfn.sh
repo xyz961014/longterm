@@ -3,7 +3,7 @@
 python main.py \
     --datasets ptb \
     --adam \
-    --epochs 200 \
+    --std_epochs 200 \
     --lr 8e-4 \
     --warmup_steps 20000 \
     --dropout 0.6 \

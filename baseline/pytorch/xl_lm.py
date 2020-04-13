@@ -64,11 +64,6 @@ def parse_args():
                         help='location of the data corpus')
     parser.add_argument('--datasets', type=str, choices=["fromfile", "ptb", "wt103"], 
                         default="fromfile", help='load datasets from torchtext')
-    # setting
-    parser.add_argument('--eval', action='store_true',
-                        help='skip training')
-    parser.add_argument('--demo', action='store_true',
-                        help='demo mode')
     # optimization
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
@@ -123,12 +118,6 @@ def parse_args():
                         help='length of memory')
     parser.add_argument('--batch_size', type=int, default=10, metavar='N',
                         help='batch size')
-    parser.add_argument('--eval_batch_size', type=int, default=10, 
-                        help='eval batch size')
-    parser.add_argument('--eval_temperature', type=float, default=1.0, 
-                        help='eval temperature, divide logits.')
-    parser.add_argument('--eval_temp_search', action="store_true",
-                        help='search best temperature on valid set during test. 1-1.2/0.02')
     parser.add_argument('--init_std', type=float, default=0.02,
                         help='parameters initialized by N(0.0, init_std)')
     parser.add_argument('--proj_init_std', type=float, default=0.01,
@@ -157,25 +146,36 @@ def parse_args():
                         help='mu used for EMA. set to -1 to use 1 / step.')
     parser.add_argument('--ema_lr_mult', type=float, default=0.5,
                         help='lr multiplier when switching to EMA.')
-
-    parser.add_argument("--theta", type=float, default=1.0, 
-                        help="attention theta, default: 1.0")
     parser.add_argument("--theta_annealing_alpha", type=float, default=1.0, 
                         help="attention theta annealing alpha, default: 1.0")
     parser.add_argument("--theta_annealing_steps", type=int, default=200, 
                         help="attention theta annealing steps, default: 200")
-    parser.add_argument('--eval_theta_search', action="store_true",
-                        help='search best theta on valid set during test. 0.8-1/0.02')
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--devices', type=int, default=[0], nargs="+",
                         help='device list')
+    # eval setting
+    parser.add_argument('--eval_batch_size', type=int, default=10, 
+                        help='eval batch size')
+    parser.add_argument('--eval_temperature', type=float, default=1.0, 
+                        help='eval temperature, divide logits.')
+    parser.add_argument('--eval_temp_search', action="store_true",
+                        help='search best temperature on valid set during test. 1-1.2/0.02')
+    parser.add_argument('--eval_theta_search', action="store_true",
+                        help='search best theta on valid set during test. 0.8-1/0.02')
+    parser.add_argument('--eval_steps', type=int, default=2000, metavar='N',
+                        help='evaluation steps')
+    # setting
+    parser.add_argument('--eval', action='store_true',
+                        help='skip training')
+    parser.add_argument('--demo', action='store_true',
+                        help='demo mode')
+    parser.add_argument("--theta", type=float, default=1.0, 
+                        help="attention theta, default: 1.0")
     parser.add_argument('--seed', type=int, default=1111,
                         help='random seed')
     parser.add_argument('--log-interval', type=int, default=50, metavar='N',
                         help='report interval')
-    parser.add_argument('--eval_steps', type=int, default=2000, metavar='N',
-                        help='evaluation steps')
     parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
     parser.add_argument('--word_loss', action="store_true",
@@ -269,7 +269,6 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         if args.beta:
             loss = loss + args.beta * (output[1:] - output[:-1]).pow(2).mean()
 
-
         if args.apex:
             with amp.scale_loss(loss, optimizer) as scaled_loss:
                 scaled_loss.backward()
@@ -291,7 +290,6 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 ema_mu = args.mu
             for p in model.parameters():
                 ema[p].add_(p.data.sub(ema[p]).mul(ema_mu))
-
         else:
             if step <= args.warmup_steps:
                 # warmup steps
@@ -839,9 +837,6 @@ def main(args):
                     prm.data.copy_(tmp[prm])
 
 
-
-
-
         except KeyboardInterrupt:
             print('-' * 89)
             print('Exiting from training early')
@@ -883,8 +878,6 @@ def main(args):
         broadcast(model)
         broadcast(criterion)
 
-    args.eval_batch_size = 1
-
     if args.eval_temp_search:
         best_temp_ppl = float("inf")
         best_temp = 1.0
@@ -896,6 +889,8 @@ def main(args):
                 best_temp_ppl = temp_ppl
                 best_temp = temp
                 print("UPDATE best temp {:5.2f} | valid ppl {:8.2f}".format(temp, temp_ppl))
+            else:
+                break
         args.eval_temperature = best_temp
 
     if args.eval_theta_search:
@@ -910,6 +905,8 @@ def main(args):
                 best_theta_ppl = theta_ppl
                 best_theta = theta
                 print("UPDATE best theta {:5.2f} | valid ppl {:8.2f}".format(theta, theta_ppl))
+            else:
+                break
         module.theta = best_theta
 
     best_eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
