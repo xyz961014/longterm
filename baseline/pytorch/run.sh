@@ -7,8 +7,8 @@ python xl_lm.py \
     --ema_epochs 50 \
     --lr 8e-4 \
     --eta_min 1e-4 \
-    --emb_mult 1 \
-    --ema_lr_mult 1 \
+    --emb_mult 2 \
+    --ema_lr_mult 0.5 \
     --alpha 0 \
     --beta 0 \
     --warmup_steps 20000 \
@@ -33,7 +33,7 @@ python xl_lm.py \
     --adaptive \
     --cutoffs 2000 4000 8000 \
     --eval_steps 3000 \
-    --log-interval 200 \
+    --log-interval 100 \
     --distributed \
     --save base \
     ${@:1}
