@@ -6,12 +6,14 @@ import collections
 import os
 import sys
 import re
+import math
 #import mosestokenizer
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import DataLoader
 from torchtext import data, datasets
+from torchtext.data import Batch, Dataset
 import ipdb
 
 UNK_token = 0  # Unknown word token
@@ -155,7 +157,7 @@ def ptb_raw_data(data_path=None):
     return train_data, valid_data, test_data, voc
 
 
-class textDataset(Dataset):
+class textDataset(torch.utils.data.Dataset):
     
     def __init__(self, raw_data, batch_size=20, num_steps=35, transform=None):
         self.raw_data = raw_data
@@ -216,6 +218,10 @@ class TextDataset(object):
         return data.BPTTIterator(self.train_dataset, batch_size, self.num_steps,
                                  **kwargs)
 
+    def randomlen_train_loader(self, batch_size, **kwargs):
+        return RandomLengthBPTTIterator(self.train_dataset, batch_size, self.num_steps,
+                                 **kwargs)
+
     def get_valid_loader(self, batch_size, **kwargs):
         return data.BPTTIterator(self.valid_dataset, batch_size, self.num_steps,
                                  train=False, shuffle=False, sort=False,
@@ -226,30 +232,97 @@ class TextDataset(object):
                                  train=False, shuffle=False, sort=False,
                                  **kwargs)
 
+class ExistingDataset(object):
+    def __init__(self, name, num_steps):
+        super().__init__()
+        self.num_steps = num_steps
+        
+        self.TEXT = data.Field(sequential=True)
+        if name == "ptb":
+            self.train_set, self.valid_set, self.test_set = datasets.PennTreebank.splits(self.TEXT)
+        elif name == "wt2":
+            self.train_set, self.valid_set, self.test_set = datasets.WikiText2.splits(self.TEXT)
+        elif name == "wt103":
+            self.train_set, self.valid_set, self.test_set = datasets.WikiText103.splits(self.TEXT)
 
-def main():
-    data_path = "/home/xyz/Documents/Dataset/ptb_sample/"
-    corpus = TextDataset(data_path, 1e6, 20)
-    print(len(corpus.TEXT.vocab.itos))
-    ipdb.set_trace()
-    #for i, (data, target) in enumerate(train_loader):
-    #    if i == 1:
-    #        for b in data:
-    #            print("")
-    #            for w in b:
-    #                print(corpus.vocabulary.index2word[w.item()], end=" ")
-    #print(corpus.train_data.data.shape)
-    #train_data, valid_data, test_data, voc = ptb_raw_data(data_path)
-    #traindataset = textDataset(train_data, 10, 5)
-    #validdataset = textDataset(valid_data, 5, 3)
-    #testdataset = textDataset(test_data, 10, 5)
-    #train_loader = DataLoader(traindataset, batch_size=20, shuffle=False, num_workers=4)
-    #valid_loader = DataLoader(validdataset, batch_size=5, shuffle=False, num_workers=4)
-    ##print(len(traindataset))
-    ##print(valid_data)
-    #for i, (data, target) in enumerate(corpus.get_train_loader()):
-    #    print(data.shape, target.shape)
+        self.TEXT.build_vocab(self.train_set)
+
+    def get_train_loader(self, batch_size, **kwargs):
+        return data.BPTTIterator(self.train_set, batch_size, self.num_steps,
+                                 **kwargs)
+
+    def get_valid_loader(self, batch_size, **kwargs):
+        return data.BPTTIterator(self.valid_set, batch_size, self.num_steps,
+                                 train=False, shuffle=False, sort=False,
+                                 **kwargs)
+
+    def get_test_loader(self, batch_size, **kwargs):
+        return data.BPTTIterator(self.test_set, batch_size, self.num_steps,
+                                 train=False, shuffle=False, sort=False,
+                                 **kwargs)
+
+    def randomlen_train_loader(self, batch_size, **kwargs):
+        return RandomLengthBPTTIterator(self.train_set, batch_size, self.num_steps,
+                                 **kwargs)
+
+
+
+class RandomLengthBPTTIterator(data.Iterator):
+    def __init__(self, dataset, batch_size, bptt_len, mem_nonzero=False, **kwargs):
+        self.bptt_len = bptt_len
+        self.mem_len = 0
+        self.mem_nonzero = mem_nonzero
+        super().__init__(dataset, batch_size, **kwargs)
+
+    def __len__(self):
+        return math.ceil((len(self.dataset[0].text) / self.batch_size - 1)
+                         / self.bptt_len)
+
+    def __iter__(self):
+        text = self.dataset[0].text
+        TEXT = self.dataset.fields['text']
+        TEXT.eos_token = None
+        text = text + ([TEXT.pad_token] * int(math.ceil(len(text) / self.batch_size)
+                                              * self.batch_size - len(text)))
+        _data = TEXT.numericalize([text], device=self.device)
+        _data = _data.view(self.batch_size, -1).t().contiguous()
+        dataset = Dataset(examples=self.dataset.examples, fields=[
+            ('text', TEXT), ('target', TEXT)])
+        while True:
+            i = 0
+            while i < len(_data) - 1:
+                self.iterations += 1
+
+                bptt = self.bptt_len if np.random.random() < 0.95 else self.bptt_len / 2.
+                seq_len = max(5, int(np.random.normal(bptt, 5)))
+                if self.mem_nonzero:
+                    seq_len = max(self.bptt_len - self.mem_len + 5, seq_len)
+                seq_len = min(seq_len, len(_data) - i - 1)
+
+                batch_text = _data[i:i + seq_len]
+                batch_target = _data[i + 1:i + 1 + seq_len]
+
+                if TEXT.batch_first:
+                    batch_text = batch_text.t().contiguous()
+                    batch_target = batch_target.t().contiguous()
+                yield Batch.fromvars(
+                    dataset, self.batch_size,
+                    text=batch_text,
+                    target=batch_target)
+
+                i += seq_len
+                self.mem_len = max(self.mem_len + seq_len - self.bptt_len, 0) 
+            if not self.repeat:
+                return
+
+
         
 
 if __name__ == "__main__":
-    main()
+    TEXT = data.Field(sequential=True)
+    ptb_train, ptb_valid, ptb_test = datasets.PennTreebank.splits(TEXT)
+    TEXT.build_vocab(ptb_train)
+    iterator = RandomLengthBPTTIterator(ptb_train, bptt_len=10, batch_size=10)
+    for d in iterator:
+        print(iterator.mem_len, d.text.size(0))
+        ipdb.set_trace()

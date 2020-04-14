@@ -25,7 +25,7 @@ import torchtext
 
 from torch.utils.data import DataLoader
 
-from CRTN.data.dataloader import TextDataset
+from CRTN.data.dataloader import TextDataset, ExistingDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from CRTN.utils.visual import TargetText
 from transformer import TransformerLM
@@ -150,6 +150,8 @@ def parse_args():
                         help="attention theta annealing alpha, default: 1.0")
     parser.add_argument("--theta_annealing_steps", type=int, default=200, 
                         help="attention theta annealing steps, default: 200")
+    parser.add_argument('--random_seq_len', action="store_true",
+                        help='random sequence length rather than fixed')
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--devices', type=int, default=[0], nargs="+",
@@ -162,7 +164,7 @@ def parse_args():
     parser.add_argument('--eval_temp_search', action="store_true",
                         help='search best temperature on valid set during test. 1-1.2/0.02')
     parser.add_argument('--eval_theta_search', action="store_true",
-                        help='search best theta on valid set during test. 0.8-1/0.02')
+                        help='search best theta on valid set during test. 0.7-1/0.02')
     parser.add_argument('--eval_steps', type=int, default=2000, metavar='N',
                         help='evaluation steps')
     # setting
@@ -240,8 +242,8 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
     memory = None
 
     for batch, data in enumerate(train_loader):
-        if not data.text.size(0) == args.num_steps:
-            continue
+        #if not data.text.size(0) == args.num_steps:
+        #    continue
 
         if args.distributed:
             batch_start, batch_end = batch_division(data.target.size(1), 
@@ -376,9 +378,9 @@ def evaluate(model, eval_loader, criterion, writer, args):
     with torch.no_grad():
         with tqdm(total=total_len) as pbar:
             for i, data in enumerate(eval_loader):
-                if not data.text.size(0) == args.num_steps:
-                    pbar.update(1)
-                    continue
+                #if not data.text.size(0) == args.num_steps:
+                #    pbar.update(1)
+                #    continue
                                
                 if args.distributed:
                     eval_batch_size = data.text.size(1)
@@ -487,27 +489,39 @@ def main(args):
     if args.datasets == "ptb":
         if args.rank == 0:
             print("Loading %s dataset from torchtext" % args.datasets)
-        train_loader, _, _ = torchtext.datasets.PennTreebank.iters(
-                batch_size=args.batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
-        _, valid_loader, test_loader = torchtext.datasets.PennTreebank.iters(
-                batch_size=args.eval_batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
+        if args.random_seq_len:
+            corpus = ExistingDataset("ptb", args.num_steps)
+            train_loader = corpus.randomlen_train_loader(args.batch_size)
+            valid_loader = corpus.get_valid_loader(args.eval_batch_size)
+            test_loader = corpus.get_test_loader(args.eval_batch_size)
+        else:
+            train_loader, _, _ = torchtext.datasets.PennTreebank.iters(
+                    batch_size=args.batch_size, 
+                    device=torch.device("cpu"),
+                    bptt_len=args.num_steps)
+            _, valid_loader, test_loader = torchtext.datasets.PennTreebank.iters(
+                    batch_size=args.eval_batch_size, 
+                    device=torch.device("cpu"),
+                    bptt_len=args.num_steps)
         vocab = train_loader.dataset.fields["text"].vocab
         args.vocab_size = len(vocab.itos)
     elif args.datasets == "wt103":
         if args.rank == 0:
             print("Loading %s dataset from torchtext" % args.datasets)
-        train_loader, _, _ = torchtext.datasets.WikiText103.iters(
-                batch_size=args.batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
-        _, valid_loader, test_loader = torchtext.datasets.WikiText103.iters(
-                batch_size=args.eval_batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
+        if args.random_seq_len:
+            corpus = ExistingDataset("wt103", args.num_steps)
+            train_loader = corpus.randomlen_train_loader(args.batch_size)
+            valid_loader = corpus.get_valid_loader(args.eval_batch_size)
+            test_loader = corpus.get_test_loader(args.eval_batch_size)
+        else:
+            train_loader, _, _ = torchtext.datasets.WikiText103.iters(
+                    batch_size=args.batch_size, 
+                    device=torch.device("cpu"),
+                    bptt_len=args.num_steps)
+            _, valid_loader, test_loader = torchtext.datasets.WikiText103.iters(
+                    batch_size=args.eval_batch_size, 
+                    device=torch.device("cpu"),
+                    bptt_len=args.num_steps)
         vocab = train_loader.dataset.fields["text"].vocab
         args.vocab_size = len(vocab.itos)
     elif args.datasets == "fromfile":
@@ -898,7 +912,7 @@ def main(args):
         best_theta_ppl = float("inf")
         best_theta = 1.0
         print("theta search")
-        for theta in np.arange(1.0, 0.8, -0.02):
+        for theta in np.arange(1.0, 0.7, -0.02):
             module.theta = theta
             theta_ppl = evaluate(model, valid_loader, criterion, writer, args)
             if theta_ppl < best_theta_ppl:
