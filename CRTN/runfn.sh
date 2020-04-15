@@ -4,11 +4,13 @@ python main.py \
     --datasets ptb \
     --adam \
     --std_epochs 200 \
+    --ema_epochs 0 \
     --lr 8e-4 \
+    --eta_min 1e-6 \
     --warmup_steps 20000 \
     --dropout 0.6 \
     --dropatt 0.3 \
-    --dropemb 0.15 \
+    --dropemb 0.1 \
     --dropinp 0.65 \
     --dropwei 0.05 \
     --drophid 0.25 \
@@ -18,7 +20,7 @@ python main.py \
     --nhead 10 \
     --emsize 400 \
     --nhid 400 \
-    --batch_size 40 \
+    --batch_size 30 \
     --eval_batch_size 10 \
     --num_steps 80 \
     --neighbor_len 80 \
