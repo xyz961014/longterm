@@ -622,6 +622,7 @@ class TransformerLM(nn.Module):
     def forward(self, inputs, cache_info=None, values=None, weights=None, indices=None, words=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None):
         #input shape should be seq_len * bsz or seq_len * bsz * emsize
 
+        cache_ulen = self.args.num_steps
         if inputs.dim() == 2:
             word_emb = self.embedding(inputs)
             seq_len, batch_size = inputs.size()
@@ -660,9 +661,8 @@ class TransformerLM(nn.Module):
                 alpha = self.args.merge_alpha
                 if alpha == 1.0:
                     alpha -= 1e-10
-                pos_shift = pos_seq.new_ones(seq_len)
-                pos_shift *= seq_len * alpha / (1 - alpha)
-                pos_pad = pos_seq.new_zeros(total_len-seq_len)
+                pos_shift = pos_seq.new_ones(cache_ulen) * cache_ulen * alpha / (1 - alpha)
+                pos_pad = pos_seq.new_zeros(total_len - cache_ulen)
                 seq_shift = torch.cat((pos_shift, pos_pad), 0)
                 pos_seq += seq_shift
 
@@ -677,10 +677,10 @@ class TransformerLM(nn.Module):
                 else:
                     pos_key = cache_info[:,:,0]
                 pos_start = torch.einsum("ib,j->bij", pos_key, 
-                                         pos_key.new_ones(seq_len) * seq_len)
+                                         pos_key.new_ones(cache_ulen) * cache_ulen)
                 if self.args.farnear:
                     pos_start += self.args.neighbor_len
-                pos_seq = pos_start + torch.arange(seq_len - 1, -1, -1, 
+                pos_seq = pos_start + torch.arange(cache_ulen - 1, -1, -1, 
                                                    dtype=pos_key.dtype, 
                                                    device=pos_key.device)
                 pos_seq = pos_seq.reshape(batch_size, -1)
