@@ -17,6 +17,7 @@ python main.py \
     --dropemb 0.1 \
     --dropinp 0.65 \
     --dropwei 0 \
+    --dropfor 0.25 \
     --weight_decay 7e-6 \
     --nlayers 12 \
     --d_ff 1024 \
