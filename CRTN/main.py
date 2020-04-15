@@ -288,13 +288,11 @@ def init_cache_info(args, device, evaluate=False):
 
 def update_cache(model, batch_size, key, value, hidden, text, cache_info):
     
-    hidden = hidden.transpose(1, 2)
-
     keys, values, cache_info = model.cache.renew(hidden, 
-                                              text, 
-                                              cache_info, 
-                                              keys=key, 
-                                              values=value)
+                                                 text, 
+                                                 cache_info, 
+                                                 keys=key, 
+                                                 values=value)
     return model, cache_info, keys, values
 
 

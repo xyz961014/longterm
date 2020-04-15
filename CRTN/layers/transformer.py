@@ -707,14 +707,14 @@ class TransformerLM(nn.Module):
             if self.args.discard_worst:
                 # update recalls
                 query_len = indice_bool.size(0)
-                recall = indice_bool.sum(0).t()[:-1,:]
+                recall = indice_bool.sum(0).t()
                 pos, recalls, queries = cache_info.chunk(3, dim=-1)
                 recalls += recall.unsqueeze(-1)
                 queries += query_len
 
             if self.args.stat:
                 stat = indice_bool.sum((0, 1))
-                self.select_stat += stat[:-1]
+                self.select_stat += stat
                 self.viz.bar(self.select_stat, win="select stat")
 
             if weights is not None:

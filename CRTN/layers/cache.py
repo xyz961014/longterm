@@ -78,7 +78,6 @@ class Cache(nn.Module):
 
 
     def renew(self, inputs, words=None, cache_info=None, keys=None, values=None):
-        inputs = inputs.transpose(1, 2)
 
         if keys is None and values is None:
             keys, values = self.new_key_and_values()
