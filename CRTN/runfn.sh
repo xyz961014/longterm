@@ -4,17 +4,21 @@ python main.py \
     --datasets ptb \
     --adam \
     --std_epochs 200 \
-    --ema_epochs 0 \
+    --ema_epochs 50 \
     --lr 8e-4 \
     --eta_min 1e-6 \
+    --emb_mult 2 \
+    --ema_lr_mult 0.5 \
+    --alpha 0 \
+    --beta 0.05 \
     --warmup_steps 20000 \
     --dropout 0.6 \
     --dropatt 0.3 \
     --dropemb 0.1 \
     --dropinp 0.65 \
-    --dropwei 0.05 \
+    --dropwei 0 \
     --drophid 0.25 \
-    --weight_decay 1e-5 \
+    --weight_decay 7e-6 \
     --nlayers 12 \
     --d_ff 1024 \
     --nhead 10 \

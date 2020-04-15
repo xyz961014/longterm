@@ -10,15 +10,15 @@ python xl_lm.py \
     --emb_mult 2 \
     --ema_lr_mult 0.5 \
     --alpha 0 \
-    --beta 0 \
+    --beta 0.05 \
     --warmup_steps 20000 \
     --dropout 0.6 \
     --dropatt 0.3 \
     --dropemb 0.15 \
     --dropinp 0.65 \
-    --dropwei 0.05 \
+    --dropwei 0 \
     --dropfor 0.25 \
-    --weight_decay 1e-5 \
+    --weight_decay 7e-6 \
     --nlayers 12 \
     --d_ff 1024 \
     --nhead 10 \
