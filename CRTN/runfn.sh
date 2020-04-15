@@ -6,7 +6,7 @@ python main.py \
     --std_epochs 200 \
     --ema_epochs 50 \
     --lr 8e-4 \
-    --eta_min 1e-6 \
+    --eta_min 1e-4 \
     --emb_mult 2 \
     --ema_lr_mult 0.5 \
     --alpha 0 \
