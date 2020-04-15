@@ -100,7 +100,7 @@ def parse_args():
                         help='dropout applied to attention (0 = no dropout)')
     parser.add_argument('--dropemb', type=float, default=0.1,
                         help='embedding dropout, random remove whole words')
-    parser.add_argument('--dropinp', type=float, default=0.66,
+    parser.add_argument('--dropinp', type=float, default=0.6,
                         help='input layer dropout')
     parser.add_argument('--dropwei', type=float, default=0.1,
                         help='linear weight dropout')
