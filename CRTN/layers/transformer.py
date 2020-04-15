@@ -273,10 +273,10 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
             # if neighbor_mem is empty(0), mask it
 
-            #if indice_bool is None:
-            #    if neighbor_mem.eq(0).sum() == neighbor_mem.numel():
-            #        nei_mask = torch.cat((mask.new_ones(nei_len), mask.new_zeros(x_len)), 0)
-            #        mask = mask + nei_mask.expand(mask.size(0), -1).unsqueeze(-1)
+            if indice_bool is None:
+                if neighbor_mem.eq(0).sum() == neighbor_mem.numel():
+                    nei_mask = torch.cat((mask.new_ones(nei_len), mask.new_zeros(x_len)), 0)
+                    mask = mask + nei_mask.expand(mask.size(0), -1).unsqueeze(-1)
 
             AC = torch.cat((nei_AC, AC), dim=1)
             BD = torch.cat((nei_BD, BD), dim=1)
@@ -300,10 +300,10 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
             # if neighbor_mem is empty(0) or cache key is empty(0), mask it
 
-            #if cache.sum(dim=[1,2]).eq(0).sum() > 0:
-            #    nei_mask = neighbor_mem.eq(0).sum().eq(neighbor_mem.numel()).expand(nei_len)
-            #    cache_mask = cache.eq(0).reshape(cache_len, -1).min(dim=-1)[0]
-            #    mask = mask + torch.cat((cache_mask, nei_mask, mask.new_zeros(x_len)), 0).expand(mask.size(0), -1).unsqueeze(-1)
+            if cache.sum(dim=[1,2]).eq(0).sum() > 0:
+                nei_mask = neighbor_mem.eq(0).sum().eq(neighbor_mem.numel()).expand(nei_len)
+                cache_mask = cache.eq(0).reshape(cache_len, -1).min(dim=-1)[0]
+                mask = mask + torch.cat((cache_mask, nei_mask, mask.new_zeros(x_len)), 0).expand(mask.size(0), -1).unsqueeze(-1)
 
             cache_AC = cache_AC.reshape(cache_AC.size(0), -1, batch_size, self.num_head)
             cache_BD = cache_BD.reshape(cache_BD.size(0), -1, batch_size, self.num_head)
