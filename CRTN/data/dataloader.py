@@ -268,10 +268,9 @@ class ExistingDataset(object):
 
 
 class RandomLengthBPTTIterator(data.Iterator):
-    def __init__(self, dataset, batch_size, bptt_len, mem_nonzero=False, **kwargs):
+    def __init__(self, dataset, batch_size, bptt_len, mem_len=0, **kwargs):
         self.bptt_len = bptt_len
-        self.mem_len = 0
-        self.mem_nonzero = mem_nonzero
+        self.mem_len = mem_len
         super().__init__(dataset, batch_size, **kwargs)
 
     def __len__(self):
@@ -288,6 +287,7 @@ class RandomLengthBPTTIterator(data.Iterator):
         _data = _data.view(self.batch_size, -1).t().contiguous()
         dataset = Dataset(examples=self.dataset.examples, fields=[
             ('text', TEXT), ('target', TEXT)])
+        mem_len = self.mem_len
         while True:
             i = 0
             while i < len(_data) - 1:
@@ -295,8 +295,8 @@ class RandomLengthBPTTIterator(data.Iterator):
 
                 bptt = self.bptt_len if np.random.random() < 0.95 else self.bptt_len / 2.
                 seq_len = max(5, int(np.random.normal(bptt, 5)))
-                if self.mem_nonzero:
-                    seq_len = max(self.bptt_len - self.mem_len + 5, seq_len)
+                if mem_len > 0:
+                    seq_len = max(self.bptt_len - mem_len + 5, seq_len)
                 seq_len = min(seq_len, len(_data) - i - 1)
 
                 batch_text = _data[i:i + seq_len]
@@ -311,7 +311,8 @@ class RandomLengthBPTTIterator(data.Iterator):
                     target=batch_target)
 
                 i += seq_len
-                self.mem_len = max(self.mem_len + seq_len - self.bptt_len, 0) 
+                if mem_len > 0:
+                    mem_len = mem_len + seq_len - self.bptt_len
             if not self.repeat:
                 return
 

@@ -26,7 +26,7 @@ import torchtext
 
 from torch.utils.data import DataLoader
 
-from data.dataloader import TextDataset
+from data.dataloader import TextDataset, ExistingDataset
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
 from utils.visual import TargetText
 from models.CRTNModel import CRTNModel
@@ -191,6 +191,8 @@ def parse_args():
                         help="attention theta annealing alpha, default: 1.0")
     parser.add_argument("--theta_annealing_steps", type=int, default=200, 
                         help="attention theta annealing steps, default: 200")
+    parser.add_argument('--random_seq_len', action="store_true",
+                        help='random sequence length rather than fixed')
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--devices', type=int, default=[0], nargs="+",
@@ -317,8 +319,8 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
 
     for batch, data in enumerate(train_loader):
 
-        if not data.text.size(0) == args.num_steps:
-            continue
+        #if not data.text.size(0) == args.num_steps:
+        #    continue
 
         # load data
         if args.distributed:
@@ -470,9 +472,9 @@ def evaluate(model, eval_loader, criterion, writer, args):
             pbar.set_description("evaluating")
                                
             for batch, data in enumerate(eval_loader):
-                if not data.text.size(0) == args.num_steps:
-                    pbar.update(1)
-                    continue
+                #if not data.text.size(0) == args.num_steps:
+                #    pbar.update(1)
+                #    continue
                                
                 eval_batch_size = data.text.size(1)
                 model.set_batch_size(eval_batch_size)
@@ -555,27 +557,41 @@ def load_dataset(args):
     if args.datasets == "ptb":
         if args.rank == 0:
             print("Loading %s dataset from torchtext" % args.datasets)
-        train_loader, _, _ = torchtext.datasets.PennTreebank.iters(
-                batch_size=args.batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
-        _, valid_loader, test_loader = torchtext.datasets.PennTreebank.iters(
-                batch_size=args.eval_batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
+        if args.random_seq_len:
+            corpus = ExistingDataset("ptb", args.num_steps)
+            train_loader = corpus.randomlen_train_loader(args.batch_size, 
+                                                         mem_len=args.neighbor_len)
+            valid_loader = corpus.get_valid_loader(args.eval_batch_size)
+            test_loader = corpus.get_test_loader(args.eval_batch_size)
+        else:
+            train_loader, _, _ = torchtext.datasets.PennTreebank.iters(
+                    batch_size=args.batch_size, 
+                    device=torch.device("cpu"),
+                    bptt_len=args.num_steps)
+            _, valid_loader, test_loader = torchtext.datasets.PennTreebank.iters(
+                    batch_size=args.eval_batch_size, 
+                    device=torch.device("cpu"),
+                    bptt_len=args.num_steps)
         vocab = train_loader.dataset.fields["text"].vocab
         vocab_size = len(vocab.itos)
     elif args.datasets == "wt103":
         if args.rank == 0:
             print("Loading %s dataset from torchtext" % args.datasets)
-        train_loader, _, _ = torchtext.datasets.WikiText103.iters(
-                batch_size=args.batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
-        _, valid_loader, test_loader = torchtext.datasets.WikiText103.iters(
-                batch_size=args.eval_batch_size, 
-                device=torch.device("cpu"),
-                bptt_len=args.num_steps)
+        if args.random_seq_len:
+            corpus = ExistingDataset("wt103", args.num_steps)
+            train_loader = corpus.randomlen_train_loader(args.batch_size,
+                                                         mem_len=args.neighbor_len)
+            valid_loader = corpus.get_valid_loader(args.eval_batch_size)
+            test_loader = corpus.get_test_loader(args.eval_batch_size)
+        else:
+            train_loader, _, _ = torchtext.datasets.WikiText103.iters(
+                    batch_size=args.batch_size, 
+                    device=torch.device("cpu"),
+                    bptt_len=args.num_steps)
+            _, valid_loader, test_loader = torchtext.datasets.WikiText103.iters(
+                    batch_size=args.eval_batch_size, 
+                    device=torch.device("cpu"),
+                    bptt_len=args.num_steps)
         vocab = train_loader.dataset.fields["text"].vocab
         vocab_size = len(vocab.itos)
     else:

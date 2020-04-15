@@ -204,7 +204,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         return x
 
 
-    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, memory=None, indice_bool=None, weights=None, neighbor_mem=None, inf_ind=None, theta=1.0):
+    def forward(self, x, pos_emb, pos_bias_u, pos_bias_v, mask=None, cache=None, indice_bool=None, weights=None, neighbor_mem=None, inf_ind=None, theta=1.0):
         """
         3 usage: 
             - compute query
@@ -215,126 +215,179 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         if inf_ind is not None:
             assert inf_ind >= 0 and inf_ind < x_len
-
-        if memory is not None:
-            mem_num = memory.size(0)
-            memory = memory.view(mem_num * memory.size(1), -1, nhid)
-            mem_len = memory.size(0)
-            if not batch_size == memory.size(1):
-                memory.unsqueeze_(1)
-                memory = memory.expand(-1, batch_size // memory.size(2), -1, -1)
-                memory = memory.reshape(memory.size(0), -1, memory.size(-1))
-            c = torch.cat((memory, x), 0)
-        else:
-            mem_num = 0
-            mem_len = 0
-            c = x
-            total_len = c.size(0)
-
-
-        if inf_ind is not None:
             x = x[inf_ind].unsqueeze(0)
 
-        heads_matrix = self.lin_kv(c)
-        rel_emb_matrix = self.lin_relemb(pos_emb)
-
-        heads_q = self.lin_q(x)
-        heads_k, heads_v = torch.chunk(heads_matrix, 2, dim=-1)
-
+        if cache is not None:
+            cache_num, cache_ulen = cache.size(0), cache.size(1)
+            cache_len = cache_num * cache_ulen
+            cache = cache.view(cache_num * cache.size(1), -1, nhid)
+            if not batch_size == cache.size(1):
+                cache.unsqueeze_(1)
+                cache = cache.expand(-1, batch_size // cache.size(2), -1, -1)
+                cache = cache.reshape(cache.size(0), -1, cache.size(-1))
+            cache_matrix = self.lin_kv(cache)
+            cache_k, cache_v = torch.chunk(cache_matrix, 2, dim=-1)
+        else:
+            cache_num = 0
+            cache_len = 0
 
         if neighbor_mem is not None:
             nei_len = neighbor_mem.size(0)
             nei_matrix = self.lin_kv(neighbor_mem)
             nei_k, nei_v = torch.chunk(nei_matrix, 2, dim=-1)
-            
-            rel_cache, rel_nei, rel_inp = rel_emb_matrix.split([mem_len, 
-                                                                nei_len, x_len],
-                                                                dim=0)
-            rel_emb_matrix = torch.cat((rel_cache, rel_inp), 0)
+        else:
+            nei_len = 0
 
-
+        heads_q = self.lin_q(x)
         heads_q = heads_q.view(heads_q.size(0), batch_size, self.num_head, self.d_head)
-
         heads_qu = heads_q + pos_bias_u
         heads_qv = heads_q + pos_bias_v
 
+        inp_matrix = self.lin_kv(x)
+        inp_k, inp_v = torch.chunk(inp_matrix, 2, dim=-1)
+            
+        rel_emb_matrix = self.lin_relemb(pos_emb)
+        rel_cache, rel_nei, rel_inp = rel_emb_matrix.split([cache_len, nei_len, x_len],
+                                                            dim=0)
 
-        if indice_bool is None and neighbor_mem is None:
-            rel_emb_matrix = rel_emb_matrix.view(total_len, batch_size, 
-                                                 self.num_head, self.d_head)
-            heads_k = heads_k.view(total_len, batch_size, self.num_head, self.d_head)
-            heads_v = heads_v.view(total_len, batch_size, self.num_head, self.d_head)
-            AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
-            BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
+        rel_inp = rel_inp.view(x_len, batch_size, self.num_head, self.d_head)
+        inp_k = inp_k.view(x_len, batch_size, self.num_head, self.d_head)
+        inp_v = inp_v.view(x_len, batch_size, self.num_head, self.d_head)
+        if self.apex:
+            AC = bmm_einsum(heads_qu, inp_k)
+            BD = bmm_einsum(heads_qv, rel_inp)
         else:
-            if indice_bool is not None:
-                pre_AC = torch.einsum("ibnd,ibk->kibnd", heads_qu, indice_bool)
-                pre_BD = torch.einsum("ibnd,ibk->kibnd", heads_qv, indice_bool)
-                pre_k = heads_k.view(mem_num + 1, x_len, batch_size, 
-                                     self.num_head, self.d_head)
-                pre_v = heads_v.view(mem_num + 1, x_len, batch_size, 
-                                     self.num_head, self.d_head)
+            AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, inp_k))
+            BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_inp))
 
-                pre_rel = rel_emb_matrix.view(mem_num + 1, x_len, 
-                                              batch_size, self.num_head, self.d_head)
-                if self.apex:
-                    AC = bmm_einsum(pre_AC, pre_k, "kibnd,kjbnd->ikjbn")
-                    BD = bmm_einsum(pre_BD, pre_rel, "kibnd,kjbnd->ikjbn")
-                else:
-                    AC = torch.einsum("kibnd,kjbnd->ikjbn", pre_AC, pre_k)
-                    BD = torch.einsum("kibnd,kjbnd->ikjbn", pre_BD, pre_rel)
-                AC_mask = indice_bool.eq(0).transpose(1, 2)[:,:,None,:,None]
-                AC.masked_fill_(AC_mask, -float("inf")) 
-
-                # if neighbor_mem is empty(0) or cache key is empty(0), mask it
-                if memory.sum(dim=[1,2]).eq(0).sum() > 0:
-                    nei_mask = neighbor_mem.eq(0).sum().eq(neighbor_mem.numel()).expand(nei_len)
-                    cache_mask = memory.eq(0).reshape(mem_len, -1).min(dim=-1)[0]
-                    mask = mask + torch.cat((cache_mask, nei_mask, mask.new_zeros(x_len)), 0).expand(mask.size(0), -1).unsqueeze(-1)
+        if neighbor_mem is not None:
+            nei_k = nei_k.view(nei_len, batch_size, self.num_head, self.d_head)
+            nei_v = nei_v.view(nei_len, batch_size, self.num_head, self.d_head)
+            rel_nei = rel_nei.view(nei_len, batch_size, self.num_head, self.d_head)
+            if self.apex:
+                nei_AC = bmm_einsum(heads_qu, nei_k)
+                nei_BD = bmm_einsum(heads_qv, rel_nei)
             else:
-                rel_emb_matrix = rel_emb_matrix.view(total_len, batch_size, 
-                                                     self.num_head, self.d_head)
-                heads_k = heads_k.view(total_len, batch_size, self.num_head, 
-                                       self.d_head)
-                heads_v = heads_v.view(total_len, batch_size, self.num_head, 
-                                       self.d_head)
-                if self.apex:
-                    AC = bmm_einsum(heads_qu, heads_k)
-                    BD = bmm_einsum(heads_qv, rel_emb_matrix)
-                else:
-                    AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
-                    BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
+                nei_AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, nei_k))
+                nei_BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_nei))
 
-                # if neighbor_mem is empty(0), mask it
-                if neighbor_mem.eq(0).sum() == neighbor_mem.numel():
-                    nei_mask = torch.cat((mask.new_ones(nei_len), mask.new_zeros(x_len)), 0)
-                    mask = mask + nei_mask.expand(mask.size(0), -1).unsqueeze(-1)
-                
-                AC.unsqueeze_(1)
-                BD.unsqueeze_(1)
+            # if neighbor_mem is empty(0), mask it
 
-            if neighbor_mem is not None:
-                nei_k = nei_k.view(nei_len, batch_size, self.num_head, self.d_head)
-                nei_v = nei_v.view(nei_len, batch_size, self.num_head, self.d_head)
-                rel_nei = rel_nei.view(nei_len, batch_size, self.num_head, self.d_head)
-                if self.apex:
-                    nei_AC = bmm_einsum(heads_qu, nei_k)
-                    nei_BD = bmm_einsum(heads_qv, rel_nei)
-                else:
-                    nei_AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, nei_k))
-                    nei_BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_nei))
-                
-                AC_cache, AC_inp = AC.split([mem_num, 1], dim=1)
-                BD_cache, BD_inp = BD.split([mem_num, 1], dim=1)
+            #if indice_bool is None:
+            #    if neighbor_mem.eq(0).sum() == neighbor_mem.numel():
+            #        nei_mask = torch.cat((mask.new_ones(nei_len), mask.new_zeros(x_len)), 0)
+            #        mask = mask + nei_mask.expand(mask.size(0), -1).unsqueeze(-1)
 
-                AC = torch.cat((AC_cache.reshape(
-                                    AC_cache.size(0), -1, batch_size, self.num_head),
-                                nei_AC,
-                                AC_inp.squeeze(1)), 1)
-                BD = torch.cat((BD_cache.reshape(
-                                    BD_cache.size(0), -1, batch_size, self.num_head),
-                                nei_BD,
-                                BD_inp.squeeze(1)), 1)
+            AC = torch.cat((nei_AC, AC), dim=1)
+            BD = torch.cat((nei_BD, BD), dim=1)
+            
+ 
+        if indice_bool is not None:
+            pre_AC = torch.einsum("ibnd,ibk->kibnd", heads_qu, indice_bool)
+            pre_BD = torch.einsum("ibnd,ibk->kibnd", heads_qv, indice_bool)
+            cache_k = cache_k.view(cache_num, cache_ulen, batch_size, self.num_head, self.d_head)
+            cache_v = cache_v.view(cache_num, cache_ulen, batch_size, self.num_head, self.d_head)
+
+            rel_cache = rel_cache.view(cache_num, cache_ulen, batch_size, self.num_head, self.d_head)
+            if self.apex:
+                cache_AC = bmm_einsum(pre_AC, cache_k, "kibnd,kjbnd->ikjbn")
+                cache_BD = bmm_einsum(pre_BD, rel_cache, "kibnd,kjbnd->ikjbn")
+            else:
+                cache_AC = torch.einsum("kibnd,kjbnd->ikjbn", pre_AC, cache_k)
+                cache_BD = torch.einsum("kibnd,kjbnd->ikjbn", pre_BD, rel_cache)
+            AC_mask = indice_bool.eq(0).transpose(1, 2)[:,:,None,:,None]
+            cache_AC.masked_fill_(AC_mask, -float("inf")) 
+
+            # if neighbor_mem is empty(0) or cache key is empty(0), mask it
+
+            #if cache.sum(dim=[1,2]).eq(0).sum() > 0:
+            #    nei_mask = neighbor_mem.eq(0).sum().eq(neighbor_mem.numel()).expand(nei_len)
+            #    cache_mask = cache.eq(0).reshape(cache_len, -1).min(dim=-1)[0]
+            #    mask = mask + torch.cat((cache_mask, nei_mask, mask.new_zeros(x_len)), 0).expand(mask.size(0), -1).unsqueeze(-1)
+
+            cache_AC = cache_AC.reshape(cache_AC.size(0), -1, batch_size, self.num_head)
+            cache_BD = cache_BD.reshape(cache_BD.size(0), -1, batch_size, self.num_head)
+            AC = torch.cat((cache_AC, AC), dim=1)
+            BD = torch.cat((cache_BD, BD), dim=1)
+       
+            
+  
+        #if indice_bool is None and neighbor_mem is None:
+        #    rel_emb_matrix = rel_emb_matrix.view(x_len, batch_size, 
+        #                                         self.num_head, self.d_head)
+        #    heads_k = heads_k.view(x_len, batch_size, self.num_head, self.d_head)
+        #    heads_v = heads_v.view(x_len, batch_size, self.num_head, self.d_head)
+        #    AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
+        #    BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
+        #else:
+        #    if indice_bool is not None:
+        #        cache_AC = torch.einsum("ibnd,ibk->kibnd", heads_qu, indice_bool)
+        #        cache_BD = torch.einsum("ibnd,ibk->kibnd", heads_qv, indice_bool)
+        #        cache_k = heads_k.view(cache_num + 1, x_len, batch_size, 
+        #                             self.num_head, self.d_head)
+        #        cache_v = heads_v.view(cache_num + 1, x_len, batch_size, 
+        #                             self.num_head, self.d_head)
+
+        #        cache_rel = rel_emb_matrix.view(cache_num + 1, x_len, 
+        #                                      batch_size, self.num_head, self.d_head)
+        #        if self.apex:
+        #            AC = bmm_einsum(cache_AC, cache_k, "kibnd,kjbnd->ikjbn")
+        #            BD = bmm_einsum(cache_BD, cache_rel, "kibnd,kjbnd->ikjbn")
+        #        else:
+        #            AC = torch.einsum("kibnd,kjbnd->ikjbn", cache_AC, cache_k)
+        #            BD = torch.einsum("kibnd,kjbnd->ikjbn", cache_BD, cache_rel)
+        #        AC_mask = indice_bool.eq(0).transpose(1, 2)[:,:,None,:,None]
+        #        AC.masked_fill_(AC_mask, -float("inf")) 
+
+        #        # if neighbor_mem is empty(0) or cache key is empty(0), mask it
+        #        if cache.sum(dim=[1,2]).eq(0).sum() > 0:
+        #            nei_mask = neighbor_mem.eq(0).sum().eq(neighbor_mem.numel()).expand(nei_len)
+        #            cache_mask = cache.eq(0).reshape(cache_len, -1).min(dim=-1)[0]
+        #            mask = mask + torch.cat((cache_mask, nei_mask, mask.new_zeros(x_len)), 0).expand(mask.size(0), -1).unsqueeze(-1)
+        #    else:
+        #        rel_emb_matrix = rel_emb_matrix.view(x_len, batch_size, 
+        #                                             self.num_head, self.d_head)
+        #        heads_k = heads_k.view(x_len, batch_size, self.num_head, 
+        #                               self.d_head)
+        #        heads_v = heads_v.view(x_len, batch_size, self.num_head, 
+        #                               self.d_head)
+        #        if self.apex:
+        #            AC = bmm_einsum(heads_qu, heads_k)
+        #            BD = bmm_einsum(heads_qv, rel_emb_matrix)
+        #        else:
+        #            AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
+        #            BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
+
+        #        # if neighbor_mem is empty(0), mask it
+        #        if neighbor_mem.eq(0).sum() == neighbor_mem.numel():
+        #            nei_mask = torch.cat((mask.new_ones(nei_len), mask.new_zeros(x_len)), 0)
+        #            mask = mask + nei_mask.expand(mask.size(0), -1).unsqueeze(-1)
+        #        
+        #        AC.unsqueeze_(1)
+        #        BD.unsqueeze_(1)
+
+        #    if neighbor_mem is not None:
+        #        nei_k = nei_k.view(nei_len, batch_size, self.num_head, self.d_head)
+        #        nei_v = nei_v.view(nei_len, batch_size, self.num_head, self.d_head)
+        #        rel_nei = rel_nei.view(nei_len, batch_size, self.num_head, self.d_head)
+        #        if self.apex:
+        #            nei_AC = bmm_einsum(heads_qu, nei_k)
+        #            nei_BD = bmm_einsum(heads_qv, rel_nei)
+        #        else:
+        #            nei_AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, nei_k))
+        #            nei_BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_nei))
+        #        
+        #        AC_cache, AC_inp = AC.split([cache_num, 1], dim=1)
+        #        BD_cache, BD_inp = BD.split([cache_num, 1], dim=1)
+
+        #        AC = torch.cat((AC_cache.reshape(
+        #                            AC_cache.size(0), -1, batch_size, self.num_head),
+        #                        nei_AC,
+        #                        AC_inp.squeeze(1)), 1)
+        #        BD = torch.cat((BD_cache.reshape(
+        #                            BD_cache.size(0), -1, batch_size, self.num_head),
+        #                        nei_BD,
+        #                        BD_inp.squeeze(1)), 1)
         
         if inf_ind is None:
             BD = self._rel_shift(BD)
@@ -358,38 +411,67 @@ class LearnableMultiheadSelfAttention(nn.Module):
         attn_prob = self.dropatt(attn_prob)
         attn_matrix = attn_prob.mean((2, 3))
 
-        if memory is None and neighbor_mem is None:
-            attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
+        prob_cache, prob_nei, prob_inp = attn_prob.split([cache_len,
+                                                          nei_len,
+                                                          x_len], dim=1)
+        if self.apex:
+            attn_vec = bmm_einsum(prob_inp, inp_v, "ilbn,lbnd->ibnd")
         else:
-            if neighbor_mem is not None and nei_len > 0:
-                prob_cache, prob_nei, prob_inp = attn_prob.split([mem_len,
-                                                                  nei_len,
-                                                                  x_len], dim=1)
-                attn_prob = torch.cat((prob_cache, prob_inp), 1)
-                if self.apex:
-                    nei_vec = bmm_einsum(prob_nei, nei_v, "ilbn,lbnd->ibnd")
-                else:
-                    nei_vec = torch.einsum("ilbn,lbnd->ibnd", prob_nei, nei_v)
+            attn_vec = torch.einsum("ilbn,lbnd->ibnd", prob_inp, inp_v)
 
-            if indice_bool is not None: 
-                attn_prob = attn_prob.reshape(attn_prob.size(0), -1, x_len,
-                                              batch_size, self.num_head)
-                if weights is not None:
-                    attn_prob = torch.einsum("ikjbn,ibk->ikjbn", attn_prob, weights)
-                attn_prob = attn_prob.view(attn_prob.size(0), -1, *attn_prob.shape[3:])
-                pre_v = pre_v.view(-1, *pre_v.shape[2:])
-                if self.apex:
-                    attn_vec = bmm_einsum(attn_prob, pre_v, "ilbn,lbnd->ibnd")
-                else:
-                    attn_vec = torch.einsum("ilbn,lbnd->ibnd", attn_prob, pre_v)
-                if neighbor_mem is not None and nei_len > 0:
-                    attn_vec = attn_vec + nei_vec
+        if nei_len > 0:
+            if self.apex:
+                nei_vec = bmm_einsum(prob_nei, nei_v, "ilbn,lbnd->ibnd")
             else:
-                if self.apex:
-                    attn_vec = bmm_einsum(attn_prob, heads_v, "ilbn,lbnd->ibnd")
-                else:
-                    attn_vec = torch.einsum("ilbn,lbnd->ibnd", attn_prob, heads_v)
-                attn_vec = attn_vec + nei_vec
+                nei_vec = torch.einsum("ilbn,lbnd->ibnd", prob_nei, nei_v)
+            attn_vec = attn_vec + nei_vec
+
+        if cache_len > 0:
+            if weights is not None:
+                prob_cache = prob_cache.reshape(prob_cache.size(0), -1, cache_ulen, 
+                                                batch_size, self.num_head)
+                prob_cache = torch.einsum("ikjbn,ibk->ikjbn", prob_cache, weights)
+            prob_cache = prob_cache.view(prob_cache.size(0), -1, *prob_cache.shape[3:])
+            cache_v = cache_v.view(-1, *cache_v.shape[2:])
+            if self.apex:
+                cache_vec = bmm_einsum(attn_prob, cache_v, "ilbn,lbnd->ibnd")
+            else:
+                cache_vec = torch.einsum("ilbn,lbnd->ibnd", prob_cache, cache_v)
+            attn_vec = attn_vec + cache_vec
+            
+
+        #if cache is None and neighbor_mem is None:
+        #    attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
+        #else:
+        #    if neighbor_mem is not None and nei_len > 0:
+        #        prob_cache, prob_nei, prob_inp = attn_prob.split([cache_len,
+        #                                                          nei_len,
+        #                                                          x_len], dim=1)
+        #        attn_prob = torch.cat((prob_cache, prob_inp), 1)
+        #        if self.apex:
+        #            nei_vec = bmm_einsum(prob_nei, nei_v, "ilbn,lbnd->ibnd")
+        #        else:
+        #            nei_vec = torch.einsum("ilbn,lbnd->ibnd", prob_nei, nei_v)
+
+        #    if indice_bool is not None: 
+        #        attn_prob = attn_prob.reshape(attn_prob.size(0), -1, x_len,
+        #                                      batch_size, self.num_head)
+        #        if weights is not None:
+        #            attn_prob = torch.einsum("ikjbn,ibk->ikjbn", attn_prob, weights)
+        #        attn_prob = attn_prob.view(attn_prob.size(0), -1, *attn_prob.shape[3:])
+        #        cache_v = cache_v.view(-1, *cache_v.shape[2:])
+        #        if self.apex:
+        #            attn_vec = bmm_einsum(attn_prob, cache_v, "ilbn,lbnd->ibnd")
+        #        else:
+        #            attn_vec = torch.einsum("ilbn,lbnd->ibnd", attn_prob, cache_v)
+        #        if neighbor_mem is not None and nei_len > 0:
+        #            attn_vec = attn_vec + nei_vec
+        #    else:
+        #        if self.apex:
+        #            attn_vec = bmm_einsum(attn_prob, heads_v, "ilbn,lbnd->ibnd")
+        #        else:
+        #            attn_vec = torch.einsum("ilbn,lbnd->ibnd", attn_prob, heads_v)
+        #        attn_vec = attn_vec + nei_vec
 
         attn_vec = attn_vec.reshape(attn_vec.size(0), batch_size, 
                                     self.num_head * self.d_head)
@@ -423,10 +505,10 @@ class TransformerUnit(nn.Module):
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, dropfor, apex)
 
-    def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, indices=None, weights=None, neighbor_mem=None, inf_ind=None, theta=1.0):
+    def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, cache=None, indices=None, weights=None, neighbor_mem=None, inf_ind=None, theta=1.0):
         
         output, attn_matrix = self.attn(inputs, pos_emb, pos_bias_u, pos_bias_v, 
-                                        mask=mask, memory=memory, 
+                                        mask=mask, cache=cache, 
                                         indice_bool=indices, 
                                         weights=weights, 
                                         neighbor_mem=neighbor_mem,
@@ -617,10 +699,10 @@ class TransformerLM(nn.Module):
 
             #one-hot pos_indices
             mem_num = values.size(0)
-            indice_len = pos_indices.size(0)
-            tfbase = torch.eye(mem_num + 1, device=pos_indices.device)
-            indice_bool = torch.index_select(tfbase, 0, pos_indices.view(-1))
-            indice_bool = indice_bool.view(indice_len, -1, batch_size, mem_num + 1)
+            indice_len = indices.size(0)
+            tfbase = torch.eye(mem_num, device=indices.device)
+            indice_bool = torch.index_select(tfbase, 0, indices.reshape(-1))
+            indice_bool = indice_bool.view(indice_len, -1, batch_size, mem_num)
             indice_bool = indice_bool.sum(0)
             if self.args.discard_worst:
                 # update recalls
@@ -637,14 +719,12 @@ class TransformerLM(nn.Module):
 
             if weights is not None:
                 x_len = inputs.size(0) if inf_ind is None else 1
-                #weights = weights.view(x_len, batch_size, -1)
-                weights = torch.cat((weights, 
-                                    torch.ones_like(
-                                        weights[:,:,0,None]) * -float("inf")), 2)
-                weights.masked_fill_(indice_bool.eq(0), -float("inf"))
+                #weights = torch.cat((weights, 
+                #                    torch.ones_like(
+                #                        weights[:,:,0,None]) * -float("inf")), 2)
+                weights = weights.masked_fill(indice_bool.eq(0), -float("inf"))
                 weights = F.softmax(weights, 2) * self.args.cache_k
-                weights = weights.index_fill(
-                            2, (weights.new_ones(1) * mem_num).long(), 1.0)
+                #weights = weights.index_fill(2, (weights.new_ones(1) * mem_num).long(), 1.0)
             
         else:
             pos_seq = torch.arange(total_len-1, -1, -1.0, device=inputs.device)
@@ -702,7 +782,7 @@ class TransformerLM(nn.Module):
                 core_out, attn_matrix = layer(core_out, pos_emb, self.pos_bias_u, 
                                               self.pos_bias_v, 
                                               mask=mask, 
-                                              memory=value_i, 
+                                              cache=value_i, 
                                               indices=indice_bool, 
                                               weights=weights,
                                               neighbor_mem=neighbor_mem_i,
@@ -712,7 +792,7 @@ class TransformerLM(nn.Module):
                 core_out, attn_matrix = layer(block_i, pos_emb, self.pos_bias_u, 
                                               self.pos_bias_v, 
                                               mask=mask, 
-                                              memory=value_i, 
+                                              cache=value_i, 
                                               indices=indice_bool, 
                                               weights=weights,
                                               neighbor_mem=neighbor_mem_i,
@@ -741,7 +821,6 @@ class TransformerLM(nn.Module):
         else:
             output = core_out
 
-        #output = pad_packed_sequence(output)
         if self.demo and weights is not None:
             id2w = self.corpus.vocabulary.index2word
             words = torch.cat((words.squeeze(), inputs.t()), 0)
@@ -761,10 +840,6 @@ class TransformerLM(nn.Module):
                     for wd in words[i].view(-1):
                         print(id2w[wd.item()], end=" ")
                     print("\n")
-            #print("Current input: ")
-            #for word in inputs[:,0]:
-            #    print(self.corpus.vocabulary.index2word[word.item()], end=" ")
-            #print("")
             return output, memories, (attn_map, demo_display)
 
 

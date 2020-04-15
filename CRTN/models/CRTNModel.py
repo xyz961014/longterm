@@ -78,7 +78,7 @@ class CRTNModel(nn.Module):
             nei_len = self.args.neighbor_len
             if neighbor_mem is not None:
                 neighbor_mem = neighbor_mem.reshape(self.args.nlayers+1,
-                                                    self.args.neighbor_len,
+                                                    -1,
                                                     bsz, nhid)
             else:
                 neighbor_mem = torch.zeros(self.args.nlayers+1,
@@ -207,8 +207,9 @@ class CRTNModel(nn.Module):
 
         
         if self.args.farnear and inf_ind is None:
-            total_mem = torch.cat((neighbor_mem, hidden), 1)
-            hidden, neighbor_mem = total_mem.split([seq_len, self.args.neighbor_len], 
+            total_mem = torch.cat((neighbor_mem, hidden), dim=1)
+            hidden, neighbor_mem = total_mem.split([self.cache.L, 
+                                                    total_mem.size(1) - self.cache.L], 
                                                    dim=1)
             neighbor_mem = neighbor_mem.reshape(-1, bsz, nhid)
 
