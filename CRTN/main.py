@@ -81,6 +81,10 @@ def parse_args():
                         help='lr_min for cosine scheduler')
     parser.add_argument('--warmup_steps', type=int, default=0,
                         help='linear warmup steps')
+    parser.add_argument('--emb_mult', type=float, default=2,
+                        help='multiplier for the learning rate of embeddings')
+    parser.add_argument('--ema_lr_mult', type=float, default=0.5,
+                        help='lr multiplier when switching to EMA.')
     parser.add_argument('--clip', type=float, default=0.25,
                         help='gradient clipping')
     # regularization
@@ -201,7 +205,7 @@ def parse_args():
     parser.add_argument('--eval_temp_search', action="store_true",
                         help='search best temperature on valid set during test. 1-1.2/0.02')
     parser.add_argument('--eval_theta_search', action="store_true",
-                        help='search best theta on valid set during test. 0.8-1/0.02')
+                        help='search best theta on valid set during test. 0.7-1/0.02')
     # setting
     parser.add_argument("--theta", type=float, default=1.0, 
                         help="attention theta, default: 1.0")
@@ -357,10 +361,11 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         if args.apex:
             with amp.scale_loss(loss, optimizer) as scaled_loss:
                 scaled_loss.backward()
+            torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
         else:
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
 
-        torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
         optimizer.step()
 
         total_loss += loss.item()
@@ -379,6 +384,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 # warmup steps
                 curr_lr = args.lr * step / args.warmup_steps
                 optimizer.param_groups[0]['lr'] = curr_lr
+                optimizer.param_groups[1]['lr'] = curr_lr * args.emb_mult
             else:
                 if args.scheduler == "cosine":
                     scheduler.step()
@@ -400,7 +406,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 print('| epoch {:1d} | {:5d}/{:5d} batches | lr {:02.2e} | '
                       'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
                     epoch, batch, len(train_loader), 
-                    optimizer.state_dict()["param_groups"][0]["lr"],
+                    optimizer.param_groups[0]["lr"],
                     elapsed * 1000 / args.log_interval, 
                     cur_loss, 
                     math.exp(cur_loss)))
@@ -658,6 +664,8 @@ def main(args):
         model_args.load = args.load
         model_args.adam = args.adam
         model_args.lr = args.lr
+        model_args.emb_mult = args.emb_mult
+        model_args.ema_lr_mult = args.ema_lr_mult
         model_args.scheduler = args.scheduler
         model_args.clip = args.clip
         model_args.std_epochs = args.std_epochs
@@ -744,16 +752,6 @@ def main(args):
         else:
             model = CRTNModel(args)
 
-    if args.rank == 0:
-        all_param = sum([p.numel() for p in model.parameters()])
-        nonemb_param = sum([p.numel() for p in model.encoder.layers.parameters()])
-        print("#model params = {}".format(all_param))
-        print('#non emb params = {}'.format(nonemb_param))
-
-        if args.eval:
-            print("SKIP TRAINING")
-        else:
-            print("TRAINING......")
     
     if args.adaptive:
         criterion = ProjectedAdaptiveLogSoftmax(args.vocab_size, 
@@ -780,18 +778,35 @@ def main(args):
     else:
         criterion = nn.CrossEntropyLoss()
 
+    
+    nonemb_param = list(model.encoder.layers.parameters())
+    emb_param = list(model.encoder.embedding.parameters())
+    if args.rank == 0:
+        nonemb_param_num = sum([p.numel() for p in nonemb_param])
+        emb_param_num = sum([p.numel() for p in emb_param])
+        print("#model params = {}".format(nonemb_param_num + emb_param_num))
+        print('#non emb params = {}'.format(nonemb_param_num))
+        print('#emb params = {}'.format(emb_param_num))
+
+        if args.eval:
+            print("SKIP TRAINING")
+        else:
+            print("TRAINING......")
+
     model.apply(init_weights)
 
     model.cuda()
     criterion.cuda()
 
+    param_list = [nonemb_param, emb_param]
+    lr_list = [args.lr, args.lr * args.emb_mult]
     if args.adam:
-        optimizer = optim.Adam(model.parameters(), lr=args.lr,
+        optimizer = optim.Adam([{"params": p, "lr": lr} for p, lr in zip(param_list, lr_list)], 
                                weight_decay=args.weight_decay)
     else:
-        optimizer = optim.SGD(model.parameters(), lr=args.lr,
-                              weight_decay=args.weight_decay)
-
+        optimizer = optim.SGD([{"params": p, "lr": lr} for p, lr in zip(param_list, lr_list)], 
+                               weight_decay=args.weight_decay)
+    
     if args.apex:
         model, optimizer = amp.initialize(model, optimizer, opt_level=args.opt_level)
 
@@ -865,6 +880,8 @@ def main(args):
             print("Starting EMA at epoch {}".format(epoch))
             for p in model.parameters():
                 ema[p] = p.data.clone()
+            for k in range(len(optimizer.param_groups)):
+                optimizer.param_groups[k]["lr"] *= args.ema_lr_mult
 
             for epoch in range(args.std_epochs+1, args.epochs+1):
                 epoch_start_time = time.time()
@@ -968,7 +985,7 @@ def main(args):
         best_theta_ppl = float("inf")
         best_theta = 1.0
         print("theta search")
-        for theta in np.arange(1.0, 0.8, -0.02):
+        for theta in np.arange(1.0, 0.7, -0.02):
             module.theta = theta
             theta_ppl = evaluate(model, valid_loader, criterion, writer, args)
             if theta_ppl < best_theta_ppl:

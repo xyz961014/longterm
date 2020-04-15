@@ -76,6 +76,8 @@ def parse_args():
                         help='lr scheduler to use')
     parser.add_argument('--emb_mult', type=float, default=2,
                         help='multiplier for the learning rate of embeddings')
+    parser.add_argument('--ema_lr_mult', type=float, default=0.5,
+                        help='lr multiplier when switching to EMA.')
     parser.add_argument('--warmup_steps', type=int, default=3000,
                         help='linear warmup steps')
     parser.add_argument('--clip', type=float, default=0.25,
@@ -144,8 +146,6 @@ def parse_args():
                         help='number of epochs with ema of params')
     parser.add_argument('--mu', type=float, default=-1,
                         help='mu used for EMA. set to -1 to use 1 / step.')
-    parser.add_argument('--ema_lr_mult', type=float, default=0.5,
-                        help='lr multiplier when switching to EMA.')
     parser.add_argument("--theta_annealing_alpha", type=float, default=1.0, 
                         help="attention theta annealing alpha, default: 1.0")
     parser.add_argument("--theta_annealing_steps", type=int, default=200, 
