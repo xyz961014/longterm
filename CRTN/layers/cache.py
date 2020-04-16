@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import ipdb
 import math
+import numpy as np
 from copy import deepcopy
 
 from CRTN.layers.attention import DotProductAttention
@@ -63,11 +64,10 @@ class Cache(nn.Module):
         
         #print(query.device, keys.device, values.device)
         if self.args.max_pooling:
-            query = query.view(-1, self.args.num_steps, self.args.nhid)
             pooling_keys = keys.view(-1, self.N, self.args.num_steps, self.args.nhid)
-            attention = torch.einsum("bih,bnjh->bijn", query, pooling_keys)
-            attention = attention.view(-1, self.args.num_steps ** 2, 1, self.N)
+            attention = torch.einsum("ibh,bnjh->ijbn", query, pooling_keys)
             attention = attention.max(1)[0]
+            attention = F.softmax(self.theta * attention / np.sqrt(pooling_keys.size(-1)), 2)
         else:
             attention = self.attn(query, keys, scale=self.theta) 
 
