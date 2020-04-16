@@ -1000,7 +1000,7 @@ def main(args):
         best_theta = 1.0
         print("theta search")
         for theta in np.arange(1.0, 0.7, -0.02):
-            module.theta = theta
+            module.set_theta(theta)
             theta_ppl = evaluate(model, valid_loader, criterion, writer, args)
             if theta_ppl < best_theta_ppl:
                 best_theta_ppl = theta_ppl
