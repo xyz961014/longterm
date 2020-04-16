@@ -54,7 +54,7 @@ class CRTNModel(nn.Module):
         self.encoder.theta = self.theta
 
     def set_theta(self, theta=1.0):
-        self.theta = tehta
+        self.theta = theta
         self.cache.theta = theta
         self.encoder.theta = theta
 
