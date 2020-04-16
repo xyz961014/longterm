@@ -669,8 +669,8 @@ class TransformerLM(nn.Module):
             if self.args.real_pos:
                 if cache_info is None:
                     pos = torch.arange(indices.size(0) - 1, -1, -1, 
-                                           dtype=torch.float,
-                                           device=inputs.device)
+                                       dtype=torch.float,
+                                       device=inputs.device)
                     pos = pos.expand(batch_size, -1)
                     pos.transpose_(0, 1)
                     pos_key = pos 

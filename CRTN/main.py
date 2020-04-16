@@ -280,6 +280,8 @@ def init_cache_info(args, device, evaluate=False):
     [pos, recall times, all query times]
     """
     batch_size = args.eval_batch_size if evaluate else args.batch_size
+    if args.distributed:
+        batch_size = batch_division(batch_size, args.rank, single_value=True)
     pos = torch.arange(args.cache_N, 0, -1, 
                        dtype=torch.float,
                        device=device)
