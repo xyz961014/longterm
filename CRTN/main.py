@@ -721,13 +721,20 @@ def main(args):
             print("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
                                                          args.clamp_len))
             model_args.clamp_len = args.clamp_len
-        if not model_args.cache_theta == args.cache_theta:
-            print("REDEFINE cache_theta: {} --> {}".format(model_args.cache_theta, 
-                                                     args.cache_theta))
+        if hasattr(model_args, "cache_theta"):
+            if not model_args.cache_theta == args.cache_theta:
+                print("REDEFINE cache_theta: {} --> {}".format(model_args.cache_theta, 
+                                                         args.cache_theta))
+                model_args.cache_theta = args.cache_theta
+        else:
             model_args.cache_theta = args.cache_theta
-        if not model_args.attn_theta == args.attn_theta:
-            print("REDEFINE attn_theta: {} --> {}".format(model_args.attn_theta, 
-                                                     args.attn_theta))
+
+        if hasattr(model_args, "attn_theta"):
+            if not model_args.attn_theta == args.attn_theta:
+                print("REDEFINE attn_theta: {} --> {}".format(model_args.attn_theta, 
+                                                         args.attn_theta))
+                model_args.attn_theta = args.attn_theta
+        else:
             model_args.attn_theta = args.attn_theta
         model_args.same_length = args.same_length
         model_args.same_length_query = args.same_length_query
