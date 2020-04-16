@@ -213,8 +213,8 @@ class CRTNModel(nn.Module):
         if self.args.farnear and inf_ind is None:
             total_mem = torch.cat((neighbor_mem, hidden), dim=1)
             if self.cache.L > total_mem.size(1):
-                print("current segment ({}) not long enough,"
-                      " padding ({}) added".format(total_mem.size(1), self.cache.L - total_mem.size(1)))
+                #print("current segment ({}) not long enough,"
+                #      " padding ({}) added".format(total_mem.size(1), self.cache.L - total_mem.size(1)))
                 padding = total_mem.new_zeros(total_mem.size(0), 
                                               self.cache.L - total_mem.size(1), 
                                               *total_mem.size()[2:])

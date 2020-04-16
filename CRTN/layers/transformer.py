@@ -719,12 +719,8 @@ class TransformerLM(nn.Module):
 
             if weights is not None:
                 x_len = inputs.size(0) if inf_ind is None else 1
-                #weights = torch.cat((weights, 
-                #                    torch.ones_like(
-                #                        weights[:,:,0,None]) * -float("inf")), 2)
                 weights = weights.masked_fill(indice_bool.eq(0), -float("inf"))
                 weights = F.softmax(weights, 2) * self.args.cache_k
-                #weights = weights.index_fill(2, (weights.new_ones(1) * mem_num).long(), 1.0)
             
         else:
             pos_seq = torch.arange(total_len-1, -1, -1.0, device=inputs.device)

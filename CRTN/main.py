@@ -395,10 +395,10 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 if args.scheduler == "cosine":
                     scheduler.step()
 
-            if step % args.theta_annealing_steps == 0 and args.theta_annealing_alpha < 1:
-                module.theta_annealing_step()
-                if args.rank == 0:
-                    print("STEP {:5d}, annealing theta to {:3.4f}".format(step, module.theta))
+        if step % args.theta_annealing_steps == 0 and args.theta_annealing_alpha < 1:
+            module.theta_annealing_step()
+            if args.rank == 0:
+                print("STEP {:5d}, annealing theta to {:3.4f}".format(step, module.theta))
 
 
         if batch % args.log_interval == 0 and batch > 0:
@@ -670,6 +670,7 @@ def main(args):
     train_loader, valid_loader, test_loader = datasets
 
     decay_steps = len(train_loader) * args.std_epochs
+    total_steps = len(train_loader) * args.epochs
     args.decay_steps = decay_steps
 
     if args.load:
@@ -754,7 +755,7 @@ def main(args):
         
     args.mem_len = args.cache_k * args.num_steps
     if not args.eval:
-        args.theta = (1 / args.theta_annealing_alpha) ** (decay_steps // args.theta_annealing_steps)
+        args.theta = (1 / args.theta_annealing_alpha) ** (total_steps // args.theta_annealing_steps)
     else:
         args.theta = 1.0
 
