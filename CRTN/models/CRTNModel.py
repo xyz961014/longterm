@@ -53,10 +53,9 @@ class CRTNModel(nn.Module):
         self.cache.theta = self.theta
         self.encoder.theta = self.theta
 
-    def set_theta(self, theta=1.0):
-        self.theta = theta
-        self.cache.theta = theta
-        self.encoder.theta = theta
+    def set_theta(self, cache_theta=1.0, attn_theta=1.0):
+        self.cache.theta = cache_theta
+        self.encoder.theta = attn_theta
 
     def set_batch_size(self, batch_size):
         self.cache.set_batch_size(batch_size)

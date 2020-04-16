@@ -209,7 +209,9 @@ def parse_args():
     parser.add_argument('--eval_theta_search', action="store_true",
                         help='search best theta on valid set during test. 0.7-1/0.02')
     # setting
-    parser.add_argument("--theta", type=float, default=1.0, 
+    parser.add_argument("--cache_theta", type=float, default=1.0, 
+                        help="cache query theta, default: 1.0")
+    parser.add_argument("--attn_theta", type=float, default=1.0, 
                         help="attention theta, default: 1.0")
     parser.add_argument('--eval', action='store_true',
                         help='skip training')
@@ -719,10 +721,14 @@ def main(args):
             print("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
                                                          args.clamp_len))
             model_args.clamp_len = args.clamp_len
-        if not model_args.theta == args.theta:
-            print("REDEFINE theta: {} --> {}".format(model_args.theta, 
-                                                     args.theta))
-            model_args.theta = args.theta
+        if not model_args.cache_theta == args.cache_theta:
+            print("REDEFINE cache_theta: {} --> {}".format(model_args.cache_theta, 
+                                                     args.cache_theta))
+            model_args.cache_theta = args.cache_theta
+        if not model_args.attn_theta == args.attn_theta:
+            print("REDEFINE attn_theta: {} --> {}".format(model_args.attn_theta, 
+                                                     args.attn_theta))
+            model_args.attn_theta = args.attn_theta
         model_args.same_length = args.same_length
         model_args.same_length_query = args.same_length_query
 
@@ -737,7 +743,9 @@ def main(args):
         
     args.mem_len = args.cache_k * args.num_steps
     if not args.eval:
-        args.theta *= (1 / args.theta_annealing_alpha) ** (decay_steps // args.theta_annealing_steps)
+        args.theta = (1 / args.theta_annealing_alpha) ** (decay_steps // args.theta_annealing_steps)
+    else:
+        args.theta = 1.0
 
     #Print Params
     if args.rank == 0:
@@ -891,11 +899,12 @@ def main(args):
                 
                     best_eval_ppls.append(eval_ppl)
 
-            print("Starting EMA at epoch {}".format(epoch))
-            for p in model.parameters():
-                ema[p] = p.data.clone()
-            for k in range(len(optimizer.param_groups)):
-                optimizer.param_groups[k]["lr"] *= args.ema_lr_mult
+            if args.ema_epochs > 0:
+                print("Starting EMA at epoch {}".format(epoch))
+                for p in model.parameters():
+                    ema[p] = p.data.clone()
+                for k in range(len(optimizer.param_groups)):
+                    optimizer.param_groups[k]["lr"] *= args.ema_lr_mult
 
             for epoch in range(args.std_epochs+1, args.epochs+1):
                 epoch_start_time = time.time()
@@ -996,19 +1005,19 @@ def main(args):
 
     if args.eval_theta_search:
         module = model.module if args.distributed else model
-        best_theta_ppl = float("inf")
-        best_theta = 1.0
-        print("theta search")
-        for theta in np.arange(1.0, 0.7, -0.02):
-            module.set_theta(theta)
-            theta_ppl = evaluate(model, valid_loader, criterion, writer, args)
-            if theta_ppl < best_theta_ppl:
-                best_theta_ppl = theta_ppl
-                best_theta = theta
-                print("UPDATE best theta {:5.2f} | valid ppl {:8.2f}".format(theta, theta_ppl))
+        best_atheta_ppl = float("inf")
+        best_atheta = 1.0
+        print("attn theta search")
+        for atheta in np.arange(1.0, 0.7, -0.02):
+            module.set_theta(1.0, atheta)
+            atheta_ppl = evaluate(model, valid_loader, criterion, writer, args)
+            if atheta_ppl < best_atheta_ppl:
+                best_atheta_ppl = atheta_ppl
+                best_atheta = atheta
+                print("UPDATE best attn theta {:5.2f} | valid ppl {:8.2f}".format(atheta, atheta_ppl))
             else:
                 break
-        module.theta = best_theta
+        module.set_theta(1.0, best_atheta)
 
     best_eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 

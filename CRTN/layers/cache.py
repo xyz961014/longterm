@@ -32,7 +32,7 @@ class Cache(nn.Module):
         self.N = self.args.cache_N
         self.dv = self.args.nhid
         self.topk = self.args.cache_k
-        self.theta = self.args.theta
+        self.theta = self.args.cache_theta
 
         self.pos_emb = PositionalEmbedding(args.nhid)
 

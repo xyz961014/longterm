@@ -547,7 +547,7 @@ class TransformerLM(nn.Module):
         self.same_length = args.same_length
         self.same_length_query = args.same_length_query
 
-        self.theta = self.args.theta
+        self.theta = self.args.attn_theta
 
         if adaptive:
             self.embedding = AdaptiveEmbedding(vocab_size, d_embedding, d_model, 
