@@ -343,8 +343,12 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         else:
             output, hidden = model(text, key, value, cache_info=cache_info)
 
-        module, cache_info, key, value = update_cache(module, text.size(1), 
-                                                   key, value, hidden, text, cache_info)
+        module, cache_info, key, value = update_cache(module, 
+                                                      text.size(1), 
+                                                      key, value, 
+                                                      hidden, 
+                                                      text, 
+                                                      cache_info)
 
         if args.adaptive:
             loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))
@@ -501,11 +505,11 @@ def evaluate(model, eval_loader, criterion, writer, args):
                     output, hidden = model(text, key, value, cache_info=cache_info)
 
                 module, cache_info, key, value = update_cache(module, 
-                                                           text.size(1), 
-                                                           key, value, 
-                                                           hidden, 
-                                                           text, 
-                                                           cache_info)
+                                                              text.size(1), 
+                                                              key, value, 
+                                                              hidden, 
+                                                              text, 
+                                                              cache_info)
 
                 if args.adaptive:
                     loss_tensor = criterion(output.view(-1, args.nhid), 
