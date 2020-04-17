@@ -56,13 +56,17 @@ class Cache(nn.Module):
 
     def forward(self, query, keys):
 
+        if self.args.summary_method == "no_summary" and not self.L == query.size(1):
+            padding = query.new_zeros(query.size(0), 
+                                      self.L - query.size(1), 
+                                      *query.size()[2:])
+            query = torch.cat((query, padding), dim=1)
         query = query.transpose(1, 2)
         query_len, bsz = query.size(0), query.size(1)
         query = query.reshape(query_len, bsz, -1)
         
         keys = keys.transpose(0, 1)
         
-        #print(query.device, keys.device, values.device)
         if self.args.max_pooling:
             pooling_keys = keys.view(-1, self.N, self.args.num_steps, self.args.nhid)
             attention = torch.einsum("ibh,bnjh->ijbn", query, pooling_keys)
