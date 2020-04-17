@@ -815,7 +815,7 @@ def main(args):
         criterion = nn.CrossEntropyLoss()
 
     
-    nonemb_param = list(model.encoder.layers.parameters())
+    nonemb_param = list(model.encoder.layers.parameters()) + list(model.cache.parameters())
     emb_param = list(model.encoder.embedding.parameters())
     if args.rank == 0:
         nonemb_param_num = sum([p.numel() for p in nonemb_param])
