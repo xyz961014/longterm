@@ -1,6 +1,7 @@
 import time
 from datetime import datetime
 import os
+import re
 import sys
 import argparse
 import socket
@@ -693,7 +694,7 @@ def main(args):
         criterion = nn.CrossEntropyLoss()
 
 
-    nonemb_param = list(model.layers.parameters())
+    nonemb_param = [p for n, p in model.named_parameters() if not re.search("embedding", n)]
     emb_param = list(model.embedding.parameters())
     if args.rank == 0:
         nonemb_param_num = sum([p.numel() for p in nonemb_param])

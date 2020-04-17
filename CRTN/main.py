@@ -4,6 +4,7 @@ import os
 import sys
 import argparse
 import socket
+import re
 from copy import copy
 from tqdm import tqdm
 
@@ -815,7 +816,7 @@ def main(args):
         criterion = nn.CrossEntropyLoss()
 
     
-    nonemb_param = list(model.encoder.layers.parameters()) + list(model.cache.parameters())
+    nonemb_param = [p for n, p in model.named_parameters() if not re.search("embedding", n)]
     emb_param = list(model.encoder.embedding.parameters())
     if args.rank == 0:
         nonemb_param_num = sum([p.numel() for p in nonemb_param])
