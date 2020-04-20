@@ -39,6 +39,7 @@ python main.py \
     --query_method single \
     --eval_steps 3000 \
     --log-interval 100 \
+    --same_length_query \
     --distributed \
     ${@:1}
 
