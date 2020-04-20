@@ -14,7 +14,7 @@ python main.py \
     --warmup_steps 20000 \
     --dropout 0.6 \
     --dropatt 0.3 \
-    --dropemb 0.1 \
+    --dropemb 0.15 \
     --dropinp 0.65 \
     --dropwei 0 \
     --dropfor 0.25 \
@@ -35,7 +35,7 @@ python main.py \
     --adaptive \
     --cutoffs 2000 4000 8000 \
     --farnear \
-    --summary_method sum \
+    --summary_method last_state \
     --query_method single \
     --eval_steps 3000 \
     --log-interval 100 \
