@@ -16,14 +16,19 @@ class Cache(nn.Module):
         self.corpus = corpus
         #self.demo = self.args.demo
         if self.args.summary_method == "no_summary":
-            self.dk = self.args.cache_L * self.args.nhid
+            self.dk = args.cache_L * args.nhid
         elif self.args.summary_method in ["sum", "max", "mean", "last_state"]:
-            self.dk = self.args.nhid
+            self.dk = args.nhid
         elif self.args.summary_method == "weighted_sum":
-            self.dk = self.args.nhid
+            self.dk = args.nhid
             self.summary = nn.Linear(args.cache_L, 1, bias=False)
+        elif self.args.summary_method == "conv":
+            self.dk = args.nhid
+            self.summary = nn.Conv1d(args.nhead, args.nhead, args.nhid // args.nhead, 
+                                     stride=args.cache_L, 
+                                     padding=math.ceil((args.nhid // args.nhead - args.nhead) / 2))
         elif self.args.summary_method == "linear":
-            self.dk = self.args.cache_dk
+            self.dk = args.cache_dk
             self.summary = nn.Linear(args.nhid * args.cache_L, args.cache_dk)
 
         self.attn = DotProductAttention()
@@ -90,15 +95,19 @@ class Cache(nn.Module):
         
         input_blocks = inputs.split(self.L, dim=2)
     
+        key_blocks = list(keys.split(1))
+        value_blocks = list(values.split(1))
         for input_block in input_blocks:    
             if self.args.merge:
-                key_blocks, value_blocks, cache_info = self.merge(keys, values, cache_info)
+                key_blocks, value_blocks, cache_info = self.merge(key_blocks, 
+                                                                  value_blocks, 
+                                                                  cache_info)
             elif self.args.discard_worst:
-                key_blocks, value_blocks, cache_info = self.discard_worst(keys, 
-                                                                          values, 
+                key_blocks, value_blocks, cache_info = self.discard_worst(key_blocks, 
+                                                                          value_blocks, 
                                                                           cache_info)
             else:
-                key_blocks, value_blocks = self.eliminate_last(keys, values)
+                key_blocks, value_blocks = self.eliminate_last(key_blocks, value_blocks)
 
             if self.args.summary_method == "no_summary":
                 new_key = input_block[-1].reshape(self.batch_size, -1)
@@ -112,6 +121,11 @@ class Cache(nn.Module):
                 new_key = input_block[-1,:,-1,:]
             elif self.args.summary_method == "weighted_sum":
                 new_key = self.summary(input_block[-1].transpose(1, 2)).squeeze(-1)
+            elif self.args.summary_method == "conv":
+                key_base = input_block[-1].reshape(*input_block.size()[1:3], self.args.nhead, -1)
+                key_base = key_base.transpose(1, 2)
+                key_base = key_base.reshape(*key_base.size()[:2], -1)
+                new_key = self.summary(key_base).reshape(key_base.size(0), -1)
             elif self.args.summary_method == "linear":
                 new_key = F.sigmoid(self.summary(input_block[-1].reshape(-1, self.L * self.dv)))
 
@@ -122,16 +136,14 @@ class Cache(nn.Module):
             key_blocks[-1] = new_key.unsqueeze(0).detach()
             value_blocks[-1] = new_value.transpose(0, 1).unsqueeze(0).detach()
             
-            keys = torch.cat(key_blocks, 0)
-            values = torch.cat(value_blocks, 0)
+        keys = torch.cat(key_blocks, 0)
+        values = torch.cat(value_blocks, 0)
         
         return keys, values, cache_info.detach()
 
 
-    def eliminate_last(self, keys, values):
+    def eliminate_last(self, key_blocks, value_blocks):
 
-        key_blocks = list(keys.split(1))
-        value_blocks = list(values.split(1))
         for i in range(self.N - 1):
             key_blocks[i] = key_blocks[i+1]
             value_blocks[i] = value_blocks[i+1]
@@ -140,11 +152,8 @@ class Cache(nn.Module):
 
         return key_blocks, value_blocks
 
-    def merge(self, keys, values, cache_info):
+    def merge(self, key_blocks, value_blocks, cache_info):
         
-        key_blocks = list(keys.split(1))
-        value_blocks = list(values.split(1))
-
         eli_key = key_blocks[0]
         eli_value = value_blocks[0]
 
@@ -173,10 +182,7 @@ class Cache(nn.Module):
         cache_info = torch.cat((pos, recall), dim=-1)
         return key_blocks, value_blocks, cache_info
 
-    def discard_worst(self, keys, values, cache_info):
-
-        key_blocks = list(keys.split(1))
-        value_blocks = list(values.split(1))
+    def discard_worst(self, key_blocks, value_blocks, cache_info):
 
         pos, recalls, queries = cache_info.chunk(3, dim=-1)
         recall_mean = recalls / queries

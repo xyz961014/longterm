@@ -155,14 +155,14 @@ def parse_args():
                         help='use max pooling to justice importance' 
                         'of segments in the cache')
     parser.add_argument('--query_method', type=str, default='single', 
-                        choices=['last_l', 'middle_l', 'linear', 'single', 
-                                 'single_linear', 'vanilla'],
+                        choices=['vanilla', 'last_l', 'middle_l', 'linear', 'single', 
+                                 'single_linear'],
                         help='method to compute query of words. vanilla indicates '
                         'use current segment to query, other methods link previous '
                         'segment.')
     parser.add_argument('--summary_method', type=str, default='no_summary', 
                         choices=['no_summary', 'max', 'mean', 'sum', 
-                                 'weighted_sum', 'last_state', 'linear'],
+                                 'weighted_sum', 'last_state', 'linear', 'conv'],
                         help='method to summary key of segments')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
