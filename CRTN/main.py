@@ -142,6 +142,8 @@ def parse_args():
                         help="dimension of key, default: 240")
     parser.add_argument("--cache_k", type=int, default=3, 
                         help="select top k values, default: 3")
+    parser.add_argument("--cache_L", type=int, default=20, 
+                        help="length of segments in cache, default: 20")
     parser.add_argument('--adaptive', action="store_true",
                         help='use adaptive embedding and softmax')
     parser.add_argument('--vocab_size', type=int, default=10000,
@@ -725,6 +727,10 @@ def main(args):
             print("REDEFINE cache_k: {} --> {}".format(model_args.cache_k, 
                                                        args.cache_k))
             model_args.cache_k = args.cache_k
+        if not model_args.cache_L == args.cache_L:
+            print("REDEFINE cache_L: {} --> {}".format(model_args.cache_L, 
+                                                       args.cache_L))
+            model_args.cache_L = args.cache_L
         if not model_args.clamp_len == args.clamp_len:
             print("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
                                                          args.clamp_len))
@@ -756,7 +762,7 @@ def main(args):
 
         args = model_args
         
-    args.mem_len = args.cache_k * args.num_steps
+    args.mem_len = args.cache_k * args.cache_L
     if not args.eval:
         args.theta = (1 / args.theta_annealing_alpha) ** (total_steps // args.theta_annealing_steps)
     else:

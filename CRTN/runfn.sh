@@ -28,6 +28,7 @@ python main.py \
     --eval_batch_size 10 \
     --num_steps 80 \
     --neighbor_len 80 \
+    --cache_L 80 \
     --cache_k 2 \
     --cache_N 5 \
     --tied \

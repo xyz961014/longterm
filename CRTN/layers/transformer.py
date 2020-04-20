@@ -218,8 +218,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
             x = x[inf_ind].unsqueeze(0)
 
         if cache is not None:
-            cache_num, cache_ulen = cache.size(0), cache.size(1)
-            cache_len = cache_num * cache_ulen
+            cache_num, cache_L = cache.size(0), cache.size(1)
+            cache_len = cache_num * cache_L
             cache = cache.view(cache_num * cache.size(1), -1, nhid)
             if not batch_size == cache.size(1):
                 cache.unsqueeze_(1)
@@ -285,10 +285,10 @@ class LearnableMultiheadSelfAttention(nn.Module):
         if indice_bool is not None:
             pre_AC = torch.einsum("ibnd,ibk->kibnd", heads_qu, indice_bool)
             pre_BD = torch.einsum("ibnd,ibk->kibnd", heads_qv, indice_bool)
-            cache_k = cache_k.view(cache_num, cache_ulen, batch_size, self.num_head, self.d_head)
-            cache_v = cache_v.view(cache_num, cache_ulen, batch_size, self.num_head, self.d_head)
+            cache_k = cache_k.view(cache_num, cache_L, batch_size, self.num_head, self.d_head)
+            cache_v = cache_v.view(cache_num, cache_L, batch_size, self.num_head, self.d_head)
 
-            rel_cache = rel_cache.view(cache_num, cache_ulen, batch_size, self.num_head, self.d_head)
+            rel_cache = rel_cache.view(cache_num, cache_L, batch_size, self.num_head, self.d_head)
             if self.apex:
                 cache_AC = bmm_einsum(pre_AC, cache_k, "kibnd,kjbnd->ikjbn")
                 cache_BD = bmm_einsum(pre_BD, rel_cache, "kibnd,kjbnd->ikjbn")
@@ -428,7 +428,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         if cache_len > 0:
             if weights is not None:
-                prob_cache = prob_cache.reshape(prob_cache.size(0), -1, cache_ulen, 
+                prob_cache = prob_cache.reshape(prob_cache.size(0), -1, cache_L, 
                                                 batch_size, self.num_head)
                 prob_cache = torch.einsum("ikjbn,ibk->ikjbn", prob_cache, weights)
             prob_cache = prob_cache.view(prob_cache.size(0), -1, *prob_cache.shape[3:])
@@ -622,7 +622,7 @@ class TransformerLM(nn.Module):
     def forward(self, inputs, cache_info=None, values=None, weights=None, indices=None, words=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None):
         #input shape should be seq_len * bsz or seq_len * bsz * emsize
 
-        cache_ulen = self.args.num_steps
+        cache_L = self.args.cache_L
         if inputs.dim() == 2:
             word_emb = self.embedding(inputs)
             seq_len, batch_size = inputs.size()
@@ -661,8 +661,8 @@ class TransformerLM(nn.Module):
                 alpha = self.args.merge_alpha
                 if alpha == 1.0:
                     alpha -= 1e-10
-                pos_shift = pos_seq.new_ones(cache_ulen) * cache_ulen * alpha / (1 - alpha)
-                pos_pad = pos_seq.new_zeros(total_len - cache_ulen)
+                pos_shift = pos_seq.new_ones(cache_L) * cache_L * alpha / (1 - alpha)
+                pos_pad = pos_seq.new_zeros(total_len - cache_L)
                 seq_shift = torch.cat((pos_shift, pos_pad), 0)
                 pos_seq += seq_shift
 
@@ -677,10 +677,10 @@ class TransformerLM(nn.Module):
                 else:
                     pos_key = cache_info[:,:,0]
                 pos_start = torch.einsum("ib,j->bij", pos_key, 
-                                         pos_key.new_ones(cache_ulen) * cache_ulen)
+                                         pos_key.new_ones(cache_L) * cache_L)
                 if self.args.farnear:
-                    pos_start += self.args.neighbor_len
-                pos_seq = pos_start + torch.arange(cache_ulen - 1, -1, -1, 
+                    pos_start += nei_len
+                pos_seq = pos_start + torch.arange(cache_L - 1, -1, -1, 
                                                    dtype=pos_key.dtype, 
                                                    device=pos_key.device)
                 pos_seq = pos_seq.reshape(batch_size, -1)

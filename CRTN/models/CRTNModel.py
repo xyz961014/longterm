@@ -32,7 +32,7 @@ class CRTNModel(nn.Module):
             if args.farnear:
                 if args.summary_method == "no_summary":
                     self.shorten = nn.Linear(args.num_steps + args.neighbor_len, 
-                                             args.num_steps)
+                                             args.cache_L)
                 elif args.summary_method == "linear":
                     self.shorten = nn.Linear((args.num_steps + args.neighbor_len) * args.nhid, 
                                               args.cache_dk) 
@@ -220,9 +220,10 @@ class CRTNModel(nn.Module):
                                               *total_mem.size()[2:])
                 total_mem = torch.cat((total_mem, padding), dim=1)
 
-            hidden, neighbor_mem = total_mem.split([self.cache.L, 
-                                                    total_mem.size(1) - self.cache.L], 
-                                                   dim=1)
+            cache_blocks = max(1, (total_mem.size(1) - nei_len) // self.cache.L)
+            cache_len = cache_blocks * self.cache.L
+            nei_len = total_mem.size(1) - cache_len
+            hidden, neighbor_mem = total_mem.split([cache_len, nei_len], dim=1)
             neighbor_mem = neighbor_mem.reshape(-1, bsz, nhid)
 
         hidden = hidden.transpose(1, 2)

@@ -16,20 +16,20 @@ class Cache(nn.Module):
         self.corpus = corpus
         #self.demo = self.args.demo
         if self.args.summary_method == "no_summary":
-            self.dk = self.args.num_steps * self.args.nhid
+            self.dk = self.args.cache_L * self.args.nhid
         elif self.args.summary_method in ["sum", "max", "mean", "last_state"]:
             self.dk = self.args.nhid
         elif self.args.summary_method == "weighted_sum":
             self.dk = self.args.nhid
-            self.summary = nn.Linear(args.num_steps, 1)
+            self.summary = nn.Linear(args.cache_L, 1, bias=False)
         elif self.args.summary_method == "linear":
             self.dk = self.args.cache_dk
-            self.summary = nn.Linear(args.nhid * args.num_steps, args.cache_dk)
+            self.summary = nn.Linear(args.nhid * args.cache_L, args.cache_dk)
 
         self.attn = DotProductAttention()
 
         self.batch_size = args.batch_size
-        self.L = self.args.num_steps
+        self.L = self.args.cache_L
         self.N = self.args.cache_N
         self.dv = self.args.nhid
         self.topk = self.args.cache_k
@@ -68,7 +68,7 @@ class Cache(nn.Module):
         keys = keys.transpose(0, 1)
         
         if self.args.max_pooling:
-            pooling_keys = keys.view(-1, self.N, self.args.num_steps, self.args.nhid)
+            pooling_keys = keys.view(-1, self.N, self.L, self.args.nhid)
             attention = torch.einsum("ibh,bnjh->ijbn", query, pooling_keys)
             attention = attention.max(1)[0]
             attention = F.softmax(self.theta * attention / np.sqrt(pooling_keys.size(-1)), 2)
@@ -88,39 +88,42 @@ class Cache(nn.Module):
 
         keys, values = keys.detach(), values.detach()
         
-        if self.args.merge:
-            key_blocks, value_blocks, cache_info = self.merge(keys, values, cache_info)
-        elif self.args.discard_worst:
-            key_blocks, value_blocks, cache_info = self.discard_worst(keys, 
-                                                                      values, 
-                                                                      cache_info)
-        else:
-            key_blocks, value_blocks = self.eliminate_last(keys, values)
+        input_blocks = inputs.split(self.L, dim=2)
+    
+        for input_block in input_blocks:    
+            if self.args.merge:
+                key_blocks, value_blocks, cache_info = self.merge(keys, values, cache_info)
+            elif self.args.discard_worst:
+                key_blocks, value_blocks, cache_info = self.discard_worst(keys, 
+                                                                          values, 
+                                                                          cache_info)
+            else:
+                key_blocks, value_blocks = self.eliminate_last(keys, values)
 
-        if self.args.summary_method == "no_summary":
-            new_key = inputs[-1].reshape(self.batch_size, -1)
-        elif self.args.summary_method == "sum":
-            new_key = inputs[-1].sum(dim=1)
-        elif self.args.summary_method == "max":
-            new_key, _ = inputs[-1].max(dim=1)
-        elif self.args.summary_method == "mean":
-            new_key = inputs[-1].mean(dim=1)
-        elif self.args.summary_method == "last_state":
-            new_key = inputs[-1,:,-1,:]
-        elif self.args.summary_method == "weighted_sum":
-            new_key = F.sigmoid(self.summary(inputs[-1].transpose(1, 2)).squeeze(-1))
-        elif self.args.summary_method == "linear":
-            new_key = F.sigmoid(self.summary(inputs[-1].reshape(-1, self.L * self.dv)))
+            if self.args.summary_method == "no_summary":
+                new_key = input_block[-1].reshape(self.batch_size, -1)
+            elif self.args.summary_method == "sum":
+                new_key = input_block[-1].sum(dim=1)
+            elif self.args.summary_method == "max":
+                new_key, _ = input_block[-1].max(dim=1)
+            elif self.args.summary_method == "mean":
+                new_key = input_block[-1].mean(dim=1)
+            elif self.args.summary_method == "last_state":
+                new_key = input_block[-1,:,-1,:]
+            elif self.args.summary_method == "weighted_sum":
+                new_key = self.summary(input_block[-1].transpose(1, 2)).squeeze(-1)
+            elif self.args.summary_method == "linear":
+                new_key = F.sigmoid(self.summary(input_block[-1].reshape(-1, self.L * self.dv)))
 
-        new_value = torch.einsum("mblh->lbmh", 
-                                 inputs
-                                 ).reshape(self.L, -1, (self.args.nlayers+1) * self.dv)
+            new_value = torch.einsum("mblh->lbmh", 
+                                     input_block
+                                     ).reshape(self.L, -1, (self.args.nlayers+1) * self.dv)
 
-        key_blocks[-1] = new_key.unsqueeze(0).detach()
-        value_blocks[-1] = new_value.transpose(0, 1).unsqueeze(0).detach()
-        
-        keys = torch.cat(key_blocks, 0)
-        values = torch.cat(value_blocks, 0)
+            key_blocks[-1] = new_key.unsqueeze(0).detach()
+            value_blocks[-1] = new_value.transpose(0, 1).unsqueeze(0).detach()
+            
+            keys = torch.cat(key_blocks, 0)
+            values = torch.cat(value_blocks, 0)
         
         return keys, values, cache_info.detach()
 
