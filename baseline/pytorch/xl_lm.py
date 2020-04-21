@@ -104,6 +104,8 @@ def parse_args():
                         help='forward layers dropout')
     parser.add_argument('--drophid', type=float, default=0.0,
                         help='hidden layers dropout')
+    parser.add_argument('--dropmos', type=float, default=0.2,
+                        help='MoS latent layers dropout')
     # hyperparams
     parser.add_argument('--emsize', type=int, default=380,
                         help='size of word embeddings')
@@ -142,6 +144,10 @@ def parse_args():
                         help='use the same pos embeddings after clamp_len')
     parser.add_argument('--same_length', action='store_true',
                         help='use the same attn length for all tokens')
+    parser.add_argument('--mos', action='store_true',
+                        help='use mixture of softmaxes (Yang et al. 2018)')
+    parser.add_argument('--n_experts', type=int, default=10,
+                        help='number of experts in mos')
     # training setting
     parser.add_argument('--std_epochs', type=int, default=150,
                         help='number of epochs of standard training')
@@ -229,6 +235,14 @@ def batch_division(batch_size, rank=0, world_size=None, single_value=False):
         else:
             return batch_size - batch_div * rank
 
+def param_in(p, params):
+    for param in params:
+        if p.equal(param):
+            return True
+    else:
+        return False
+        
+
 
 def train(model, train_loader, valid_loader, criterion, scheduler, 
           args, epoch, step, optimizer, best_eval_ppl, writer, ema=None):
@@ -261,7 +275,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         output, memory = model(text, memory)
 
         if args.adaptive:
-            loss = criterion(output.view(-1, args.nhid), targets.view(-1))
+            loss = criterion(output, targets)
             loss = loss.mean()
         else:
             loss = criterion(output.view(-1, args.vocab_size), targets.view(-1))
@@ -401,8 +415,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
                 output, memory = model(text, memory)
 
                 if args.adaptive:
-                    loss_tensor = criterion(output.view(-1, args.nhid), 
-                                            targets.view(-1),
+                    loss_tensor = criterion(output, targets,
                                             keep_order=True,
                                             temperature=args.eval_temperature)
                     loss = loss_tensor.sum()
@@ -681,7 +694,10 @@ def main(args):
                                                 args.cutoffs, 
                                                 div_val=args.div_val, 
                                                 init_std=args.init_std,
-                                                proj_init_std=args.proj_init_std
+                                                proj_init_std=args.proj_init_std,
+                                                mos=args.mos,
+                                                n_experts=args.n_experts,
+                                                dropmos=args.dropmos
                                                 ) 
         if args.tied:
             for i in range(len(criterion.out_layers)):
@@ -698,8 +714,9 @@ def main(args):
         criterion = nn.CrossEntropyLoss()
 
 
-    nonemb_param = [p for n, p in model.named_parameters() if not re.search("embedding", n)]
     emb_param = list(model.embedding.parameters())
+    nonemb_param = [p for p in model.parameters() if not param_in(p, emb_param)] + \
+                   [p for p in criterion.parameters() if not param_in(p, emb_param)]
     if args.rank == 0:
         nonemb_param_num = sum([p.numel() for p in nonemb_param])
         emb_param_num = sum([p.numel() for p in emb_param])

@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import sys
 sys.path.append("../..")
 from CRTN.utils.fancy_dropout import embedded_dropout
+from torchnlp.nn import LockedDropout
 
 CUDA_MAJOR = int(torch.version.cuda.split('.')[0])
 CUDA_MINOR = int(torch.version.cuda.split('.')[1])
@@ -90,12 +91,14 @@ class AdaptiveEmbedding(nn.Module):
 
 class ProjectedAdaptiveLogSoftmax(nn.Module):
     def __init__(self, n_token, d_embed, d_proj, cutoffs, div_val=1, init_std=0.02,
-                 proj_init_std=0.01, keep_order=False):
+                 proj_init_std=0.01, keep_order=False, mos=False, n_experts=10, dropmos=0.5):
         super().__init__()
 
         self.n_token = n_token
         self.d_embed = d_embed
         self.d_proj = d_proj
+        self.mos = mos
+        self.n_experts = n_experts
 
         self.cutoffs = cutoffs + [n_token]
         self.cutoff_ends = [0] + self.cutoffs
@@ -106,6 +109,11 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
         self.shortlist_size = self.cutoffs[0]
         self.n_clusters = len(self.cutoffs) - 1
         self.head_size = self.shortlist_size + self.n_clusters
+
+        if mos:
+            self.prior = nn.Linear(d_proj, n_experts, bias=False)
+            self.latent = nn.Sequential(nn.Linear(d_proj, n_experts * d_embed), nn.Tanh())
+            self.dropmos = LockedDropout(dropmos)
 
         if self.n_clusters > 0:
             self.cluster_weight = nn.Parameter(torch.zeros(self.n_clusters, self.d_embed))
@@ -173,12 +181,22 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
             raise RuntimeError('Input and target should have the same size '
                                'in the batch dimension.')
 
+        if self.mos:
+            nhid = hidden.size(-1)
+            prior_logit = self.prior(hidden).reshape(-1, self.n_experts)
+            prior = F.softmax(prior_logit, dim=-1)
+            hidden = self.latent(hidden)
+            hidden = self.dropmos(hidden).reshape(-1, nhid)
+            target = target.reshape(-1)
+        else:
+            hidden = hidden.reshape(-1, hidden.size(-1))
+            target = target.reshape(-1)
+
         if self.n_clusters == 0:
             logit = self._compute_logit(hidden, self.out_layers[0].weight,
                                         self.out_layers[0].bias, self.out_projs[0])
             logit = logit / temperature
-            nll = -F.log_softmax(logit, dim=-1) \
-                    .gather(1, target.unsqueeze(1)).squeeze(1)
+            nll = -F.log_softmax(logit, dim=-1).gather(1, target.unsqueeze(1)).squeeze(1)
         else:
             # construct weights and biases
             weights, biases = [], []
@@ -204,7 +222,11 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
 
             head_logit = self._compute_logit(hidden, head_weight, head_bias, head_proj)
             head_logit = head_logit / temperature
-            head_logprob = F.log_softmax(head_logit, dim=1)
+            if self.mos:
+                head_prob = F.softmax(head_logit, dim=-1).view(-1, self.n_experts, head_weight.size(0))
+                head_logprob = torch.einsum("bk,bkn->bkn", prior, head_prob).sum(1).log()
+            else:
+                head_logprob = F.log_softmax(head_logit, dim=1)
 
             nll = torch.zeros_like(target,
                     dtype=hidden.dtype, device=hidden.device)
@@ -231,15 +253,28 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                 else:
                     weight_i, bias_i, proj_i = weights[i], biases[i], self.out_projs[i]
 
-                    hidden_i = hidden.index_select(0, indices_i)
+                    if self.mos:
+                        hidden_i = hidden.reshape(-1, self.n_experts, nhid).index_select(0, indices_i)
+                        hidden_i = hidden_i.reshape(-1, nhid)
+                        prior_i = prior.index_select(0, indices_i)
+                    else:
+                        hidden_i = hidden.index_select(0, indices_i)
 
                     tail_logit_i = self._compute_logit(hidden_i, weight_i, bias_i, proj_i)
                     tail_logit_i = tail_logit_i / temperature
-                    tail_logprob_i = F.log_softmax(tail_logit_i, dim=1)
+                    if self.mos:
+                        tail_prob_i = F.softmax(tail_logit_i, dim=-1).view(-1, self.n_experts, weights[i].size(0))
+                        tail_logprob_i = torch.einsum("bk,bkn->bkn", prior_i, tail_prob_i).sum(1).log()
+                    else:
+                        tail_logprob_i = F.log_softmax(tail_logit_i, dim=1)
 
                     tail_logit_output = self._compute_logit(hidden, weight_i, bias_i, proj_i)
                     tail_logit_output = tail_logit_output / temperature
-                    tail_logprob_output = F.log_softmax(tail_logit_output, dim=1)
+                    if self.mos:
+                        tail_prob_output = F.softmax(tail_logit_output, dim=-1).view(-1, self.n_experts, weight_i.size(0))
+                        tail_logprob_output = torch.einsum("bk,bkn->bkn", prior, tail_prob_output).sum(1).log()
+                    else:
+                        tail_logprob_output = F.log_softmax(tail_logit_output, dim=1)
                     tail_probs.append(tail_logprob_output)
 
                     logprob_i = head_logprob_i[:, -i] \

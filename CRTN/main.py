@@ -304,6 +304,13 @@ def update_cache(model, batch_size, key, value, hidden, text, cache_info):
                                                  values=value)
     return model, cache_info, keys, values
 
+def param_in(p, params):
+    for param in params:
+        if p.equal(param):
+            return True
+    else:
+        return False
+ 
 
 def train(model, train_loader, valid_loader, criterion, scheduler, 
           args, epoch, step, optimizer, best_eval_ppl, writer, ema=None):
@@ -824,8 +831,9 @@ def main(args):
         criterion = nn.CrossEntropyLoss()
 
     
-    nonemb_param = [p for n, p in model.named_parameters() if not re.search("embedding", n)]
     emb_param = list(model.encoder.embedding.parameters())
+    nonemb_param = [p for p in model.parameters() if not param_in(p, emb_param)] + \
+                   [p for p in criterion.parameters() if not param_in(p, emb_param)]
     if args.rank == 0:
         nonemb_param_num = sum([p.numel() for p in nonemb_param])
         emb_param_num = sum([p.numel() for p in emb_param])
