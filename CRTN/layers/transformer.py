@@ -240,8 +240,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         heads_q = self.lin_q(x)
         heads_q = heads_q.view(heads_q.size(0), batch_size, self.num_head, self.d_head)
-        heads_qu = heads_q + pos_bias_u
-        heads_qv = heads_q + pos_bias_v
+        heads_qu = heads_q + pos_bias_u if pos_bias_u is not None else heads_q
+        heads_qv = heads_q + pos_bias_v if pos_bias_v is not None else heads_q
 
         inp_matrix = self.lin_kv(x)
         inp_k, inp_v = torch.chunk(inp_matrix, 2, dim=-1)
@@ -571,9 +571,13 @@ class TransformerLM(nn.Module):
         self.dropout = LockedDropout(args.dropout)
         self.dropinp = LockedDropout(args.dropinp)
 
-
-        self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
-        self.pos_bias_v = nn.Parameter(torch.Tensor(num_head, d_head))
+        if not args.no_pos_bias:
+            self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
+            self.pos_bias_v = nn.Parameter(torch.Tensor(num_head, d_head))
+            self.init_weights(init_std)
+        else:
+            self.pos_bias_u = None
+            self.pos_bias_v = None
 
         if args.stat:
             self.select_stat = nn.Parameter(torch.zeros(args.cache_N), 
@@ -595,14 +599,13 @@ class TransformerLM(nn.Module):
                 apex=args.apex))
 
 
-        self.init_weights(init_std)
 
     def init_weights(self, init_std):
         nn.init.normal_(self.pos_bias_u, 0.0, init_std)
         nn.init.normal_(self.pos_bias_v, 0.0, init_std)
-        if not self.args.adaptive:
-            nn.init.normal_(self.embedding.weight, 0.0, init_std)
-            nn.init.normal_(self.decoder.weight, 0.0, init_std)
+        #if not self.args.adaptive:
+        #    nn.init.normal_(self.embedding.weight, 0.0, init_std)
+        #    nn.init.normal_(self.decoder.weight, 0.0, init_std)
 
     def init_hidden(self, batch_size):
         return self.init_memory(batch_size)

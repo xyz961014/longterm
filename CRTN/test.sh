@@ -9,7 +9,7 @@ python main.py \
     --dropatt 0.2 \
     --nlayers 2 \
     --nhead 4 \
-    --emsize 100 \
+    --emsize 80 \
     --nhid 80 \
     --d_ff 400 \
     --batch_size 200 \

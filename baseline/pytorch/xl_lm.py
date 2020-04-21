@@ -127,6 +127,8 @@ def parse_args():
                         help='parameters initialized by N(0.0, proj_init_std)')
     parser.add_argument('--tied', action="store_true",
                         help='tied embedding weights')
+    parser.add_argument('--no_pos_bias', action="store_true",
+                        help='disable pos bias u and v')
     parser.add_argument('--adaptive', action="store_true",
                         help='use adaptive embedding and softmax')
     parser.add_argument('--vocab_size', type=int, default=10000,
@@ -634,7 +636,8 @@ def main(args):
                 drophid=model_args.drophid,
                 theta=model_args.theta,
                 theta_alpha=model_args.theta_annealing_alpha,
-                apex=model_args.apex
+                apex=model_args.apex,
+                no_pos_bias=model_args.no_pos_bias
                 )
 
         model.load_state_dict(checkpoint["model_state_dict"])
@@ -666,7 +669,8 @@ def main(args):
                 drophid=args.drophid,
                 theta=args.theta,
                 theta_alpha=args.theta_annealing_alpha,
-                apex=args.apex
+                apex=args.apex,
+                no_pos_bias=args.no_pos_bias
                 )
 
     

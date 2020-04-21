@@ -222,8 +222,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         rel_emb_matrix = rel_emb_matrix.view(total_len, self.num_head, self.d_head)
 
-        heads_qu = heads_q + pos_bias_u
-        heads_qv = heads_q + pos_bias_v
+        heads_qu = heads_q + pos_bias_u if pos_bias_u is not None else heads_q
+        heads_qv = heads_q + pos_bias_v if pos_bias_v is not None else heads_q
 
         rel_emb_matrix = rel_emb_matrix.unsqueeze(1)
         rel_emb_matrix = rel_emb_matrix.expand(-1, heads_qv.size(1), -1, -1)
@@ -283,7 +283,7 @@ class TransformerUnit(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, dropfor=0.0, drophid=0.0, theta=1.0, theta_alpha=1.0, apex=False):
+    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, dropfor=0.0, drophid=0.0, theta=1.0, theta_alpha=1.0, apex=False, no_pos_bias=False):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layer = num_layer
@@ -320,8 +320,13 @@ class TransformerLM(nn.Module):
 
         self.pos_emb = PostionalEmbedding(d_model)
 
-        self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
-        self.pos_bias_v = nn.Parameter(torch.Tensor(num_head, d_head))
+        if not no_pos_bias:
+            self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
+            self.pos_bias_v = nn.Parameter(torch.Tensor(num_head, d_head))
+            self.init_weights(init_std)
+        else:
+            self.pos_bias_u = None
+            self.pos_bias_v = None
 
         self.dropout = LockedDropout(dropout)
         self.dropinp = LockedDropout(dropinp)
@@ -340,7 +345,6 @@ class TransformerLM(nn.Module):
                 dropfor=dropfor,
                 apex=apex))
 
-        self.init_weights(init_std)
 
     def theta_annealing_step(self):
         self.theta = self.theta * self.theta_alpha

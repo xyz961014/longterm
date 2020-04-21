@@ -166,6 +166,8 @@ def parse_args():
                         help='method to summary key of segments')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
+    parser.add_argument('--no_pos_bias', action="store_true",
+                        help='disable pos bias u and v')
     parser.add_argument('--farnear', action="store_true",
                         help='split history into two parts,'
                         ' near to compute query and attention; far to be queried')
