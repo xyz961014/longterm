@@ -6,6 +6,7 @@ import argparse
 import socket
 from copy import copy
 from tqdm import tqdm
+from itertools import chain
 
 #ignore future warning from tensorboard
 import warnings
@@ -246,6 +247,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
           args, epoch, step, optimizer, best_eval_ppl, writer, ema=None):
 
     model.train()
+    criterion.train()
     start_time = time.time()
     total_loss = 0.
     module = model.module if args.distributed else model
@@ -269,6 +271,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             text, targets = data.text.to(device), data.target.to(device)
 
         model.zero_grad()
+        criterion.zero_grad()
 
         output, memory = model(text, memory)
 
@@ -293,6 +296,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         else:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+            torch.nn.utils.clip_grad_norm_(criterion.parameters(), args.clip)
 
         optimizer.step()
 
@@ -305,7 +309,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 ema_mu = 1 / max(1, step - args.decay_steps)
             else:
                 ema_mu = args.mu
-            for p in model.parameters():
+            for p in chain(model.parameters(), criterion.parameters()):
                 ema[p].add_(p.data.sub(ema[p]).mul(ema_mu))
         else:
             if step <= args.warmup_steps:
@@ -371,6 +375,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
 def evaluate(model, eval_loader, criterion, writer, args):
 
     model.eval()
+    criterion.eval()
     module = model.module if args.distributed else model
 
     if torch.cuda.is_available():
@@ -451,6 +456,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
         len_eval = len_eval.item()
     ppl = math.exp(total_loss / len_eval)
     model.train()
+    criterion.train()
     return ppl
 
 
@@ -730,8 +736,8 @@ def main(args):
 
     model.apply(init_weights)
         
-    model = model.to(device)
-    criterion = criterion.to(device)
+    model.to(device)
+    criterion.to(device)
 
     param_list = [nonemb_param, emb_param]
     lr_list = [args.lr, args.lr * args.emb_mult]
@@ -814,7 +820,7 @@ def main(args):
                     writer.flush()                
 
             print("Starting EMA at epoch {}".format(epoch))
-            for p in model.parameters():
+            for p in chain(model.parameters(), criterion.parameters()):
                 ema[p] = p.data.clone()
             for k in range(len(optimizer.param_groups)):
                 optimizer.param_groups[k]["lr"] *= args.ema_lr_mult
@@ -836,7 +842,7 @@ def main(args):
                 tmp = dict()
 
                 # load ema params
-                for prm in model.parameters():
+                for prm in chain(model.parameters(), criterion.parameters()):
                     tmp[prm] = prm.data.clone()
                     prm.data.copy_(ema[prm])
 
@@ -868,7 +874,7 @@ def main(args):
                     writer.flush()                
 
                 # restore params
-                for prm in model.parameters():
+                for prm in chain(model.parameters(), criterion.parameters()):
                     prm.data.copy_(tmp[prm])
 
 

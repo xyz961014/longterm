@@ -34,11 +34,11 @@ def parse_args():
                         default='/home/xyz/Documents/Dataset/ptb_sample/',
                         help='location of the data corpus')
     parser.add_argument('--datasets', type=str, choices=["fromfile", "ptb", "wt103"], 
-                        default="fromfile", help='load datasets from torchtext')
+                        default="ptb", help='load datasets from torchtext')
     parser.add_argument('--vocab_size', type=int, default=10000,
                         help='size of vocabulary, excluding special chars')
     # optimization
-    parser.add_argument('--lr', type=float, default=3e-4,
+    parser.add_argument('--lr', type=float, default=0.002,
                         help='initial learning rate')
     # hyperparams
     parser.add_argument('--num_steps', type=int, default=70,
@@ -79,6 +79,7 @@ def parse_args():
 def gradstat(model, train_loader, criterion, args):
 
     model.train()
+    criterion.train()
 
     if torch.cuda.is_available():
         device = torch.device("cuda:" + str(args.device))
@@ -98,6 +99,7 @@ def gradstat(model, train_loader, criterion, args):
             text, targets = data.text.to(device), data.target.to(device)
 
             model.zero_grad()
+            criterion.zero_grad()
 
             output, memory = model(text, memory)
 
@@ -127,7 +129,9 @@ def gradstat(model, train_loader, criterion, args):
 
 def evaluate(model, eval_loader, criterion, args):
 
+
     model.train()
+    criterion.train()
 
     if torch.cuda.is_available():
         device = torch.device("cuda:" + str(args.device))
@@ -139,15 +143,10 @@ def evaluate(model, eval_loader, criterion, args):
     total_len = len(eval_loader)
     memory = None
 
-    model_prm, crit_prm = dict(), dict()
-    for prm in model.parameters():
-        model_prm[prm] = prm.data.clone()
-    for prm in criterion.parameters():
-        crit_prm[prm] = prm.data.clone()
 
     for param in chain(model.parameters(), criterion.parameters()):
         param.decrate = param.decrate.clamp(max=1/args.lamb)
-        param.data0 = param.data.clone()
+        param.data0 = param.data.clone().detach()
 
     with tqdm(total=total_len) as pbar:
         for i, data in enumerate(eval_loader):
@@ -156,6 +155,7 @@ def evaluate(model, eval_loader, criterion, args):
             len_eval += targets.view(-1).size(0)
 
             model.zero_grad()
+            criterion.zero_grad()
 
             output, memory = model(text, memory)
 
@@ -178,10 +178,8 @@ def evaluate(model, eval_loader, criterion, args):
 
     ppl = math.exp(total_loss / len_eval)
 
-    for prm in model.parameters():
-        prm.data.copy_(model_prm[prm])
-    for prm in criterion.parameters():
-        prm.data.copy_(crit_prm[prm])
+    for param in chain(model.parameters(), criterion.parameters()):
+        param.data.copy_(param.data0)
 
     return ppl
 
