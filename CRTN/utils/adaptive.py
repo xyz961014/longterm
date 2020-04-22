@@ -196,7 +196,12 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
             logit = self._compute_logit(hidden, self.out_layers[0].weight,
                                         self.out_layers[0].bias, self.out_projs[0])
             logit = logit / temperature
-            nll = -F.log_softmax(logit, dim=-1).gather(1, target.unsqueeze(1)).squeeze(1)
+            if self.mos:
+                prob = F.softmax(logit, dim=-1).view(-1, self.n_experts, self.n_token)
+                log_prob = torch.einsum("bk,bkn->bkn", prior, prob).sum(1).log()
+            else:
+                log_prob = F.log_softmax(logit, dim=-1)
+            nll = -log_prob.gather(1, target.unsqueeze(1)).squeeze(1)
         else:
             # construct weights and biases
             weights, biases = [], []
@@ -270,14 +275,15 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                     else:
                         tail_logprob_i = F.log_softmax(tail_logit_i, dim=1)
 
-                    tail_logit_output = self._compute_logit(hidden, weight_i, bias_i, proj_i)
-                    tail_logit_output = tail_logit_output / temperature
-                    if self.mos:
-                        tail_prob_output = F.softmax(tail_logit_output, dim=-1).view(-1, self.n_experts, weight_i.size(0))
-                        tail_logprob_output = torch.einsum("bk,bkn->bkn", prior, tail_prob_output).sum(1).log()
-                    else:
-                        tail_logprob_output = F.log_softmax(tail_logit_output, dim=1)
-                    tail_probs.append(tail_logprob_output)
+                    if output:
+                        tail_logit_output = self._compute_logit(hidden, weight_i, bias_i, proj_i)
+                        tail_logit_output = tail_logit_output / temperature
+                        if self.mos:
+                            tail_prob_output = F.softmax(tail_logit_output, dim=-1).view(-1, self.n_experts, weight_i.size(0))
+                            tail_logprob_output = torch.einsum("bk,bkn->bkn", prior, tail_prob_output).sum(1).log()
+                        else:
+                            tail_logprob_output = F.log_softmax(tail_logit_output, dim=1)
+                        tail_probs.append(tail_logprob_output)
 
                     logprob_i = head_logprob_i[:, -i] \
                               + tail_logprob_i.gather(1, target_i[:,None]).squeeze(1)

@@ -135,8 +135,7 @@ def parse_args():
                         help='use adaptive embedding and softmax')
     parser.add_argument('--vocab_size', type=int, default=10000,
                         help='size of vocabulary, excluding special chars')
-    parser.add_argument('--cutoffs', type=int, 
-                        default=[2000, 4000, 8000], nargs="+",
+    parser.add_argument('--cutoffs', type=int, default=[], nargs="+",
                         help='cutoffs for adaptive embedding')
     parser.add_argument('--div_val', type=int, default=1,
                         help='divident value for adaptive input and softmax')

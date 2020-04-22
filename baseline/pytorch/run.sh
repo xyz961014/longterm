@@ -31,7 +31,6 @@ python xl_lm.py \
     --tied \
     --seed 1111 \
     --adaptive \
-    --cutoffs 2000 4000 8000 \
     --eval_steps 3000 \
     --log-interval 100 \
     --distributed \
