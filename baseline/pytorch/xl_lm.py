@@ -1,7 +1,6 @@
 import time
 from datetime import datetime
 import os
-import re
 import sys
 import argparse
 import socket
@@ -581,7 +580,7 @@ def main(args):
 
         if not model_args.num_steps == args.num_steps:
             print("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
-                                                       args.num_steps))
+                                                         args.num_steps))
             model_args.num_steps = args.num_steps
         if not model_args.mem_len == args.mem_len:
             print("REDEFINE mem_len: {} --> {}".format(model_args.mem_len, 

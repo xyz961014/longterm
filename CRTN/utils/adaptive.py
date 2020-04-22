@@ -131,7 +131,7 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                 else:
                     self.out_projs.append(None)
 
-            self.out_layers.append(nn.Linear(d_embed, n_token, bias=False))
+            self.out_layers.append(nn.Linear(d_embed, n_token))
         else:
             for i in range(len(self.cutoffs)):
                 l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i+1]
@@ -141,7 +141,7 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                     nn.Parameter(torch.Tensor(d_proj, d_emb_i))
                 )
 
-                self.out_layers.append(nn.Linear(d_emb_i, r_idx-l_idx, bias=False))
+                self.out_layers.append(nn.Linear(d_emb_i, r_idx-l_idx))
 
         self.keep_order = keep_order
         self.init_weights()
@@ -156,7 +156,7 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
 
         for i in range(len(self.out_layers)):
             nn.init.normal_(self.out_layers[i].weight, 0.0, self.init_std)
-            #nn.init.constant_(self.out_layers[i].bias, 0.0)
+            nn.init.constant_(self.out_layers[i].bias, 0.0)
 
     def _compute_logit(self, hidden, weight, bias, proj):
         if proj is None:
@@ -209,12 +209,12 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                 if self.div_val == 1:
                     l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
                     weight_i = self.out_layers[0].weight[l_idx:r_idx]
-                    #bias_i = self.out_layers[0].bias[l_idx:r_idx]
-                    bias_i = weight_i.new_zeros(weight_i.size(0))
+                    bias_i = self.out_layers[0].bias[l_idx:r_idx]
+                    #bias_i = weight_i.new_zeros(weight_i.size(0))
                 else:
                     weight_i = self.out_layers[i].weight
-                    #bias_i = self.out_layers[i].bias
-                    bias_i = weight_i.new_zeros(weight_i.size(0))
+                    bias_i = self.out_layers[i].bias
+                    #bias_i = weight_i.new_zeros(weight_i.size(0))
 
                 if i == 0:
                     weight_i = torch.cat(
