@@ -110,6 +110,8 @@ def parse_args():
                         help='forward layers dropout')
     parser.add_argument('--drophid', type=float, default=0.0,
                         help='hidden layers dropout')
+    parser.add_argument('--dropmos', type=float, default=0.2,
+                        help='MoS latent layers dropout')
     # hyperparams
     parser.add_argument('--emsize', type=int, default=256,
                         help='size of word embeddings')
@@ -121,8 +123,6 @@ def parse_args():
                         help='number of heads')
     parser.add_argument('--d_ff', type=int, default=1024,
                         help='dimension of feed-forward')
-    parser.add_argument('--num_steps', type=int, default=20,
-                        help='sequence length')
     parser.add_argument('--batch_size', type=int, default=50, metavar='N',
                         help='batch size')
     parser.add_argument('--init_std', type=float, default=0.02,
@@ -137,6 +137,10 @@ def parse_args():
                         help='use the same attn length for all tokens')
     parser.add_argument('--same_length_query', action='store_true',
                         help='use the same attn length for all tokens in query')
+    parser.add_argument('--num_steps', type=int, default=20,
+                        help='sequence length')
+    parser.add_argument("--neighbor_len", type=int, default=50,
+                        help="length of near neighbor; only use in farnear mode")
     parser.add_argument("--cache_N", type=int, default=5, 
                         help="size of Cache, default: 5")
     parser.add_argument("--cache_dk", type=int, default=240, 
@@ -172,8 +176,6 @@ def parse_args():
     parser.add_argument('--farnear', action="store_true",
                         help='split history into two parts,'
                         ' near to compute query and attention; far to be queried')
-    parser.add_argument("--neighbor_len", type=int, default=50,
-                        help="length of near neighbor; only use in farnear mode")
     parser.add_argument('--merge', action="store_true",
                         help='merge history instead of discarding')
     parser.add_argument('--merge_shift', action="store_true",
@@ -186,6 +188,10 @@ def parse_args():
                         help='compute position encoding according to realtime pos')
     parser.add_argument('--div_val', type=int, default=1,
                         help='divident value for adaptive input and softmax')
+    parser.add_argument('--mos', action='store_true',
+                        help='use mixture of softmaxes (Yang et al. 2018)')
+    parser.add_argument('--n_experts', type=int, default=10,
+                        help='number of experts in mos')
     # training setting
     parser.add_argument('--std_epochs', type=int, default=150,
                         help='number of epochs of standard training')
@@ -368,7 +374,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                                                       cache_info)
 
         if args.adaptive:
-            loss = criterion(output.reshape(-1, args.nhid), targets.reshape(-1))
+            loss = criterion(output, targets)
             loss = loss.mean()
         else:
             loss = criterion(output.reshape(-1, args.vocab_size), targets.reshape(-1))
@@ -531,8 +537,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
                                                               cache_info)
 
                 if args.adaptive:
-                    loss_tensor = criterion(output.view(-1, args.nhid), 
-                                            targets.view(-1),
+                    loss_tensor = criterion(output, targets,
                                             keep_order=True,
                                             temperature=args.eval_temperature)
                     loss = loss_tensor.sum()
@@ -677,7 +682,7 @@ def main(args):
     torch.cuda.manual_seed_all(args.seed)
 
     if args.adaptive:
-        args.tie_projs = [False] + [True] * 3
+        args.tie_projs = [False] + [True] * len(args.cutoffs)
 
     if args.demo:
         args.batch_size = 1
@@ -728,7 +733,7 @@ def main(args):
 
         if not model_args.num_steps == args.num_steps:
             print("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
-                                                            args.num_steps))
+                                                         args.num_steps))
             model_args.num_steps = args.num_steps
         if not model_args.neighbor_len == args.neighbor_len:
             print("REDEFINE neighbor_len: {} --> {}".format(model_args.neighbor_len, 
@@ -818,7 +823,10 @@ def main(args):
                                                 args.cutoffs, 
                                                 div_val=args.div_val, 
                                                 init_std=args.init_std,
-                                                proj_init_std=args.proj_init_std
+                                                proj_init_std=args.proj_init_std,
+                                                mos=args.mos,
+                                                n_experts=args.n_experts,
+                                                dropmos=args.dropmos
                                                 ) 
         if args.tied:
             for i in range(len(criterion.out_layers)):

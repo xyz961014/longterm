@@ -7,8 +7,9 @@ from tqdm import tqdm
 from itertools import chain
 import pickle as pkl
 
-sys.path.append("../..")
-sys.path.append("../../CRTN/")
+sys.path.append("..")
+sys.path.append("../baseline")
+sys.path.append("../baseline/pytorch")
 
 import numpy as np
 import math
@@ -23,7 +24,7 @@ from torch.utils.data import DataLoader
 from CRTN.data.dataloader import TextDataset, ExistingDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from CRTN.utils.visual import TargetText
-from transformer import TransformerLM
+from models.CRTNModel import CRTNModel
 
 import ipdb
 
@@ -43,8 +44,14 @@ def parse_args():
     # hyperparams
     parser.add_argument('--num_steps', type=int, default=70,
                         help='sequence length')
-    parser.add_argument('--mem_len', type=int, default=70,
+    parser.add_argument('--neighbor_len', type=int, default=70,
                         help='length of memory')
+    parser.add_argument("--cache_N", type=int, default=5, 
+                        help="size of Cache, default: 5")
+    parser.add_argument("--cache_k", type=int, default=2, 
+                        help="select top k values, default: 3")
+    parser.add_argument("--cache_L", type=int, default=20, 
+                        help="length of segments in cache, default: 20")
     parser.add_argument('--batch_size', type=int, default=10, metavar='N',
                         help='batch size for gradient statistics')
     parser.add_argument('--eval_batch_size', type=int, default=10, metavar='N',
@@ -68,13 +75,39 @@ def parse_args():
     parser.add_argument('--eval_theta_search', action="store_true",
                         help='search best theta on valid set during test. 0.7-1/0.02')
     # setting
-    parser.add_argument("--theta", type=float, default=1.0, 
+    parser.add_argument("--cache_theta", type=float, default=1.0, 
+                        help="cache query theta, default: 1.0")
+    parser.add_argument("--attn_theta", type=float, default=1.0, 
                         help="attention theta, default: 1.0")
     parser.add_argument('--word_loss', action="store_true",
                         help='output loss of every word')
     parser.add_argument('--load', type=str, default='',
                         help='path to load the model')
     return parser.parse_args()
+
+def init_cache_info(args, device, evaluate=False):
+    """
+    store relative position of cahce chunk and its recall times
+    [pos, recall times, all query times]
+    """
+    batch_size = args.eval_batch_size if evaluate else args.batch_size
+    pos = torch.arange(args.cache_N, 0, -1, 
+                       dtype=torch.float,
+                       device=device)
+    recall_query = torch.zeros((args.cache_N, 2), dtype=torch.float, device=device)
+    cache_info = torch.cat((pos.unsqueeze(-1), recall_query), dim=-1).unsqueeze(1)
+    cache_info = cache_info.expand(-1, batch_size, -1).contiguous()
+    return cache_info
+
+def update_cache(model, batch_size, key, value, hidden, text, cache_info):
+    
+    keys, values, cache_info = model.cache.renew(hidden, 
+                                                 text, 
+                                                 cache_info, 
+                                                 keys=key, 
+                                                 values=value)
+    return model, cache_info, keys, values
+
 
 def gradstat(model, train_loader, criterion, args):
 
@@ -88,7 +121,10 @@ def gradstat(model, train_loader, criterion, args):
 
     total_loss = 0.
     total_len = len(train_loader)
-    memory = None
+    key, value = None, None
+    if args.farnear:
+        mem = None
+    cache_info = init_cache_info(args, device, True)
 
     for param in chain(model.parameters(), criterion.parameters()):
         param.MS = torch.zeros_like(param.data)
@@ -101,7 +137,21 @@ def gradstat(model, train_loader, criterion, args):
             model.zero_grad()
             criterion.zero_grad()
 
-            output, memory = model(text, memory)
+            if args.farnear:
+                if mem is not None:
+                    mem = mem.detach()
+                output, hidden, mem = model(text, key, value, 
+                                            neighbor_mem=mem, 
+                                            cache_info=cache_info)
+            else:
+                output, hidden = model(text, key, value, cache_info=cache_info)
+
+            model, cache_info, key, value = update_cache(model, 
+                                                          text.size(1), 
+                                                          key, value, 
+                                                          hidden, 
+                                                          text, 
+                                                          cache_info)
 
             if args.adaptive:
                 loss_tensor = criterion(output, targets,
@@ -109,7 +159,7 @@ def gradstat(model, train_loader, criterion, args):
                 loss = loss_tensor.sum()
             else:
                 loss = criterion(output.view(-1, args.vocab_size), 
-                                             targets.view(-1))
+                                 targets.view(-1))
 
             loss.backward()
             total_loss += loss.item()
@@ -141,7 +191,10 @@ def evaluate(model, eval_loader, criterion, args):
     total_loss = 0.
     len_eval = 0
     total_len = len(eval_loader)
-    memory = None
+    key, value = None, None
+    if args.farnear:
+        mem = None
+    cache_info = init_cache_info(args, device, True)
 
 
     for param in chain(model.parameters(), criterion.parameters()):
@@ -154,10 +207,27 @@ def evaluate(model, eval_loader, criterion, args):
             text, targets = data.text.to(device), data.target.to(device)
             len_eval += targets.view(-1).size(0)
 
+            eval_batch_size = text.size(1)
+            model.set_batch_size(eval_batch_size)
+
             model.zero_grad()
             criterion.zero_grad()
 
-            output, memory = model(text, memory)
+            if args.farnear:
+                if mem is not None:
+                    mem = mem.detach()
+                output, hidden, mem = model(text, key, value, 
+                                            neighbor_mem=mem, 
+                                            cache_info=cache_info)
+            else:
+                output, hidden = model(text, key, value, cache_info=cache_info)
+
+            model, cache_info, key, value = update_cache(model, 
+                                                          text.size(1), 
+                                                          key, value, 
+                                                          hidden, 
+                                                          text, 
+                                                          cache_info)
 
             if args.adaptive:
                 loss_tensor = criterion(output, targets,
@@ -165,7 +235,9 @@ def evaluate(model, eval_loader, criterion, args):
                 loss = loss_tensor.sum()
             else:
                 loss = criterion(output.view(-1, args.vocab_size), 
-                                             targets.view(-1))
+                                 targets.view(-1))
+
+
             loss.backward()
             total_loss += loss.item()
 
@@ -181,6 +253,7 @@ def evaluate(model, eval_loader, criterion, args):
     for param in chain(model.parameters(), criterion.parameters()):
         param.data.copy_(param.data0)
 
+    model.set_batch_size(args.batch_size)
     return ppl
 
 
@@ -254,22 +327,47 @@ def main(args):
     model_args.dropmos = 0
     model_args.drophid = 0
     
+
     if not model_args.num_steps == args.num_steps:
         print("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
                                                      args.num_steps))
         model_args.num_steps = args.num_steps
-    if not model_args.mem_len == args.mem_len:
-        print("REDEFINE mem_len: {} --> {}".format(model_args.mem_len, 
-                                                   args.mem_len))
-        model_args.mem_len = args.mem_len
+    if not model_args.neighbor_len == args.neighbor_len:
+        print("REDEFINE neighbor_len: {} --> {}".format(model_args.neighbor_len, 
+                                                        args.neighbor_len))
+        model_args.neighbor_len = args.neighbor_len
+    if not model_args.cache_N == args.cache_N:
+        print("REDEFINE cache_N: {} --> {}".format(model_args.cache_N, 
+                                                   args.cache_N))
+        model_args.cache_N = args.cache_N
+    if not model_args.cache_k == args.cache_k:
+        print("REDEFINE cache_k: {} --> {}".format(model_args.cache_k, 
+                                                   args.cache_k))
+        model_args.cache_k = args.cache_k
+    if not model_args.cache_L == args.cache_L:
+        print("REDEFINE cache_L: {} --> {}".format(model_args.cache_L, 
+                                                   args.cache_L))
+        model_args.cache_L = args.cache_L
     if not model_args.clamp_len == args.clamp_len:
         print("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
                                                      args.clamp_len))
         model_args.clamp_len = args.clamp_len
-    if not model_args.theta == args.theta:
-        print("REDEFINE theta: {} --> {}".format(model_args.theta, 
-                                                 args.theta))
-        model_args.theta = args.theta
+    if hasattr(model_args, "cache_theta"):
+        if not model_args.cache_theta == args.cache_theta:
+            print("REDEFINE cache_theta: {} --> {}".format(model_args.cache_theta, 
+                                                     args.cache_theta))
+            model_args.cache_theta = args.cache_theta
+    else:
+        model_args.cache_theta = args.cache_theta
+    if hasattr(model_args, "attn_theta"):
+        if not model_args.attn_theta == args.attn_theta:
+            print("REDEFINE attn_theta: {} --> {}".format(model_args.attn_theta, 
+                                                     args.attn_theta))
+            model_args.attn_theta = args.attn_theta
+    else:
+        model_args.attn_theta = args.attn_theta
+
+
     model_args.same_length = args.same_length
 
     model_args.batch_size = args.batch_size
@@ -286,36 +384,7 @@ def main(args):
     print("")
     print("Data loading finished. time: {:.3f} s".format(datatime_end-datatime_begin))
 
-    model = TransformerLM(
-            vocab_size=model_args.vocab_size,
-            num_layer=model_args.nlayers,
-            num_head=model_args.nhead,
-            d_model=model_args.nhid,
-            d_head=model_args.nhid // model_args.nhead,
-            d_ff=model_args.d_ff,
-            d_embedding=model_args.emsize,
-            tied_weights=model_args.tied,
-            num_steps=args.num_steps,
-            mem_len=model_args.mem_len,
-            clamp_len=model_args.clamp_len,
-            same_length=model_args.same_length,
-            init_std=model_args.init_std,
-            adaptive=model_args.adaptive,
-            div_val=model_args.div_val,
-            cutoffs=model_args.cutoffs,
-            dropout=0,
-            dropatt=0,
-            dropemb=0,
-            dropinp=0,
-            dropwei=0,
-            dropfor=0,
-            drophid=0,
-            theta=model_args.theta,
-            theta_alpha=model_args.theta_annealing_alpha,
-            apex=model_args.apex,
-            no_pos_bias=model_args.no_pos_bias
-            )
-
+    model = CRTNModel(args)
     model.load_state_dict(checkpoint["model_state_dict"])
 
     if args.adaptive:
@@ -355,19 +424,19 @@ def main(args):
         args.eval_temperature = best_temp
 
     if args.eval_theta_search:
-        best_theta_ppl = float("inf")
-        best_theta = 1.0
-        print("theta search")
-        for theta in np.arange(1.0, 0.7, -0.02):
-            model.theta = theta
-            theta_ppl = evaluate(model, valid_loader, criterion, args)
-            if theta_ppl < best_theta_ppl:
-                best_theta_ppl = theta_ppl
-                best_theta = theta
-                print("UPDATE best theta {:5.2f} | valid ppl {:8.2f}".format(theta, theta_ppl))
+        best_atheta_ppl = float("inf")
+        best_atheta = 1.0
+        print("attn theta search")
+        for atheta in np.arange(1.0, 0.7, -0.02):
+            model.set_theta(1.0, atheta)
+            atheta_ppl = evaluate(model, valid_loader, criterion, args)
+            if atheta_ppl < best_atheta_ppl:
+                best_atheta_ppl = atheta_ppl
+                best_atheta = atheta
+                print("UPDATE best attn theta {:5.2f} | valid ppl {:8.2f}".format(atheta, atheta_ppl))
             else:
                 break
-        model.theta = best_theta
+        model.set_theta(1.0, best_atheta)
 
     best_eval_ppl = evaluate(model, valid_loader, criterion, args)
 

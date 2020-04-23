@@ -500,7 +500,7 @@ def main(args):
     torch.cuda.manual_seed_all(args.seed)
 
     if args.adaptive:
-        args.tie_projs = [False] + [True] * 3
+        args.tie_projs = [False] + [True] * len(args.cutoffs)
 
     ### Load Data ###
  
