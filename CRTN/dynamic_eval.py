@@ -199,7 +199,7 @@ def evaluate(model, eval_loader, criterion, args):
 
     for param in chain(model.parameters(), criterion.parameters()):
         param.decrate = param.decrate.clamp(max=1/args.lamb)
-        param.data0 = param.data.clone().detach()
+        param.data0 = param.data.clone()
 
     with tqdm(total=total_len) as pbar:
         for i, data in enumerate(eval_loader):
@@ -306,6 +306,8 @@ def main(args):
     datatime_end = time.time()
 
     ### Load model ###
+
+    assert args.num_steps >= args.cache_L, "cache_L should <= num_steps"
 
     checkpoint = torch.load(args.load, map_location=device)
     model_args = checkpoint["model_args"]

@@ -698,6 +698,8 @@ def main(args):
     total_steps = len(train_loader) * args.epochs
     args.decay_steps = decay_steps
 
+    assert args.num_steps >= args.cache_L, "cache_L should <= num_steps"
+
     if args.load:
         # Load Model
         checkpoint = torch.load(args.load, map_location=device)

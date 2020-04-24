@@ -146,7 +146,7 @@ def evaluate(model, eval_loader, criterion, args):
 
     for param in chain(model.parameters(), criterion.parameters()):
         param.decrate = param.decrate.clamp(max=1/args.lamb)
-        param.data0 = param.data.clone().detach()
+        param.data0 = param.data.clone()
 
     with tqdm(total=total_len) as pbar:
         for i, data in enumerate(eval_loader):
