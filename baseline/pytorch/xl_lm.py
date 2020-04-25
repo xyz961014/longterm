@@ -145,7 +145,7 @@ def parse_args():
                         help='use the same attn length for all tokens')
     parser.add_argument('--mos', action='store_true',
                         help='use mixture of softmaxes (Yang et al. 2018)')
-    parser.add_argument('--n_experts', type=int, default=10,
+    parser.add_argument('--n_experts', type=int, default=15,
                         help='number of experts in mos')
     # training setting
     parser.add_argument('--std_epochs', type=int, default=150,
