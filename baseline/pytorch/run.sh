@@ -28,6 +28,7 @@ python xl_lm.py \
     --eval_batch_size 10 \
     --num_steps 80 \
     --mem_len 80 \
+    --cutoffs 2000 4000 8000 \
     --tied \
     --seed 1111 \
     --adaptive \
