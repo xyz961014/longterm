@@ -297,6 +297,7 @@ class TransformerLM(nn.Module):
         self.mem_len = mem_len
         self.clamp_len = clamp_len
         self.same_length = same_length
+        self.name = "Transformer-XL"
 
         self.init_std = init_std
         self.adaptive = adaptive

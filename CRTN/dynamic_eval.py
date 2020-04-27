@@ -19,11 +19,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torchtext
 
-from torch.utils.data import DataLoader
-
 from CRTN.data.dataloader import TextDataset, ExistingDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
-from CRTN.utils.visual import TargetText
 from models.CRTNModel import CRTNModel
 
 import ipdb
@@ -49,7 +46,7 @@ def parse_args():
     parser.add_argument("--cache_N", type=int, default=5, 
                         help="size of Cache, default: 5")
     parser.add_argument("--cache_k", type=int, default=2, 
-                        help="select top k values, default: 3")
+                        help="select top k values, default: 2")
     parser.add_argument("--cache_L", type=int, default=20, 
                         help="length of segments in cache, default: 20")
     parser.add_argument('--batch_size', type=int, default=10, metavar='N',

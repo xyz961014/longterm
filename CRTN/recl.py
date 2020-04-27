@@ -24,27 +24,63 @@ from data import dataloader
 from data.dataloader import textDataset
 
 from torch.utils.data import DataLoader
+import torchtext
 
 from models.CRTNModel import CRTNModel
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
+from data.dataloader import TextDataset, ExistingDataset
 
 from baseline.pytorch.transformer import TransformerLM
 
 from baseline.pytorch.rnn import RNNModel
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda:0" if torch.cuda.is_available() else "c_primeu")
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data", type=str, help="data path")
-    parser.add_argument("--model_names", nargs="+", type=str, choices=['LSTM', 'XL', 'CRTN'], help="model names. 'LSTM' for LSTM model; 'XL' for Transformer-XL model; CRTN for this work")
-    parser.add_argument("--model_paths", nargs="+", type=str, help="model paths")
-    parser.add_argument("--initc", type=int, default=10, help="initial c")
-    parser.add_argument("--initr", type=float, default=1.0, help="initial r")
-    parser.add_argument("--delta", type=int, default=10, help="step of increasing c")
-    parser.add_argument("--seed", type=int, default=1111, help="random seed")
-    parser.add_argument("--batch_size", type=int, default=1, help="batch size")
+    # data
+    parser.add_argument('--data', type=str,
+                        default='/home/xyz/Documents/Dataset/ptb_sample/',
+                        help='location of the data corpus')
+    parser.add_argument('--datasets', type=str, choices=["fromfile", "ptb", "wt103"], 
+                        default="ptb", help='load datasets from torchtext')
+    parser.add_argument('--vocab_size', type=int, default=10000)
+    # models
+    parser.add_argument("--model_paths", nargs="+", type=str, 
+                        help="model paths")
+    # xl settings
+    parser.add_argument('--num_steps', type=int, default=20,
+                        help='sequence length')
+    parser.add_argument('--mem_len', type=int, default=140,
+                        help='length of memory')
+    # model settings
+    parser.add_argument('--num_steps', type=int, default=20,
+                        help='sequence length')
+    parser.add_argument('--neighbor_len', type=int, default=80,
+                        help='length of memory')
+    parser.add_argument("--cache_N", type=int, default=20, 
+                        help="size of Cache, default: 10")
+    parser.add_argument("--cache_k", type=int, default=8, 
+                        help="select top k values, default: 8")
+    parser.add_argument("--cache_L", type=int, default=20, 
+                        help="length of segments in cache, default: 20")
+    # recl settings
+    parser.add_argument("--init_c", type=int, default=10, 
+                        help="initial c")
+    parser.add_argument("--top_r", type=float, default=1.0, 
+                        help="ratio r of worst words to attention")
+    parser.add_argument("--delta", type=int, default=10, 
+                        help="step of increasing c")
+    parser.add_argument("--threshold", type=float, default=0.01, 
+                        help="addition ratio threshold to stop")
+    parser.add_argument("--batch_size", type=int, default=10, 
+                        help="batch size")
     parser.add_argument("--bias", type=int, default=0, help="bias")
+    # setting
+    parser.add_argument("--seed", type=int, default=1111, 
+                        help="random seed")
+    parser.add_argument('--device', type=int, default=0,
+                        help='device number')
     return parser.parse_args()
 
 def loss(model, criterion, corpus, c, batch_size=5, bias=0):
@@ -110,28 +146,65 @@ def loss(model, criterion, corpus, c, batch_size=5, bias=0):
 
 
 
-def relative_loss(model, criterion, corpus, base, c, cp, tau):
-    losscp = loss(model, criterion, corpus, cp)
-    func = torch.cat((base[tau], losscp[tau])).view(-1, tau.size(0))
+def relative_loss(model, criterion, corpus, base, c, c_prime, tau):
+    lossc_prime = loss(model, criterion, corpus, c_prime)
+    func = torch.cat((base[tau], lossc_prime[tau])).view(-1, tau.size(0))
     func = func.t().contiguous()
     func = func.min(1)[0]
     return func.mean().item()
 
-def relative_gain(model, criterion, corpus, base, c, cp, tau):
+def relative_gain(model, criterion, corpus, base, c, c_prime, tau):
     fbase = relative_loss(model, criterion, corpus, base, c, c, tau)
-    fp = relative_loss(model, criterion, corpus, base, c, cp, tau)
+    fp = relative_loss(model, criterion, corpus, base, c, c_prime, tau)
     return (fbase - fp) / fbase
 
 def main(args):
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
-    corpus = dataloader.Corpus(args.data)
     models = []
 
-    for path, name in list(zip(args.model_paths, args.model_names)):
-        checkpoint = torch.load(path)
+    if torch.cuda.is_available():
+        device = torch.device("cuda:" + str(args.device))
+    else:
+        device = torch.device("c_primeu")
+    torch.cuda.set_device(device)
+
+
+    for path in args.model_paths:
+        checkpoint = torch.load(path, map_location=device)
         model_args = checkpoint["model_args"]
-        model_state_dict = checkpoint["model_state_dict"]
+        name = model_args.name
+
+        # redefine hyperparams
+
+        if not model_args.num_steps == args.num_steps:
+            print("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
+                                                         args.num_steps))
+            model_args.num_steps = args.num_steps
+        if not model_args.mem_len == args.mem_len:
+            print("REDEFINE mem_len: {} --> {}".format(model_args.mem_len, 
+                                                       args.mem_len))
+            model_args.mem_len = args.mem_len
+        if not model_args.neighbor_len == args.neighbor_len:
+            print("REDEFINE neighbor_len: {} --> {}".format(model_args.neighbor_len, 
+                                                            args.neighbor_len))
+            model_args.neighbor_len = args.neighbor_len
+        if not model_args.cache_N == args.cache_N:
+            print("REDEFINE cache_N: {} --> {}".format(model_args.cache_N, 
+                                                       args.cache_N))
+            model_args.cache_N = args.cache_N
+        if not model_args.cache_k == args.cache_k:
+            print("REDEFINE cache_k: {} --> {}".format(model_args.cache_k, 
+                                                       args.cache_k))
+            model_args.cache_k = args.cache_k
+        if not model_args.cache_L == args.cache_L:
+            print("REDEFINE cache_L: {} --> {}".format(model_args.cache_L, 
+                                                       args.cache_L))
+            model_args.cache_L = args.cache_L
+
+        model_args.device = args.device
+        model_args.batch_size = args.batch_size
+
 
         if name == 'LSTM':
             model = RNNModel(model_args)
@@ -146,44 +219,62 @@ def main(args):
                     d_ff=model_args.d_ff,
                     d_embedding=model_args.emsize,
                     tied_weights=model_args.tied,
-                    num_steps=model_args.num_steps,
+                    num_steps=args.num_steps,
                     mem_len=model_args.mem_len,
-                    attn_type=model_args.attn_type,
+                    clamp_len=model_args.clamp_len,
+                    same_length=model_args.same_length,
                     init_std=model_args.init_std,
                     adaptive=model_args.adaptive,
                     div_val=model_args.div_val,
                     cutoffs=model_args.cutoffs,
-                    dropout=model_args.dropout)
+                    dropout=model_args.dropout,
+                    dropatt=model_args.dropatt,
+                    dropemb=model_args.dropemb,
+                    dropinp=model_args.dropinp,
+                    dropwei=model_args.dropwei,
+                    dropfor=model_args.dropfor,
+                    drophid=model_args.drophid,
+                    theta=model_args.theta,
+                    theta_alpha=model_args.theta_annealing_alpha,
+                    apex=model_args.apex,
+                    no_pos_bias=model_args.no_pos_bias
+                    )
+            model.load_state_dict(checkpoint["model_state_dict"])
         elif name == 'CRTN':
             model = CRTNModel(model_args)
-            keys = model_state_dict.copy().keys()
-            for key in keys:
-                if re.match(r"cache.keys", key) or re.match(r"cache.values", key) or re.match(r"cache.words", key) or re.match(r"encoder.pos_emb_bank", key):
-                    model_state_dict.pop(key)
+            model.load_state_dict(checkpoint["model_state_dict"])
 
-        if model_args.adaptive:
-            criterion = ProjectedAdaptiveLogSoftmax(model_args.vocab_size, model_args.emsize, model_args.nhid, model_args.cutoffs, div_val=model_args.div_val, init_std=model_args.init_std) 
+        if args.adaptive:
+            criterion = ProjectedAdaptiveLogSoftmax(args.vocab_size, 
+                                                    args.emsize, 
+                                                    args.nhid, 
+                                                    args.cutoffs, 
+                                                    div_val=args.div_val, 
+                                                    init_std=args.init_std,
+                                                    proj_init_std=args.proj_init_std,
+                                                    mos=args.mos,
+                                                    n_experts=args.n_experts,
+                                                    dropmos=0
+                                                    ) 
+            criterion.load_state_dict(checkpoint["criterion"])
         else:
-            criterion = nn.CrossEntropyLoss(reduction='none')
-        model.load_state_dict(model_state_dict, strict=False)
-        criterion.load_state_dict(checkpoint["criterion"])
-        model.name = name
+            criterion = nn.CrossEntropyLoss()
 
         model.to(device)
         criterion.to(device)
 
         models.append((model, criterion))
 
-    
+    c = args.init_c
+    delta = args.delta
+    threshold = args.threshold
     for i, (model, criterion) in enumerate(models):
-        c = args.initc
-        delta = args.delta
-        cp = c
+        c_prime = c
         gain = 1.0
-        ite = 0
-        while gain >= 0.01:
-            c = cp
-            cp = cp + delta
+        iters = 0
+        while gain >= threshold:
+            c = c_prime
+            c_prime = c_prime + delta
             losses = []
             for j, (mod, crit) in enumerate(models):
                 l = loss(mod, crit, corpus, c)
@@ -197,9 +288,9 @@ def main(args):
 
             basec, tau = base.topk(round(c * args.initr))
             tau = tau - c
-            gain = relative_gain(model, criterion, corpus, base, c, cp, tau)
+            gain = relative_gain(model, criterion, corpus, base, c, c_prime, tau)
             print(gain)
-            ite += 1
+            iters += 1
             viz.line(np.array([[np.NaN] * i + [gain] + [np.NaN] * (len(args.model_names) - i - 1)]), np.array([c]), opts={
                 'legend': args.model_names,
                 'showlegend': True

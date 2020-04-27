@@ -977,6 +977,11 @@ def main(args):
                 eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
                 if args.rank == 0:
+                    print('-' * 89)
+                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
+                          '{:8.2f}'.format(epoch, 
+                                           (time.time() - epoch_start_time),
+                                           eval_ppl))
                     if eval_ppl < best_eval_ppl:
                         best_eval_ppl = eval_ppl
                         save_dict = {
@@ -990,11 +995,6 @@ def main(args):
                                    args.savepath + "/" + args.save + "_best.pt")
                         print("save averaged model")
 
-                    print('-' * 89)
-                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
-                          '{:8.2f}'.format(epoch, 
-                                           (time.time() - epoch_start_time),
-                                           eval_ppl))
                     print('-' * 89)
 
                     writer.add_scalar("valid/ppl", eval_ppl, 
@@ -1093,6 +1093,7 @@ if __name__ == "__main__":
     timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
     savepath += args.save + timestr
 
+    args.name = "CRTN"
     args.savepath = savepath
     args.timestr = timestr
     args.epochs = args.std_epochs + args.ema_epochs

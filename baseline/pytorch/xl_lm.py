@@ -976,6 +976,7 @@ if __name__ == "__main__":
     timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
     savepath += args.save + timestr
     
+    args.name = "Transformer-XL"
     args.savepath = savepath
     args.timestr = timestr
     args.epochs = args.std_epochs + args.ema_epochs

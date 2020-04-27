@@ -29,7 +29,7 @@ class Cache(nn.Module):
                                      padding=math.ceil((args.nhid // args.nhead - args.nhead) / 2))
         elif self.args.summary_method == "linear":
             self.dk = args.cache_dk
-            self.summary = nn.Linear(args.nhid * args.cache_L, args.cache_dk)
+            self.summary = nn.Sequential(nn.Linear(args.nhid * args.cache_L, args.cache_dk), nn.Tanh())
 
         self.attn = DotProductAttention()
 
@@ -127,7 +127,7 @@ class Cache(nn.Module):
                 key_base = key_base.reshape(*key_base.size()[:2], -1)
                 new_key = self.summary(key_base).reshape(key_base.size(0), -1)
             elif self.args.summary_method == "linear":
-                new_key = F.sigmoid(self.summary(input_block[-1].reshape(-1, self.L * self.dv)))
+                new_key = self.summary(input_block[-1].reshape(-1, self.L * self.dv))
 
             new_value = torch.einsum("mblh->lbmh", 
                                      input_block
