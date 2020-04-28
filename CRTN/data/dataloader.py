@@ -206,31 +206,35 @@ class TextDataset(object):
         
         self.TEXT = data.Field(sequential=True)
 
-        self.train_dataset = datasets.LanguageModelingDataset(path + "train.txt", 
+        self.train_set = datasets.LanguageModelingDataset(path + "train.txt", 
                                                               self.TEXT)
-        self.valid_dataset = datasets.LanguageModelingDataset(path + "valid.txt", 
+        self.valid_set = datasets.LanguageModelingDataset(path + "valid.txt", 
                                                               self.TEXT)
-        self.test_dataset = datasets.LanguageModelingDataset(path + "test.txt", 
+        self.test_set = datasets.LanguageModelingDataset(path + "test.txt", 
                                                              self.TEXT)
-        self.TEXT.build_vocab(self.train_dataset, max_size=vocab_size)
+        self.TEXT.build_vocab(self.train_set, max_size=vocab_size)
 
     def get_train_loader(self, batch_size, **kwargs):
-        return data.BPTTIterator(self.train_dataset, batch_size, self.num_steps,
+        return data.BPTTIterator(self.train_set, batch_size, self.num_steps,
                                  **kwargs)
 
     def randomlen_train_loader(self, batch_size, **kwargs):
-        return RandomLengthBPTTIterator(self.train_dataset, batch_size, self.num_steps,
+        return RandomLengthBPTTIterator(self.train_set, batch_size, self.num_steps,
                                  **kwargs)
 
     def get_valid_loader(self, batch_size, **kwargs):
-        return data.BPTTIterator(self.valid_dataset, batch_size, self.num_steps,
+        return data.BPTTIterator(self.valid_set, batch_size, self.num_steps,
                                  train=False, shuffle=False, sort=False,
                                  **kwargs)
 
     def get_test_loader(self, batch_size, **kwargs):
-        return data.BPTTIterator(self.test_dataset, batch_size, self.num_steps,
+        return data.BPTTIterator(self.test_set, batch_size, self.num_steps,
                                  train=False, shuffle=False, sort=False,
                                  **kwargs)
+
+    def recl_loader(self, batch_size, target_len, context_len, **kwargs):
+        return RECLIterator(self.valid_set, batch_size, target_len, context_len, 
+                            **kwargs)
 
 class ExistingDataset(object):
     def __init__(self, name, num_steps):
@@ -263,8 +267,11 @@ class ExistingDataset(object):
 
     def randomlen_train_loader(self, batch_size, **kwargs):
         return RandomLengthBPTTIterator(self.train_set, batch_size, self.num_steps,
-                                 **kwargs)
+                                        **kwargs)
 
+    def recl_loader(self, batch_size, target_len, context_len, **kwargs):
+        return RECLIterator(self.valid_set, batch_size, target_len, context_len, 
+                            **kwargs)
 
 
 class RandomLengthBPTTIterator(data.Iterator):
@@ -317,6 +324,50 @@ class RandomLengthBPTTIterator(data.Iterator):
                 i += seq_len
                 if mem_len > 0:
                     mem_len = mem_len + seq_len - self.bptt_len
+            if not self.repeat:
+                return
+
+
+class RECLIterator(data.Iterator):
+    def __init__(self, dataset, batch_size, target_len, context_len, **kwargs):
+        self.target_len = target_len
+        self.context_len = context_len
+        super().__init__(dataset, batch_size, **kwargs)
+
+    def __len__(self):
+        return self.target_len
+
+    def __iter__(self):
+        text = self.dataset[0].text
+        TEXT = self.dataset.fields['text']
+        TEXT.eos_token = None
+        text = text + ([TEXT.pad_token] * int(math.ceil(len(text) / self.batch_size)
+                                              * self.batch_size - len(text)))
+        _data = TEXT.numericalize([text], device=self.device)
+        _data = _data.view(self.batch_size, -1).t().contiguous()
+        dataset = Dataset(examples=self.dataset.examples, fields=[
+            ('text', TEXT), ('target', TEXT)])
+        while True:
+            i = 0
+            while i < self.target_len:
+                if len(_data) - i - 3 < self.target_len:
+                    break
+                self.iterations += 1
+
+                seq_len = self.context_len
+
+                batch_text = _data[-3 - i - seq_len:-2 - i]
+                batch_target = _data[-2 - i - seq_len:-1 - i]
+
+                if TEXT.batch_first:
+                    batch_text = batch_text.t().contiguous()
+                    batch_target = batch_target.t().contiguous()
+                yield Batch.fromvars(
+                    dataset, self.batch_size,
+                    text=batch_text,
+                    target=batch_target)
+
+                i += 1
             if not self.repeat:
                 return
 
