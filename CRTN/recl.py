@@ -339,7 +339,7 @@ def main(args):
                 base_losses.append(model_loss.unsqueeze(0))
             base_loss = torch.cat(base_losses, dim=0)
             base_loss = base_loss.min(0)[0]
-            print("base loss: {.3f}".format(base_loss.mean()))
+            print("base loss: {:.3f}".format(base_loss.mean()))
 
         prime_loader = corpus.recl_loader(args.batch_size, args.target_len, c_prime)
         prime_losses = []
