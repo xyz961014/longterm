@@ -74,7 +74,6 @@ def parse_args():
                         help="addition ratio threshold to stop")
     parser.add_argument("--batch_size", type=int, default=10, 
                         help="batch size")
-    parser.add_argument("--bias", type=int, default=0, help="bias")
     # setting
     parser.add_argument("--seed", type=int, default=1111, 
                         help="random seed")
@@ -340,6 +339,7 @@ def main(args):
                 base_losses.append(model_loss.unsqueeze(0))
             base_loss = torch.cat(base_losses, dim=0)
             base_loss = base_loss.min(0)[0]
+            print("base loss: {.3f}".format(base_loss.mean()))
 
         prime_loader = corpus.recl_loader(args.batch_size, args.target_len, c_prime)
         prime_losses = []
@@ -350,11 +350,10 @@ def main(args):
             prime_losses.append(model_loss.unsqueeze(0))
             if not gain_stop:
                 gain = relative_gain(model_loss, base_loss, r)
+                print("{} loss:{:.3f} gain: {:.4f}".format(model.name, model_loss.mean(), gain))
                 if gain < threshold:
                     gain_stops[idx] = True
                     print("{} RECL: {}".format(model.name, c))
-                else:
-                    print("{} loss:{} gain: {}".format(model.name, model_loss.sum(), gain))
 
 
         base_loss = torch.cat(prime_losses, dim=0)
