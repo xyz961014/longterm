@@ -1,8 +1,6 @@
 import argparse
 import math
 import time
-import re
-from copy import deepcopy
 
 import numpy as np
 import torch
@@ -24,7 +22,6 @@ sys.path.append("../..")
 from data import dataloader
 from data.dataloader import textDataset
 
-from torch.utils.data import DataLoader
 import torchtext
 from torchtext import datasets
 
