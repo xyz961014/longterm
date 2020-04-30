@@ -61,11 +61,13 @@ def parse_args():
     parser.add_argument("--cache_L", type=int, default=20, 
                         help="length of segments in cache, default: 20")
     # amid settings
-    parser.add_argument("--sample_k", type=int, default=100, 
+    parser.add_argument("--sample_k", type=int, default=20, 
                         help="number of samples")
+    parser.add_argument("--range", type=int, default=20, 
+                        help="largest range to load data")
     parser.add_argument("--largest_range", type=int, default=200, 
                         help="largest range to compute mutual information")
-    parser.add_argument("--target_len", type=int, default=100, 
+    parser.add_argument("--target_len", type=int, default=20, 
                         help="target length")
     parser.add_argument("--batch_size", type=int, default=10, 
                         help="batch size")
@@ -97,7 +99,7 @@ def update_cache(model, batch_size, key, value, hidden, text, cache_info):
                                                  values=value)
     return model, cache_info, keys, values
 
-def get_prob(model, criterion, texts, args, ind=None):
+def get_logprob(model, criterion, texts, args, ind=None):
     model.eval()
     criterion.eval()
     assert ind is None or ind >= 0
@@ -117,7 +119,7 @@ def get_prob(model, criterion, texts, args, ind=None):
                 output, memory = model(text, memory)
                 if model.adaptive:
                     head_prob, tails = criterion(output, target, output=True)
-                    prob = get_prob_from_head_and_tails(head_prob, tails)
+                    prob = get_logprob_from_head_and_tails(head_prob, tails)
                 else:
                     prob = F.log_softmax(output, dim=1)
             elif model.name == "CRTN":
@@ -135,7 +137,7 @@ def get_prob(model, criterion, texts, args, ind=None):
                                                              cache_info)
                 if model.adaptive:
                     head_prob, tails = criterion(output, target, output=True)
-                    prob = get_prob_from_head_and_tails(head_prob, tails)
+                    prob = get_logprob_from_head_and_tails(head_prob, tails)
                 else:
                     prob = F.log_softmax(output, dim=1)
 
@@ -152,7 +154,7 @@ def get_prob(model, criterion, texts, args, ind=None):
     else:
         return prob[ind]
 
-def get_prob_from_head_and_tails(head_prob, tails):
+def get_logprob_from_head_and_tails(head_prob, tails):
     tail_len = len(tails)
     get_tails = []
     for i in range(tail_len):
@@ -164,19 +166,65 @@ def get_prob_from_head_and_tails(head_prob, tails):
 
 
 def mutual_information(model, criterion, texts, distance, args):
-    text_len = sum([text.size(0) for text in texts])
+    text_len = texts.size(0)
+    ind_i, ind_j = text_len - distance - 1, text_len - 1
+    text_blocks = texts.split(args.num_steps, dim=0)
     # compute to distribution of Yi to sample from
-    sample_prob = get_prob(model, criterion, texts, args, ind=text_len-distance-1)
-    ipdb.set_trace()
+    sample_prob = get_logprob(model, criterion, text_blocks, args, ind=ind_i).exp()
+    # sample k times
+    yi_samples = torch.multinomial(sample_prob, args.sample_k, replacement=True)
+    # form new condition given samples
+    sample_texts = texts.expand(args.sample_k, -1, -1).contiguous()
+    sample_texts[:,ind_i,:] = yi_samples.t()
+    # compute sample conditioned prob
+    yj_probs = []
+    oa_probs = []
+    for texts in sample_texts:
+        text_blocks = texts.split(args.num_steps, dim=0)
+        all_logprob = get_logprob(model, criterion, text_blocks, args)
+        yj_logprob = all_logprob[ind_j]
+        oa_all_logprob = all_logprob[ind_i+1:ind_j]
+        oa_text = texts[ind_i+1:ind_j]
+        oa_logprob = torch.gather(oa_all_logprob, dim=2, index=oa_text.unsqueeze(-1))
+        oa_logprob = oa_logprob.sum(dim=0)
 
-    # importance sampling
+        yj_probs.append(yj_logprob.unsqueeze(0))
+        oa_probs.append(oa_logprob)
+
+    logoa_prob = torch.cat(oa_probs, dim=1).t()
+    wk = F.softmax(logoa_prob, dim=0)
+    logp_yj = torch.cat(yj_probs, dim=0)
 
     # compute mutual information I(Yi, Yj)
-    pass
+    weighted_pyj = (wk.unsqueeze(-1) * logp_yj.exp()).sum(dim=0)
+    H_yj = -(weighted_pyj * weighted_pyj.log()).sum(dim=1)
+
+    meta_hyj_givenyi = -(logp_yj.exp() * logp_yj).sum(dim=2)
+    H_yj_givenyi = (wk * meta_hyj_givenyi).sum(dim=0)
+
+    mi = H_yj - H_yj_givenyi
+    #if mi < 0 or torch.isnan(mi):
+    #    ipdb.set_trace()
+
+    return mi.mean().item()
 
 
 def averaged_split(mutual_infos):
-    pass
+    mi_sum = sum(mutual_infos)
+    if mi_sum > 0:
+        k = 0
+        temp_sum = 0
+        while True:
+            if temp_sum + mutual_infos[k] < mi_sum / 2:
+                temp_sum = temp_sum + mutual_infos[k]
+                k += 1
+            else:
+                break
+        amid = k + (mi_sum / 2 - temp_sum) / mutual_infos[k+1]
+    else:
+        amid = 0
+
+    return amid
 
 def main(args):
     torch.manual_seed(args.seed)
@@ -300,18 +348,21 @@ def main(args):
     criterion.to(device)
 
     
-    mutual_infos = [0 for _ in range(args.largest_range)]
+    mutual_infos = [0 for _ in range(args.range)]
     with tqdm(total=args.target_len) as pbar:
         for data in data_loader:
             texts, targets = data.text.to(device), data.target.to(device)
-            texts = texts.split(args.num_steps, dim=0)
-            targets = targets.split(args.num_steps, dim=0)
 
-            for dis in range(1, args.largest_range + 1):
+            for dis in range(1, args.range + 1):
                 mutual_info = mutual_information(model, criterion, texts, dis, args)
                 mutual_infos[dis-1] += mutual_info
+                print("dis %s mi %.3e" % (dis, mutual_info))
+            pbar.update(1)
 
     amid = averaged_split(mutual_infos)
+    #vocab = data_loader.dataset.fields["text"].vocab
+    #text = [vocab.itos[w] for w in texts]
+    #ipdb.set_trace()
     print("-" * 89)
     print("Averaged Mutual Information Distance of {}: {:.2f}".format(model.name, amid))
     print("-" * 89)
