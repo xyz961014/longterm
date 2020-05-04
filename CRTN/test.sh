@@ -22,6 +22,7 @@ python main.py \
     --seed 1111 \
     --log-interval 30 \
     --adaptive \
+    --cutoffs 2000 4000 8000 \
     --farnear \
     --summary_method sum \
     --query_method single \

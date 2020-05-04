@@ -61,6 +61,8 @@ def parse_args():
     # recl settings
     parser.add_argument("--target_len", type=int, default=100, 
                         help="target length")
+    parser.add_argument("--end_bias", type=int, default=0,
+                        help="last word pos bias when loading data")
     parser.add_argument("--init_c", type=int, default=10, 
                         help="initial c")
     parser.add_argument("--top_r", type=float, default=1.0, 
@@ -329,7 +331,7 @@ def main(args):
         iters += 1
 
         if base_loss is None:
-            base_loader = corpus.recl_loader(args.batch_size, args.target_len, c)
+            base_loader = corpus.recl_loader(args.batch_size, args.target_len, c, end_bias=args.end_bias)
             base_losses = []
             for model, criterion in models:
                 model_loss = loss(model, criterion, base_loader, args)
@@ -338,7 +340,7 @@ def main(args):
             base_loss = base_loss.min(0)[0]
             print("base loss: {:.3f}".format(base_loss.mean()))
 
-        prime_loader = corpus.recl_loader(args.batch_size, args.target_len, c_prime)
+        prime_loader = corpus.recl_loader(args.batch_size, args.target_len, c_prime, end_bias=args.end_bias)
         prime_losses = []
         for idx in range(len(gain_stops)):
             model, criterion = models[idx]

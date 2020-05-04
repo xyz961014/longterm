@@ -329,9 +329,11 @@ class RandomLengthBPTTIterator(data.Iterator):
 
 
 class RECLIterator(data.Iterator):
-    def __init__(self, dataset, batch_size, target_len, context_len, **kwargs):
+    def __init__(self, dataset, batch_size, target_len, context_len, end_bias=0, **kwargs):
         self.target_len = target_len
         self.context_len = context_len
+        assert end_bias >= 0
+        self.end_bias = end_bias
         super().__init__(dataset, batch_size, **kwargs)
 
     def __len__(self):
@@ -341,6 +343,7 @@ class RECLIterator(data.Iterator):
         text = self.dataset[0].text
         TEXT = self.dataset.fields['text']
         TEXT.eos_token = None
+        e = self.end_bias
         text = text + ([TEXT.pad_token] * int(math.ceil(len(text) / self.batch_size)
                                               * self.batch_size - len(text)))
         _data = TEXT.numericalize([text], device=self.device)
@@ -356,8 +359,8 @@ class RECLIterator(data.Iterator):
 
                 seq_len = self.context_len
 
-                batch_text = _data[-3 - i - seq_len:-2 - i]
-                batch_target = _data[-2 - i - seq_len:-1 - i]
+                batch_text = _data[-3 - i - seq_len - e:-2 - i - e]
+                batch_target = _data[-2 - i - seq_len - e:-1 - i - e]
 
                 if TEXT.batch_first:
                     batch_text = batch_text.t().contiguous()

@@ -64,11 +64,13 @@ def parse_args():
     parser.add_argument("--sample_k", type=int, default=20, 
                         help="number of samples")
     parser.add_argument("--range", type=int, default=20, 
-                        help="largest range to load data")
-    parser.add_argument("--largest_range", type=int, default=200, 
                         help="largest range to compute mutual information")
-    parser.add_argument("--target_len", type=int, default=20, 
+    parser.add_argument("--largest_range", type=int, default=200, 
+                        help="largest range to load data")
+    parser.add_argument("--target_len", type=int, default=1, 
                         help="target length")
+    parser.add_argument("--end_bias", type=int, default=0, 
+                        help="last word pos bias when loading data")
     parser.add_argument("--batch_size", type=int, default=10, 
                         help="batch size")
     # setting
@@ -76,6 +78,8 @@ def parse_args():
                         help="random seed")
     parser.add_argument('--device', type=int, default=0,
                         help='device number')
+    parser.add_argument("--debug", action="store_true",
+                        help="display in debug mode")
     return parser.parse_args()
 
 def init_cache_info(args):
@@ -237,6 +241,9 @@ def main(args):
     torch.cuda.set_device(device)
 
     ### Load Data ###
+
+    if args.largest_range < args.range:
+        args.largest_range = args.range
     
     if args.datasets == "ptb":
         print("Loading %s dataset from torchtext" % args.datasets)
@@ -247,7 +254,7 @@ def main(args):
     elif args.datasets == "fromfile":
         print("Loading data from %s" % args.data)
         corpus = TextDataset(args.data, args.vocab_size, args.num_steps)
-    data_loader = corpus.recl_loader(args.batch_size, args.target_len, args.largest_range)
+    data_loader = corpus.recl_loader(args.batch_size, args.target_len, args.largest_range, end_bias=args.end_bias)
 
     checkpoint = torch.load(args.model_path, map_location=device)
     model_args = checkpoint["model_args"]
@@ -347,24 +354,29 @@ def main(args):
     model.to(device)
     criterion.to(device)
 
+    if args.debug:
+        vocab = data_loader.dataset.fields["text"].vocab
     
     mutual_infos = [0 for _ in range(args.range)]
     with tqdm(total=args.target_len) as pbar:
         for data in data_loader:
             texts, targets = data.text.to(device), data.target.to(device)
 
+            if args.debug:
+                for i, text in enumerate(texts.t()):
+                    words = [vocab.itos[w] for w in text]
+                    print("Batch %s: " % i, " ".join(words))
+
             for dis in range(1, args.range + 1):
                 mutual_info = mutual_information(model, criterion, texts, dis, args)
                 mutual_infos[dis-1] += mutual_info
-                print("dis %s mi %.3e" % (dis, mutual_info))
+                if args.debug:
+                    print("dis %s mi %.3e" % (dis, mutual_info))
             pbar.update(1)
 
     amid = averaged_split(mutual_infos)
-    #vocab = data_loader.dataset.fields["text"].vocab
-    #text = [vocab.itos[w] for w in texts]
-    #ipdb.set_trace()
     print("-" * 89)
-    print("Averaged Mutual Information Distance of {}: {:.2f}".format(model.name, amid))
+    print("Averaged Mutual Information Distance of {}: {:.3f}".format(model.name, amid))
     print("-" * 89)
 
 
