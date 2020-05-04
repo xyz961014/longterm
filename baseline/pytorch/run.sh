@@ -35,6 +35,5 @@ python xl_lm.py \
     --eval_steps 3000 \
     --log-interval 100 \
     --distributed \
-    --random_seq_len \
     --save base \
     ${@:1}
