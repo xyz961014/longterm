@@ -382,7 +382,8 @@ if __name__ == "__main__":
     TEXT = data.Field(sequential=True)
     ptb_train, ptb_valid, ptb_test = datasets.PennTreebank.splits(TEXT)
     TEXT.build_vocab(ptb_train)
-    iterator = RandomLengthBPTTIterator(ptb_train, bptt_len=10, batch_size=10)
+    iterator = RandomLengthBPTTIterator(ptb_train, bptt_len=80, batch_size=10)
+    ds = []
     for d in iterator:
-        print(iterator.mem_len, d.text.size(0))
-        ipdb.set_trace()
+        ds.append(d.text.size(0))
+    print(max(ds))

@@ -11,9 +11,6 @@ from tqdm import tqdm
 
 import ipdb
 import visdom
-#viz = visdom.Visdom()
-#assert viz.check_connection()
-
 
 import os
 import sys
@@ -78,11 +75,15 @@ def parse_args():
                         help="classify words by amid value in integer span")
     parser.add_argument("--amid_start", type=int, default=0, 
                         help="compute averaged value from start idx")
+    parser.add_argument("--bar", action="store_true",
+                        help="draw bar over distance")
     # setting
     parser.add_argument("--seed", type=int, default=1111, 
                         help="random seed")
     parser.add_argument('--device', type=int, default=0,
                         help='device number')
+    parser.add_argument("--env", type=str, default="xyz", 
+                        help="visdom env name")
     parser.add_argument("--debug", action="store_true",
                         help="display in debug mode")
     return parser.parse_args()
@@ -277,6 +278,12 @@ def main(args):
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
+    try:
+        vis = visdom.Visdom(env=args.env)
+        assert vis.check_connection()
+    except AssertionError:
+        print("Visdom not running!")
+
     if torch.cuda.is_available():
         device = torch.device("cuda:" + str(args.device))
     else:
@@ -425,7 +432,7 @@ def main(args):
                 print("Batch %s: " % i, " ".join(words))
 
         with tqdm(total=args.range) as pbar:
-            pbar.set_description("tgt_idx %s" % itgt)
+            pbar.set_description("tgt_idx %s/%s" % (itgt, args.range - 1))
             if args.word_classify:
                 word_mis = []
             for dis in range(1, args.range + 1):
@@ -453,6 +460,11 @@ def main(args):
         word_bags = [set(b) for b in word_bags]
         for amid, bag in enumerate(word_bags):
             print("AMID %d~%d : " % (amid, amid + 1), bag)
+            print("-" * 90)
+
+    if args.bar:
+        vis.bar(np.array(mutual_infos), np.arange(args.range), win="amid bar",
+                opts={"title": "AMID over distance"})
 
     print("-" * 89)
     for start_idx in range(args.amid_start + 1):
