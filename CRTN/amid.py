@@ -76,6 +76,8 @@ def parse_args():
                         help="batch size")
     parser.add_argument("--word_classify", action="store_true",
                         help="classify words by amid value in integer span")
+    parser.add_argument("--amid_start", type=int, default=0, 
+                        help="compute averaged value from start idx")
     # setting
     parser.add_argument("--seed", type=int, default=1111, 
                         help="random seed")
@@ -451,9 +453,13 @@ def main(args):
         word_bags = [set(b) for b in word_bags]
         for amid, bag in enumerate(word_bags):
             print("AMID %d~%d : " % (amid, amid + 1), bag)
-    amid = averaged_split(mutual_infos)
+
     print("-" * 89)
-    print("Averaged Mutual Information Distance of {}: {:.3f}".format(model.name, amid))
+    for start_idx in range(args.amid_start + 1):
+        amid = averaged_split(mutual_infos[start_idx:])
+        print("Start index {} | Averaged Mutual Information Distance of {}: {:.3f}".format(start_idx,
+                                                                                          model.name, 
+                                                                                          amid + start_idx))
     print("-" * 89)
 
 

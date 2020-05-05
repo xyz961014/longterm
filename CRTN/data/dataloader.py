@@ -344,8 +344,9 @@ class RECLIterator(data.Iterator):
         TEXT = self.dataset.fields['text']
         TEXT.eos_token = None
         e = self.end_bias
-        text = text + ([TEXT.pad_token] * int(math.ceil(len(text) / self.batch_size)
-                                              * self.batch_size - len(text)))
+        #text = text + ([TEXT.pad_token] * int(math.ceil(len(text) / self.batch_size)
+        #                                      * self.batch_size - len(text)))
+        text = text[:len(text) // self.batch_size * self.batch_size]
         _data = TEXT.numericalize([text], device=self.device)
         _data = _data.view(self.batch_size, -1).t().contiguous()
         dataset = Dataset(examples=self.dataset.examples, fields=[
