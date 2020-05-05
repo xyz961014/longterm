@@ -6,6 +6,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from pprint import pprint
 from tqdm import tqdm
 
 import ipdb
@@ -73,6 +74,8 @@ def parse_args():
                         help="last word pos bias when loading data")
     parser.add_argument("--batch_size", type=int, default=10, 
                         help="batch size")
+    parser.add_argument("--word_classify", action="store_true",
+                        help="classify words by amid value in integer span")
     # setting
     parser.add_argument("--seed", type=int, default=1111, 
                         help="random seed")
@@ -279,6 +282,10 @@ def main(args):
 
     if args.largest_range < args.range:
         args.largest_range = args.range
+
+    if args.word_classify:
+        args.batch_size = 1
+        word_bags = [[] for _ in range(args.range)]
     
     if args.datasets == "ptb":
         print("Loading %s dataset from torchtext" % args.datasets)
@@ -389,16 +396,15 @@ def main(args):
     model.to(device)
     criterion.to(device)
 
-    if args.debug:
-        vocab = data_loader.dataset.fields["text"].vocab
+    vocab = data_loader.dataset.fields["text"].vocab
     
     mutual_infos = [0 for _ in range(args.range)]
     history = None
-    for itar, data in enumerate(data_loader):
+    for itgt, data in enumerate(data_loader):
         texts, targets = data.text.to(device), data.target.to(device)
 
         history_len = (args.largest_range - args.range - args.target_len + 1) // args.num_steps * args.num_steps
-        history_len = history_len + itar
+        history_len = history_len + itgt
         range_len = args.largest_range + 1 - history_len
         history_texts, range_texts = texts.split([history_len, range_len])
 
@@ -415,15 +421,25 @@ def main(args):
                 print("Batch %s: " % i, " ".join(words))
 
         with tqdm(total=args.range) as pbar:
+            pbar.set_description("tgt_idx %s" % itgt)
+            if args.word_classify:
+                word_mi = [0 for _ in range(args.range)]
             for dis in range(1, args.range + 1):
                 mutual_info = mutual_information(model, criterion, history, range_texts, dis, args)
                 mutual_infos[dis-1] += mutual_info
+                if args.word_classify:
+                    word_mi[dis-1] = mutual_info
                 if args.debug:
                     for text in range_texts.t():
                         yi, yj = text[-1-dis], text[-1]
                         print("(%s, %s)" % (vocab.itos[yi], vocab.itos[yj]))
                     print("dis %s mi %.3e" % (dis, mutual_info))
                 pbar.update(1)
+        if args.word_classify:
+            word_amid = averaged_split(word_mi)
+            word_idx = range_texts[-1].item()
+            word_bags[math.floor(word_amid)].append(vocab.itos[word_idx])
+            pprint(word_bags)
 
     amid = averaged_split(mutual_infos)
     print("-" * 89)
