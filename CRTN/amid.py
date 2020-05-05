@@ -259,7 +259,7 @@ def averaged_split(mutual_infos):
                 k += 1
             else:
                 break
-        amid = k + (mi_sum / 2 - temp_sum) / mutual_infos[k+1]
+        amid = k + (mi_sum / 2 - temp_sum) / mutual_infos[k]
     else:
         amid = 0
 
