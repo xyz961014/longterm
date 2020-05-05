@@ -103,17 +103,15 @@ def update_cache(model, batch_size, key, value, hidden, text, cache_info):
                                                  values=value)
     return model, cache_info, keys, values
 
-def get_logprob(model, criterion, texts, args, ind=None):
+def get_logprob(model, criterion, history, texts, args, ind=None):
     model.eval()
     criterion.eval()
     assert ind is None or ind >= 0
     probs = []
     if model.name == "Transformer-XL":
-        memory = None
+        memory = history
     elif model.name == "CRTN":
-        mem = None
-        cache_info = init_cache_info(args)
-        key, value = None, None
+        key, value, mem, cache_info = history
     with torch.no_grad():
         pos = 0
         for text in texts:
@@ -167,14 +165,51 @@ def get_logprob_from_head_and_tails(head_prob, tails):
     real_prob = torch.cat((head_prob[:,:-tail_len], *get_tails), 1)
     return real_prob
 
+def prepare_history(model, criterion, texts, args):
+    model.eval()
+    criterion.eval()
+    if texts.size(0) > 0:
+        text_blocks = texts.split(args.num_steps, dim=0)
+    else:
+        text_blocks = []
+    if model.name == "Transformer-XL":
+        memory = None
+    elif model.name == "CRTN":
+        mem = None
+        cache_info = init_cache_info(args)
+        key, value = None, None
+    with torch.no_grad():
+        for text in text_blocks:
+            target = torch.zeros_like(text)
+            if model.name == "Transformer-XL":
+                output, memory = model(text, memory)
+            elif model.name == "CRTN":
+                if mem is not None:
+                    mem = mem.detach()
+                output, hidden, mem = model(text, key, value,
+                                            neighbor_mem=mem,
+                                            cache_info=cache_info)
+
+                model, cache_info, key, value = update_cache(model, 
+                                                             text.size(1), 
+                                                             key, value, 
+                                                             hidden, 
+                                                             text, 
+                                                             cache_info)
+    if model.name == "Transformer-XL":
+        history = memory
+    elif model.name == "CRTN":
+        history = key, value, mem, cache_info
+
+    return history
 
 
-def mutual_information(model, criterion, texts, distance, args):
+def mutual_information(model, criterion, history, texts, distance, args):
     text_len = texts.size(0)
     ind_i, ind_j = text_len - distance - 1, text_len - 1
     text_blocks = texts.split(args.num_steps, dim=0)
     # compute to distribution of Yi to sample from
-    sample_prob = get_logprob(model, criterion, text_blocks, args, ind=ind_i).exp()
+    sample_prob = get_logprob(model, criterion, history, text_blocks, args, ind=ind_i).exp()
     # sample k times
     yi_samples = torch.multinomial(sample_prob, args.sample_k, replacement=True)
     # form new condition given samples
@@ -185,7 +220,7 @@ def mutual_information(model, criterion, texts, distance, args):
     oa_probs = []
     for texts in sample_texts:
         text_blocks = texts.split(args.num_steps, dim=0)
-        all_logprob = get_logprob(model, criterion, text_blocks, args)
+        all_logprob = get_logprob(model, criterion, history, text_blocks, args)
         yj_logprob = all_logprob[ind_j]
         oa_all_logprob = all_logprob[ind_i+1:ind_j]
         oa_text = texts[ind_i+1:ind_j]
@@ -358,21 +393,37 @@ def main(args):
         vocab = data_loader.dataset.fields["text"].vocab
     
     mutual_infos = [0 for _ in range(args.range)]
-    with tqdm(total=args.target_len) as pbar:
-        for data in data_loader:
-            texts, targets = data.text.to(device), data.target.to(device)
+    history = None
+    for itar, data in enumerate(data_loader):
+        texts, targets = data.text.to(device), data.target.to(device)
 
-            if args.debug:
-                for i, text in enumerate(texts.t()):
-                    words = [vocab.itos[w] for w in text]
-                    print("Batch %s: " % i, " ".join(words))
+        history_len = (args.largest_range - args.range - args.target_len + 1) // args.num_steps * args.num_steps
+        history_len = history_len + itar
+        range_len = args.largest_range + 1 - history_len
+        history_texts, range_texts = texts.split([history_len, range_len])
 
+        # compute output and history before
+        if args.debug:
+            print(history_len, range_len)
+        if history is None:
+            history = prepare_history(model, criterion, history_texts, args)
+        #history = prepare_history(model, criterion, history_texts, args)
+
+        if args.debug:
+            for i, text in enumerate(range_texts.t()):
+                words = [vocab.itos[w] for w in text]
+                print("Batch %s: " % i, " ".join(words))
+
+        with tqdm(total=args.range) as pbar:
             for dis in range(1, args.range + 1):
-                mutual_info = mutual_information(model, criterion, texts, dis, args)
+                mutual_info = mutual_information(model, criterion, history, range_texts, dis, args)
                 mutual_infos[dis-1] += mutual_info
                 if args.debug:
+                    for text in range_texts.t():
+                        yi, yj = text[-1-dis], text[-1]
+                        print("(%s, %s)" % (vocab.itos[yi], vocab.itos[yj]))
                     print("dis %s mi %.3e" % (dis, mutual_info))
-            pbar.update(1)
+                pbar.update(1)
 
     amid = averaged_split(mutual_infos)
     print("-" * 89)
