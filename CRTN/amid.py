@@ -248,7 +248,10 @@ def mutual_information(model, criterion, history, texts, distance, args):
     #if mi < 0 or torch.isnan(mi):
     #    ipdb.set_trace()
 
-    return mi.mean().item()
+    if args.word_classify:
+        return mi
+    else:
+        return mi.mean().item()
 
 
 def averaged_split(mutual_infos):
@@ -284,7 +287,6 @@ def main(args):
         args.largest_range = args.range
 
     if args.word_classify:
-        args.batch_size = 1
         word_bags = [[] for _ in range(args.range)]
     
     if args.datasets == "ptb":
@@ -423,12 +425,13 @@ def main(args):
         with tqdm(total=args.range) as pbar:
             pbar.set_description("tgt_idx %s" % itgt)
             if args.word_classify:
-                word_mi = [0 for _ in range(args.range)]
+                word_mis = []
             for dis in range(1, args.range + 1):
                 mutual_info = mutual_information(model, criterion, history, range_texts, dis, args)
-                mutual_infos[dis-1] += mutual_info
                 if args.word_classify:
-                    word_mi[dis-1] = mutual_info
+                    word_mis.append(mutual_info.unsqueeze(1))
+                    mutual_info = mutual_info.mean().item()
+                mutual_infos[dis-1] += mutual_info
                 if args.debug:
                     for text in range_texts.t():
                         yi, yj = text[-1-dis], text[-1]
@@ -436,11 +439,18 @@ def main(args):
                     print("dis %s mi %.3e" % (dis, mutual_info))
                 pbar.update(1)
         if args.word_classify:
-            word_amid = averaged_split(word_mi)
-            word_idx = range_texts[-1].item()
-            word_bags[math.floor(word_amid)].append(vocab.itos[word_idx])
+            word_mis = torch.cat(word_mis, dim=1)
+            for batch_idx, word_mi in enumerate(word_mis):
+                word_mi = word_mi.tolist()
+                word_amid = averaged_split(word_mi)
+                word_idx = range_texts[-1, batch_idx].item()
+                word_bags[math.floor(word_amid)].append(vocab.itos[word_idx])
             pprint(word_bags)
 
+    if args.word_classify:
+        word_bags = [set(b) for b in word_bags]
+        for amid, bag in enumerate(word_bags):
+            print("AMID %d~%d : " % (amid, amid + 1), bag)
     amid = averaged_split(mutual_infos)
     print("-" * 89)
     print("Averaged Mutual Information Distance of {}: {:.3f}".format(model.name, amid))
