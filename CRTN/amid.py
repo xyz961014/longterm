@@ -432,7 +432,7 @@ def main(args):
                 print("Batch %s: " % i, " ".join(words))
 
         with tqdm(total=args.range) as pbar:
-            pbar.set_description("tgt_idx %s/%s" % (itgt, args.range - 1))
+            pbar.set_description("tgt_idx %s/%s" % (itgt, args.target_len - 1))
             if args.word_classify:
                 word_mis = []
             for dis in range(1, args.range + 1):
