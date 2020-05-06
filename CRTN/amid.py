@@ -53,7 +53,7 @@ def parse_args():
     parser.add_argument('--neighbor_len', type=int, default=80,
                         help='length of memory')
     parser.add_argument("--cache_N", type=int, default=20, 
-                        help="size of Cache, default: 10")
+                        help="size of Cache, default: 20")
     parser.add_argument("--cache_k", type=int, default=8, 
                         help="select top k values, default: 8")
     parser.add_argument("--cache_L", type=int, default=20, 
@@ -63,13 +63,13 @@ def parse_args():
                         help="number of samples")
     parser.add_argument("--range", type=int, default=20, 
                         help="largest range to compute mutual information")
-    parser.add_argument("--largest_range", type=int, default=200, 
+    parser.add_argument("--largest_range", type=int, default=1000, 
                         help="largest range to load data")
-    parser.add_argument("--target_len", type=int, default=1, 
+    parser.add_argument("--target_len", type=int, default=20, 
                         help="target length")
     parser.add_argument("--end_bias", type=int, default=0, 
                         help="last word pos bias when loading data")
-    parser.add_argument("--batch_size", type=int, default=10, 
+    parser.add_argument("--batch_size", type=int, default=50, 
                         help="batch size")
     parser.add_argument("--word_classify", action="store_true",
                         help="classify words by amid value in integer span")
@@ -278,11 +278,12 @@ def main(args):
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
-    try:
-        vis = visdom.Visdom(env=args.env)
-        assert vis.check_connection()
-    except AssertionError:
-        print("Visdom not running!")
+    if args.bar:
+        try:
+            vis = visdom.Visdom(env=args.env)
+            assert vis.check_connection()
+        except AssertionError:
+            print("Visdom not running!")
 
     if torch.cuda.is_available():
         device = torch.device("cuda:" + str(args.device))
