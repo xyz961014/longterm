@@ -431,7 +431,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
                 prob_cache = prob_cache.reshape(prob_cache.size(0), -1, cache_L, 
                                                 batch_size, self.num_head)
                 prob_cache = torch.einsum("ikjbn,ibk->ikjbn", prob_cache, weights)
-            prob_cache = prob_cache.view(prob_cache.size(0), -1, *prob_cache.shape[3:])
+                prob_cache = prob_cache.view(prob_cache.size(0), -1, *prob_cache.shape[3:])
             cache_v = cache_v.view(-1, *cache_v.shape[2:])
             if self.apex:
                 cache_vec = bmm_einsum(prob_cache, cache_v, "ilbn,lbnd->ibnd")
