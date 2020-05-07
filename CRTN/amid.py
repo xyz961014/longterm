@@ -285,7 +285,7 @@ def main(args):
         args.largest_range = 1000
         args.range = 20
         args.batch_size = 10
-        args.target_len = 50
+        args.target_len = 30
 
     if args.bar:
         try:
