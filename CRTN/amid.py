@@ -65,7 +65,7 @@ def parse_args():
                         help="largest range to compute mutual information")
     parser.add_argument("--largest_range", type=int, default=1000, 
                         help="largest range to load data")
-    parser.add_argument("--target_len", type=int, default=20, 
+    parser.add_argument("--target_len", type=int, default=50, 
                         help="target length")
     parser.add_argument("--end_bias", type=int, default=0, 
                         help="last word pos bias when loading data")
@@ -281,11 +281,11 @@ def main(args):
     torch.cuda.manual_seed_all(args.seed)
 
     if args.light:
-        args.sample_k = 30
+        args.sample_k = 20
         args.largest_range = 1000
         args.range = 20
         args.batch_size = 10
-        args.target_len = 20
+        args.target_len = 50
 
     if args.bar:
         try:

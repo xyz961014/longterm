@@ -59,7 +59,7 @@ def parse_args():
     parser.add_argument("--cache_L", type=int, default=80, 
                         help="length of segments in cache, default: 80")
     # recl settings
-    parser.add_argument("--target_len", type=int, default=20, 
+    parser.add_argument("--target_len", type=int, default=50, 
                         help="target length")
     parser.add_argument("--end_bias", type=int, default=0,
                         help="last word pos bias when loading data")
@@ -69,7 +69,7 @@ def parse_args():
                         help="ratio r of worst words to attention")
     parser.add_argument("--delta", type=int, default=20, 
                         help="step of increasing c")
-    parser.add_argument("--threshold", type=float, default=0.01, 
+    parser.add_argument("--threshold", type=float, default=0.001, 
                         help="addition ratio threshold to stop")
     parser.add_argument("--batch_size", type=int, default=10, 
                         help="batch size")
