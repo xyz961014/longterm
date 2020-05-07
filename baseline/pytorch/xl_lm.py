@@ -115,6 +115,8 @@ def parse_args():
                         help='number of layers')
     parser.add_argument('--nhead', type=int, default=10,
                         help='number of heads')
+    parser.add_argument('--d_head', type=int, default=40,
+                        help='dimension of single head')
     parser.add_argument('--d_ff', type=int, default=900,
                         help='dimension of feed-forward')
     parser.add_argument('--num_steps', type=int, default=70,
@@ -632,7 +634,7 @@ def main(args):
                 num_layer=model_args.nlayers,
                 num_head=model_args.nhead,
                 d_model=model_args.nhid,
-                d_head=model_args.nhid // model_args.nhead,
+                d_head=model_args.d_head,
                 d_ff=model_args.d_ff,
                 d_embedding=model_args.emsize,
                 tied_weights=model_args.tied,
@@ -665,7 +667,7 @@ def main(args):
                 num_layer=args.nlayers,
                 num_head=args.nhead,
                 d_model=args.nhid,
-                d_head=args.nhid // args.nhead,
+                d_head=args.d_head,
                 d_ff=args.d_ff,
                 d_embedding=args.emsize,
                 tied_weights=args.tied,

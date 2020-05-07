@@ -22,6 +22,7 @@ python xl_lm.py \
     --nlayers 12 \
     --d_ff 1024 \
     --nhead 10 \
+    --d_head 40 \
     --emsize 400 \
     --nhid 400 \
     --batch_size 40 \

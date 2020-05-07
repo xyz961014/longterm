@@ -530,7 +530,7 @@ class TransformerLM(nn.Module):
         d_embedding = self.args.emsize
         d_model = self.args.nhid
         d_ff = self.args.d_ff
-        d_head = self.args.nhid // args.nhead
+        d_head = self.args.d_head
         num_head = self.args.nhead
         num_layer = self.args.nlayers
         num_steps = self.args.num_steps

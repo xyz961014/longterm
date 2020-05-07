@@ -121,6 +121,8 @@ def parse_args():
                         help='number of layers')
     parser.add_argument('--nhead', type=int, default=8,
                         help='number of heads')
+    parser.add_argument('--d_head', type=int, default=40,
+                        help='dimension of single head')
     parser.add_argument('--d_ff', type=int, default=1024,
                         help='dimension of feed-forward')
     parser.add_argument('--batch_size', type=int, default=50, metavar='N',

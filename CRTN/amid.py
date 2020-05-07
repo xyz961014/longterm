@@ -59,17 +59,17 @@ def parse_args():
     parser.add_argument("--cache_L", type=int, default=20, 
                         help="length of segments in cache, default: 20")
     # amid settings
-    parser.add_argument("--sample_k", type=int, default=20, 
+    parser.add_argument("--sample_k", type=int, default=150, 
                         help="number of samples")
-    parser.add_argument("--range", type=int, default=20, 
+    parser.add_argument("--range", type=int, default=50, 
                         help="largest range to compute mutual information")
     parser.add_argument("--largest_range", type=int, default=1000, 
                         help="largest range to load data")
-    parser.add_argument("--target_len", type=int, default=20, 
+    parser.add_argument("--target_len", type=int, default=10, 
                         help="target length")
     parser.add_argument("--end_bias", type=int, default=0, 
                         help="last word pos bias when loading data")
-    parser.add_argument("--batch_size", type=int, default=50, 
+    parser.add_argument("--batch_size", type=int, default=20, 
                         help="batch size")
     parser.add_argument("--word_classify", action="store_true",
                         help="classify words by amid value in integer span")
@@ -77,6 +77,8 @@ def parse_args():
                         help="compute averaged value from start idx")
     parser.add_argument("--bar", action="store_true",
                         help="draw bar over distance")
+    parser.add_argument("--light", action="store_true",
+                        help="use default light setting")
     # setting
     parser.add_argument("--seed", type=int, default=1111, 
                         help="random seed")
@@ -278,6 +280,13 @@ def main(args):
     torch.manual_seed(args.seed)
     torch.cuda.manual_seed_all(args.seed)
 
+    if args.light:
+        args.sample_k = 30
+        args.largest_range = 1000
+        args.range = 20
+        args.batch_size = 20
+        args.target_len = 10
+
     if args.bar:
         try:
             vis = visdom.Visdom(env=args.env)
@@ -433,7 +442,7 @@ def main(args):
                 print("Batch %s: " % i, " ".join(words))
 
         with tqdm(total=args.range) as pbar:
-            pbar.set_description("tgt_idx %s/%s" % (itgt, args.target_len - 1))
+            pbar.set_description("tgt_idx %s/%s" % (itgt + 1, args.target_len))
             if args.word_classify:
                 word_mis = []
             for dis in range(1, args.range + 1):
