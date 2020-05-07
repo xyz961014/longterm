@@ -178,7 +178,7 @@ class CRTNModel(nn.Module):
                 query_base = query_base.masked_fill(mask, 0)
                 if self.args.summary_method == "linear":
                     query_base = query_base.permute(0, 2, 3, 1).reshape(seq_len, bsz, -1)
-                query = F.tanh(self.shorten(query_base))
+                query = torch.tanh(self.shorten(query_base))
                 if self.args.summary_method == "linear":
                     query = query.unsqueeze(1)
                 else:
@@ -190,7 +190,7 @@ class CRTNModel(nn.Module):
                 query = wise_inputs
             elif self.args.query_method == "single_linear":
                 wise_inputs = wise_inputs[-1][:,None,:,:]
-                query = F.tanh(self.shorten(wise_inputs))
+                query = torch.tanh(self.shorten(wise_inputs))
 
         ### look up from cache ###
         

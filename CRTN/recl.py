@@ -59,7 +59,7 @@ def parse_args():
     parser.add_argument("--cache_L", type=int, default=80, 
                         help="length of segments in cache, default: 80")
     # recl settings
-    parser.add_argument("--target_len", type=int, default=50, 
+    parser.add_argument("--target_len", type=int, default=30, 
                         help="target length")
     parser.add_argument("--end_bias", type=int, default=0,
                         help="last word pos bias when loading data")

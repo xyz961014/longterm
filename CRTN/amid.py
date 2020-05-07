@@ -46,18 +46,18 @@ def parse_args():
     parser.add_argument("--model_path", type=str, 
                         help="model path")
     # xl or model settings
-    parser.add_argument('--num_steps', type=int, default=20,
+    parser.add_argument('--num_steps', type=int, default=80,
                         help='sequence length')
-    parser.add_argument('--mem_len', type=int, default=140,
+    parser.add_argument('--mem_len', type=int, default=80,
                         help='length of memory')
     parser.add_argument('--neighbor_len', type=int, default=80,
                         help='length of memory')
-    parser.add_argument("--cache_N", type=int, default=20, 
-                        help="size of Cache, default: 20")
-    parser.add_argument("--cache_k", type=int, default=8, 
+    parser.add_argument("--cache_N", type=int, default=5, 
+                        help="size of Cache, default: 5")
+    parser.add_argument("--cache_k", type=int, default=2, 
                         help="select top k values, default: 8")
-    parser.add_argument("--cache_L", type=int, default=20, 
-                        help="length of segments in cache, default: 20")
+    parser.add_argument("--cache_L", type=int, default=80, 
+                        help="length of segments in cache, default: 80")
     # amid settings
     parser.add_argument("--sample_k", type=int, default=120, 
                         help="number of samples")
@@ -65,7 +65,7 @@ def parse_args():
                         help="largest range to compute mutual information")
     parser.add_argument("--largest_range", type=int, default=1000, 
                         help="largest range to load data")
-    parser.add_argument("--target_len", type=int, default=50, 
+    parser.add_argument("--target_len", type=int, default=30, 
                         help="target length")
     parser.add_argument("--end_bias", type=int, default=0, 
                         help="last word pos bias when loading data")
@@ -84,7 +84,7 @@ def parse_args():
                         help="random seed")
     parser.add_argument('--device', type=int, default=0,
                         help='device number')
-    parser.add_argument("--env", type=str, default="xyz", 
+    parser.add_argument("--env", type=str, default="amid", 
                         help="visdom env name")
     parser.add_argument("--debug", action="store_true",
                         help="display in debug mode")
