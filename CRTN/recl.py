@@ -46,18 +46,18 @@ def parse_args():
     parser.add_argument("--model_paths", nargs="+", type=str, 
                         help="model paths")
     # xl and model settings
-    parser.add_argument('--num_steps', type=int, default=20,
+    parser.add_argument('--num_steps', type=int, default=80,
                         help='sequence length')
-    parser.add_argument('--mem_len', type=int, default=140,
+    parser.add_argument('--mem_len', type=int, default=80,
                         help='length of memory')
     parser.add_argument('--neighbor_len', type=int, default=80,
                         help='length of memory')
-    parser.add_argument("--cache_N", type=int, default=20, 
-                        help="size of Cache, default: 20")
-    parser.add_argument("--cache_k", type=int, default=8, 
-                        help="select top k values, default: 8")
-    parser.add_argument("--cache_L", type=int, default=20, 
-                        help="length of segments in cache, default: 20")
+    parser.add_argument("--cache_N", type=int, default=5, 
+                        help="size of Cache, default: 5")
+    parser.add_argument("--cache_k", type=int, default=2, 
+                        help="select top k values, default: 2")
+    parser.add_argument("--cache_L", type=int, default=80, 
+                        help="length of segments in cache, default: 80")
     # recl settings
     parser.add_argument("--target_len", type=int, default=20, 
                         help="target length")
@@ -71,7 +71,7 @@ def parse_args():
                         help="step of increasing c")
     parser.add_argument("--threshold", type=float, default=0.01, 
                         help="addition ratio threshold to stop")
-    parser.add_argument("--batch_size", type=int, default=50, 
+    parser.add_argument("--batch_size", type=int, default=10, 
                         help="batch size")
     # setting
     parser.add_argument("--seed", type=int, default=1111, 

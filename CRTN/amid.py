@@ -59,17 +59,17 @@ def parse_args():
     parser.add_argument("--cache_L", type=int, default=20, 
                         help="length of segments in cache, default: 20")
     # amid settings
-    parser.add_argument("--sample_k", type=int, default=150, 
+    parser.add_argument("--sample_k", type=int, default=120, 
                         help="number of samples")
     parser.add_argument("--range", type=int, default=50, 
                         help="largest range to compute mutual information")
     parser.add_argument("--largest_range", type=int, default=1000, 
                         help="largest range to load data")
-    parser.add_argument("--target_len", type=int, default=10, 
+    parser.add_argument("--target_len", type=int, default=20, 
                         help="target length")
     parser.add_argument("--end_bias", type=int, default=0, 
                         help="last word pos bias when loading data")
-    parser.add_argument("--batch_size", type=int, default=20, 
+    parser.add_argument("--batch_size", type=int, default=10, 
                         help="batch size")
     parser.add_argument("--word_classify", action="store_true",
                         help="classify words by amid value in integer span")
@@ -284,8 +284,8 @@ def main(args):
         args.sample_k = 30
         args.largest_range = 1000
         args.range = 20
-        args.batch_size = 20
-        args.target_len = 10
+        args.batch_size = 10
+        args.target_len = 20
 
     if args.bar:
         try:
@@ -444,7 +444,7 @@ def main(args):
                 print("Batch %s: " % i, " ".join(words))
 
         with tqdm(total=args.range) as pbar:
-            pbar.set_description("tgt_idx %s/%s" % (itgt + 1, args.target_len))
+            pbar.set_description("tgt %s/%s" % (itgt + 1, args.target_len))
             if args.word_classify:
                 word_mis = []
             for dis in range(1, args.range + 1):
