@@ -323,14 +323,12 @@ def main(args):
     gain_stops = [False for model in models]
 
     c_prime = c
-    iters = 0
     base_loss = None
     while False in gain_stops:
 
         c = c_prime
         c_prime = c + delta
         print("c: {}\tc': {}".format(c, c_prime))
-        iters += 1
 
         if base_loss is None:
             base_loader = corpus.recl_loader(args.batch_size, args.target_len, c, end_bias=args.end_bias)
@@ -340,10 +338,10 @@ def main(args):
                 base_losses.append(model_loss.unsqueeze(0))
             base_loss = torch.cat(base_losses, dim=0)
             base_loss = base_loss.min(0)[0]
-            print("base loss: {:.3f}".format(base_loss.mean()))
+        print("base loss: {:.3f}".format(base_loss.mean()))
 
         prime_loader = corpus.recl_loader(args.batch_size, args.target_len, c_prime, end_bias=args.end_bias)
-        prime_losses = []
+        prime_losses = [base_loss.unsqueeze(0)]
         for idx in range(len(gain_stops)):
             model, criterion = models[idx]
             gain_stop = gain_stops[idx]
