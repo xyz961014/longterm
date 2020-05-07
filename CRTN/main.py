@@ -735,6 +735,9 @@ def main(args):
             batch_size = args.batch_size
             model_args.eval_batch_size = args.eval_batch_size
 
+        if not hasattr(model_args, "d_head"):
+            model_args.d_head = model_arg.nhid // model_args.nhead
+
         if not model_args.num_steps == args.num_steps:
             print("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
                                                          args.num_steps))
