@@ -253,7 +253,7 @@ def main(args):
         model_args.device = args.device
         model_args.batch_size = args.batch_size
         if not hasattr(model_args, "d_head"):
-            model_args.d_head = model_arg.nhid // model_args.nhead
+            model_args.d_head = model_args.nhid // model_args.nhead
 
 
         if name == 'LSTM':
