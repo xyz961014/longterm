@@ -63,7 +63,7 @@ def parse_args():
     parser.add_argument('--data', type=str,
                         default='/home/xyz/Documents/Dataset/ptb_sample/',
                         help='location of the data corpus')
-    parser.add_argument('--datasets', type=str, choices=["fromfile", "ptb", "wt103"], 
+    parser.add_argument('--datasets', type=str, choices=["fromfile", "ptb", "wt2", "wt103"], 
                         default="fromfile", help='load datasets from torchtext')
     # optimization
     parser.add_argument('--adam', action='store_true',
@@ -522,6 +522,25 @@ def main(args):
                     device=torch.device("cpu"),
                     bptt_len=args.num_steps)
             _, valid_loader, test_loader = torchtext.datasets.PennTreebank.iters(
+                    batch_size=args.eval_batch_size, 
+                    device=torch.device("cpu"),
+                    bptt_len=args.num_steps)
+        vocab = train_loader.dataset.fields["text"].vocab
+        args.vocab_size = len(vocab.itos)
+    elif args.datasets == "wt2":
+        if args.rank == 0:
+            print("Loading %s dataset from torchtext" % args.datasets)
+        if args.random_seq_len:
+            corpus = ExistingDataset("wt2", args.num_steps)
+            train_loader = corpus.randomlen_train_loader(args.batch_size)
+            valid_loader = corpus.get_valid_loader(args.eval_batch_size)
+            test_loader = corpus.get_test_loader(args.eval_batch_size)
+        else:
+            train_loader, _, _ = torchtext.datasets.WikiText2.iters(
+                    batch_size=args.batch_size, 
+                    device=torch.device("cpu"),
+                    bptt_len=args.num_steps)
+            _, valid_loader, test_loader = torchtext.datasets.WikiText2.iters(
                     batch_size=args.eval_batch_size, 
                     device=torch.device("cpu"),
                     bptt_len=args.num_steps)
