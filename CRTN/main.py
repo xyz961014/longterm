@@ -79,7 +79,7 @@ def parse_args():
     parser.add_argument('--scheduler', type=str, default='cosine', 
                         choices=['cosine', 'constant'],
                         help='lr scheduler to use')
-    parser.add_argument('--eta_min', type=float, default=0.0,
+    parser.add_argument('--eta_min', type=float, default=1e-6,
                         help='lr_min for cosine scheduler')
     parser.add_argument('--warmup_steps', type=int, default=0,
                         help='linear warmup steps')
@@ -199,6 +199,10 @@ def parse_args():
                         help='number of epochs of standard training')
     parser.add_argument('--ema_epochs', type=int, default=50,
                         help='number of epochs with ema of params')
+    parser.add_argument('--nonmono', type=int, default=-1,
+                        help='non mono epochs to skip std epochs, -1 to disable it')
+    parser.add_argument('--update_cycle', type=int, default=1,
+                        help='gradient update cycle, use for simullate large batch_size')
     parser.add_argument('--mu', type=float, default=-1,
                         help='mu used for EMA. set to -1 to use 1 / step.')
     parser.add_argument("--theta_annealing_alpha", type=float, default=1.0, 
@@ -337,6 +341,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
     
     key = None
     value = None
+    counter = 0
     if args.farnear:
         mem = None
     cache_info = init_cache_info(args, device)
@@ -355,8 +360,9 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         else:
             text, targets = data.text.to(device), data.target.to(device)
 
-        model.zero_grad()
-        criterion.zero_grad()
+        if counter % args.update_cycle == 0:
+            model.zero_grad()
+            criterion.zero_grad()
        
         # train
         if args.farnear:
@@ -398,11 +404,13 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             torch.nn.utils.clip_grad_norm_(criterion.parameters(), args.clip)
 
-        optimizer.step()
+        if counter % args.update_cycle == 0:
+            optimizer.step()
+            step += 1
+        counter += 1
 
         total_loss += loss.item()
 
-        step += 1
         if ema is not None:
             # parameters average
             if args.mu < 0:
@@ -926,7 +934,7 @@ def main(args):
     if not args.eval:
         try:
             best_eval_ppl = float('inf')
-            best_eval_ppls = []
+            eval_ppls = []
             train_step = 0
             ema = dict()
             module = model.module if args.distributed else model
@@ -968,16 +976,21 @@ def main(args):
                                       epoch * len(train_loader))
                     writer.flush()
                 
-                    best_eval_ppls.append(eval_ppl)
+                if args.nonmono > 0:
+                    if len(eval_ppls) > args.nonmono:
+                        if eval_ppl > min(eval_ppls[:-args.nonmono]):
+                            break
+                    eval_ppls.append(eval_ppl)
 
             if args.ema_epochs > 0:
                 print("Starting EMA at epoch {}".format(epoch))
+                ema_start = epoch
                 for p in chain(model.parameters(), criterion.parameters()):
                     ema[p] = p.data.clone()
                 for k in range(len(optimizer.param_groups)):
                     optimizer.param_groups[k]["lr"] *= args.ema_lr_mult
 
-            for epoch in range(args.std_epochs+1, args.epochs+1):
+            for epoch in range(ema_start+1, ema_start+args.ema_epochs+1):
                 epoch_start_time = time.time()
                 best_eval_ppl, train_step, ema = train(model, 
                                                        train_loader, 

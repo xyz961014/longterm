@@ -154,6 +154,8 @@ def parse_args():
                         help='number of epochs of standard training')
     parser.add_argument('--ema_epochs', type=int, default=50,
                         help='number of epochs with ema of params')
+    parser.add_argument('--nonmono', type=int, default=-1,
+                        help='non mono epochs to skip std epochs, -1 to disable it')
     parser.add_argument('--mu', type=float, default=-1,
                         help='mu used for EMA. set to -1 to use 1 / step.')
     parser.add_argument("--theta_annealing_alpha", type=float, default=1.0, 
@@ -799,6 +801,7 @@ def main(args):
     if not args.eval:
         try:
             best_eval_ppl = float('inf')
+            eval_ppls = []
             train_step = 0
             ema = dict()
             module = model.module if args.distributed else model
@@ -843,13 +846,22 @@ def main(args):
                                       epoch * len(train_loader))
                     writer.flush()                
 
-            print("Starting EMA at epoch {}".format(epoch))
-            for p in chain(model.parameters(), criterion.parameters()):
-                ema[p] = p.data.clone()
-            for k in range(len(optimizer.param_groups)):
-                optimizer.param_groups[k]["lr"] *= args.ema_lr_mult
+                if args.nonmono > 0:
+                    if len(eval_ppls) > args.nonmono:
+                        if eval_ppl > min(eval_ppls[:-args.nonmono]):
+                            break
+                    eval_ppls.append(eval_ppl)
 
-            for epoch in range(args.std_epochs+1, args.epochs+1):
+
+            if args.ema_epochs > 0:
+                print("Starting EMA at epoch {}".format(epoch))
+                ema_start = epoch
+                for p in chain(model.parameters(), criterion.parameters()):
+                    ema[p] = p.data.clone()
+                for k in range(len(optimizer.param_groups)):
+                    optimizer.param_groups[k]["lr"] *= args.ema_lr_mult
+
+            for epoch in range(ema_start+1, ema_start+args.ema_epochs+1):
                 epoch_start_time = time.time()
                 best_eval_ppl, train_step, ema = train(model, 
                                                        train_loader, 
@@ -873,6 +885,11 @@ def main(args):
                 eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
                 if args.rank == 0:
+                    print('-' * 89)
+                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
+                          '{:8.2f}'.format(epoch, 
+                                           (time.time() - epoch_start_time),
+                                           eval_ppl))
                     if eval_ppl < best_eval_ppl:
                         best_eval_ppl = eval_ppl
                         save_dict = {
@@ -886,11 +903,6 @@ def main(args):
                                    args.savepath + "/" + args.save + "_best.pt")
                         print("save averaged model")
 
-                    print('-' * 89)
-                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
-                          '{:8.2f}'.format(epoch, 
-                                           (time.time() - epoch_start_time),
-                                           eval_ppl))
                     print('-' * 89)
 
                     writer.add_scalar("valid/ppl", eval_ppl, 
