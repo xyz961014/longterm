@@ -39,7 +39,7 @@ def parse_args():
     parser.add_argument('--data', type=str,
                         default='/home/xyz/Documents/Dataset/ptb_sample/',
                         help='location of the data corpus')
-    parser.add_argument('--datasets', type=str, choices=["fromfile", "ptb", "wt103"], 
+    parser.add_argument('--datasets', type=str, choices=["fromfile", "ptb", "wt2", "wt103"], 
                         default="ptb", help='load datasets from torchtext')
     parser.add_argument('--vocab_size', type=int, default=10000)
     # model
@@ -311,6 +311,9 @@ def main(args):
     if args.datasets == "ptb":
         print("Loading %s dataset from torchtext" % args.datasets)
         corpus = ExistingDataset("ptb", args.num_steps)
+    elif args.datasets == "wt2":
+        print("Loading %s dataset from torchtext" % args.datasets)
+        corpus = ExistingDataset("wt2", args.num_steps)
     elif args.datasets == "wt103":
         print("Loading %s dataset from torchtext" % args.datasets)
         corpus = ExistingDataset("wt103", args.num_steps)
