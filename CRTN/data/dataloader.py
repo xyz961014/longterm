@@ -344,17 +344,20 @@ class RECLIterator(data.Iterator):
         TEXT = self.dataset.fields['text']
         TEXT.eos_token = None
         e = self.end_bias
-        #text = text + ([TEXT.pad_token] * int(math.ceil(len(text) / self.batch_size)
-        #                                      * self.batch_size - len(text)))
-        text = text[:len(text) // self.batch_size * self.batch_size]
+        text = text + ([TEXT.pad_token] * int(math.ceil(len(text) / self.batch_size)
+                                              * self.batch_size - len(text)))
+        #text = text[:len(text) // self.batch_size * self.batch_size]
         _data = TEXT.numericalize([text], device=self.device)
         _data = _data.view(self.batch_size, -1).t().contiguous()
+        #pad = TEXT.numericalize([[TEXT.pad_token]], device=self.device)
+        #pad = pad.expand(self.context_len, self.batch_size)
+        #_data = torch.cat((pad, _data), dim=0)
         dataset = Dataset(examples=self.dataset.examples, fields=[
             ('text', TEXT), ('target', TEXT)])
         while True:
             i = 0
             while i < self.target_len:
-                if len(_data) - i - 3 < self.target_len:
+                if len(_data) - i - 3 < e:
                     break
                 self.iterations += 1
 
@@ -381,8 +384,9 @@ class RECLIterator(data.Iterator):
 if __name__ == "__main__":
     TEXT = data.Field(sequential=True)
     ptb_train, ptb_valid, ptb_test = datasets.PennTreebank.splits(TEXT)
-    TEXT.build_vocab(ptb_train)
-    iterator = RandomLengthBPTTIterator(ptb_train, bptt_len=80, batch_size=10)
+    wt2_train, wt2_valid, wt2_test = datasets.WikiText2.splits(TEXT)
+    TEXT.build_vocab(wt2_train)
+    iterator = RECLIterator(wt2_valid, batch_size=10, target_len=10, context_len=50)
     ds = []
     for d in iterator:
         ds.append(d.text.size(0))

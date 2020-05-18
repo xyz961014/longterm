@@ -853,9 +853,9 @@ def main(args):
                     eval_ppls.append(eval_ppl)
 
 
+            ema_start = epoch
             if args.ema_epochs > 0:
                 print("Starting EMA at epoch {}".format(epoch))
-                ema_start = epoch
                 for p in chain(model.parameters(), criterion.parameters()):
                     ema[p] = p.data.clone()
                 for k in range(len(optimizer.param_groups)):

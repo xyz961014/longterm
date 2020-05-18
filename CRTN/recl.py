@@ -43,7 +43,7 @@ def parse_args():
                         default="ptb", help='load datasets from torchtext')
     parser.add_argument('--vocab_size', type=int, default=10000)
     # models
-    parser.add_argument("--model_paths", nargs="+", type=str, 
+    parser.add_argument("--model_path", nargs="+", type=str, 
                         help="model paths")
     # xl and model settings
     parser.add_argument('--num_steps', type=int, default=80,
@@ -73,11 +73,24 @@ def parse_args():
                         help="addition ratio threshold to stop")
     parser.add_argument("--batch_size", type=int, default=10, 
                         help="batch size")
+    # select long-term words
+    parser.add_argument("--select_long", action="store_true",
+                        help="switch of select long-term words")
+    parser.add_argument("--context_len", type=int, default=100, 
+                        help="fixed context length to compare with")
+    parser.add_argument("--parallel_num", type=int, default=1, 
+                        help="computing loss in parallel")
+    parser.add_argument("--select_ratio", type=float, default=0.05, 
+                        help="ratio r to select long-term words")
+    parser.add_argument("--long_save", type=str, default="longterm_idx.txt",
+                        help="path to save selected long-term word indexes")
     # setting
     parser.add_argument("--seed", type=int, default=1111, 
                         help="random seed")
     parser.add_argument('--device', type=int, default=0,
                         help='device number')
+    parser.add_argument("--debug", action="store_true",
+                        help="display in debug mode")
     return parser.parse_args()
 
 def init_cache_info(args):
@@ -101,6 +114,73 @@ def update_cache(model, batch_size, key, value, hidden, text, cache_info):
                                                  values=value)
     return model, cache_info, keys, values
 
+def evaluate(model, criterion, data_loader, args):
+    model.eval()
+    criterion.eval()
+    losses = []
+    if args.debug:
+        texts = []
+    with torch.no_grad():
+        with tqdm(total=len(data_loader)) as pbar:
+            pbar.set_description(model.name)
+
+            # initial model
+            if model.name == "LSTM":
+                pass
+            elif model.name == "Transformer-XL":
+                memory = None
+            elif model.name == "CRTN":
+                mem = None
+                cache_info = init_cache_info(args)
+                key, value = None, None
+
+            for data in data_loader:
+                text, target = data.text.cuda(), data.target.cuda()
+                if args.debug:
+                    texts.append(text)
+
+                if model.name == "LSTM":
+                    pass
+                elif model.name == "Transformer-XL":
+                    output, memory = model(text, memory)
+                    if model.adaptive:
+                        loss_tensor = criterion(output, target,
+                                                keep_order=True)
+                    else:
+                        loss_tensor = criterion(output, target, reduction='none')
+                    loss_tensor = loss_tensor.reshape_as(target)
+                elif model.name == "CRTN":
+                    if mem is not None:
+                        mem = mem.detach()
+                    output, hidden, mem = model(text, key, value,
+                                                neighbor_mem=mem,
+                                                cache_info=cache_info)
+
+                    model, cache_info, key, value = update_cache(model, 
+                                                                 text.size(1), 
+                                                                 key, value, 
+                                                                 hidden, 
+                                                                 text, 
+                                                                 cache_info)
+                    if model.adaptive:
+                        loss_tensor = criterion(output, target,
+                                                keep_order=True)
+                    else:
+                        loss_tensor = criterion(output, target, reduction='none')
+                loss_tensor = loss_tensor.reshape_as(target)
+                losses.append(loss_tensor)
+                pbar.update(1)
+    loss = torch.cat(losses, dim=0)
+    e = args.end_bias
+    l = args.target_len
+
+    if args.debug:
+        vocab = data_loader.dataset.fields["text"].vocab
+        texts = torch.cat(texts, dim=0)
+        print(" ".join([vocab.itos[w] for w in texts[-1-l-e:-1-e,0]]))
+        print("batch_len: %s" % loss.size(0))
+
+    return loss[-1 - l - e:-1 - e], (loss.size(0) - 1 - l - e, loss.size(0))
 
 
 
@@ -108,13 +188,26 @@ def loss(model, criterion, data_loader, args):
     model.eval()
     criterion.eval()
     losses = []
+    p_texts, p_targets = [], []
+    if args.debug:
+        txts = []
     with torch.no_grad():
         with tqdm(total=args.target_len) as pbar:
             pbar.set_description(model.name)
             for data in data_loader:
                 text, target = data.text.cuda(), data.target.cuda()
-                texts = text.split(args.num_steps, dim=0)
-                targets = target.split(args.num_steps, dim=0)
+                if args.debug:
+                    txts.append(text[-1][0].item())
+                p_texts.append(text)
+                p_targets.append(target)
+                if len(p_texts) < args.parallel_num:
+                    continue
+                texts = torch.cat(p_texts, dim=1)
+                targets = torch.cat(p_targets, dim=1)
+                texts = texts.split(args.num_steps, dim=0)
+                targets = targets.split(args.num_steps, dim=0)
+                p_texts, p_targets = [], []
+
 
                 # initial model
                 if model.name == "LSTM":
@@ -158,16 +251,15 @@ def loss(model, criterion, data_loader, args):
                         else:
                             loss_tensor = criterion(output, target, reduction='none')
                         loss_tensor = loss_tensor.reshape_as(target)
-                losses.append(loss_tensor[-1].unsqueeze(0))
-                pbar.update(1)
-            loss = torch.cat(losses, dim=0)
-        
-        return loss
+                losses = losses + list(loss_tensor[-1].unsqueeze(0).split(args.batch_size, dim=1))
+                pbar.update(args.parallel_num)
+            if args.debug:
+                vocab = data_loader.dataset.fields["text"].vocab
+                print(" ".join([vocab.itos[w] for w in txts[::-1]]))
 
-
+            loss = torch.cat(losses[::-1], dim=0)
         
-        
-
+    return loss
 
 
 
@@ -215,8 +307,7 @@ def main(args):
 
 
 
-
-    for path in args.model_paths:
+    for path in args.model_path:
         checkpoint = torch.load(path, map_location=device)
         model_args = checkpoint["model_args"]
         name = model_args.name
@@ -268,7 +359,7 @@ def main(args):
                     num_layer=model_args.nlayers,
                     num_head=model_args.nhead,
                     d_model=model_args.nhid,
-                    d_head=model_args.nhid // model_args.nhead,
+                    d_head=model_args.d_head,
                     d_ff=model_args.d_ff,
                     d_embedding=model_args.emsize,
                     tied_weights=model_args.tied,
@@ -319,77 +410,80 @@ def main(args):
 
         models.append((model, criterion))
 
-    c = args.init_c
-    r = args.top_r
-    delta = args.delta
-    threshold = args.threshold
-    gain_stops = [False for model in models]
+    if args.select_long:
+        assert len(models) == 1, "plz only use one model to select long-term words"
+        model, criterion = models[0]
+        valid_loader = corpus.get_valid_loader(args.batch_size)
+        fixed_loader = corpus.recl_loader(args.batch_size, args.target_len, args.context_len, end_bias=args.end_bias)
 
-    c_prime = c
-    base_loss = None
-    while False in gain_stops:
+        valid_loss, (start_idx, batch_len) = evaluate(model, criterion, valid_loader, args)
+        fixed_loss = loss(model, criterion, fixed_loader, args)
+        min_loss = torch.cat((valid_loss.unsqueeze(0), fixed_loss.unsqueeze(0)), dim=0).min(dim=0)[0]
+        ppl_gain = (fixed_loss.exp() - min_loss.exp()) / fixed_loss.exp()
 
-        c = c_prime
-        c_prime = c + delta
-        print("c: {}\tc': {}".format(c, c_prime))
+        tau = math.ceil(args.select_ratio * ppl_gain.size(0))
+        _, idx = ppl_gain.topk(tau, dim=0, sorted=False)
 
-        if base_loss is None:
-            base_loader = corpus.recl_loader(args.batch_size, args.target_len, c, end_bias=args.end_bias)
-            base_losses = []
-            for model, criterion in models:
-                model_loss = loss(model, criterion, base_loader, args)
-                base_losses.append(model_loss.unsqueeze(0))
-            base_loss = torch.cat(base_losses, dim=0)
+        text = valid_loader.dataset.examples[0].text
+        long_index = []
+        for n in range(args.batch_size):
+            batch_idx = idx[:, n]
+            target_text = text[start_idx + n * batch_len: start_idx + n * batch_len + args.target_len]
+            for i, w in enumerate(target_text):
+                if i in batch_idx:
+                    long_index.append(start_idx + n * batch_len + i)
+                    if args.debug:
+                        print("\033[1;31m %s \033[0m" % w, end=" ")
+                else:
+                    if args.debug:
+                        print(w, end=" ")
+            if args.debug:
+                print("")
+        with open(args.long_save, "w") as f:
+            f.write(" ".join([str(p) for p in long_index]))
+
+    else:
+        c = args.init_c
+        r = args.top_r
+        delta = args.delta
+        threshold = args.threshold
+        gain_stops = [False for model in models]
+
+        c_prime = c
+        base_loss = None
+        while False in gain_stops:
+
+            c = c_prime
+            c_prime = c + delta
+            print("c: {}\tc': {}".format(c, c_prime))
+
+            if base_loss is None:
+                base_loader = corpus.recl_loader(args.batch_size, args.target_len, c, end_bias=args.end_bias)
+                base_losses = []
+                for model, criterion in models:
+                    model_loss = loss(model, criterion, base_loader, args)
+                    base_losses.append(model_loss.unsqueeze(0))
+                base_loss = torch.cat(base_losses, dim=0)
+                base_loss = base_loss.min(0)[0]
+            print("base loss: {:.3f}".format(base_loss.mean()))
+
+            prime_loader = corpus.recl_loader(args.batch_size, args.target_len, c_prime, end_bias=args.end_bias)
+            prime_losses = [base_loss.unsqueeze(0)]
+            for idx in range(len(gain_stops)):
+                model, criterion = models[idx]
+                gain_stop = gain_stops[idx]
+                model_loss = loss(model, criterion, prime_loader, args)
+                prime_losses.append(model_loss.unsqueeze(0))
+                if not gain_stop:
+                    gain = relative_gain(model_loss, base_loss, r)
+                    print("{} loss:{:.3f} gain: {:.4f}".format(model.name, model_loss.mean(), gain))
+                    if gain < threshold:
+                        gain_stops[idx] = True
+                        print("{} RECL: {}".format(model.name, c))
+
+
+            base_loss = torch.cat(prime_losses, dim=0)
             base_loss = base_loss.min(0)[0]
-        print("base loss: {:.3f}".format(base_loss.mean()))
-
-        prime_loader = corpus.recl_loader(args.batch_size, args.target_len, c_prime, end_bias=args.end_bias)
-        prime_losses = [base_loss.unsqueeze(0)]
-        for idx in range(len(gain_stops)):
-            model, criterion = models[idx]
-            gain_stop = gain_stops[idx]
-            model_loss = loss(model, criterion, prime_loader, args)
-            prime_losses.append(model_loss.unsqueeze(0))
-            if not gain_stop:
-                gain = relative_gain(model_loss, base_loss, r)
-                print("{} loss:{:.3f} gain: {:.4f}".format(model.name, model_loss.mean(), gain))
-                if gain < threshold:
-                    gain_stops[idx] = True
-                    print("{} RECL: {}".format(model.name, c))
-
-
-        base_loss = torch.cat(prime_losses, dim=0)
-        base_loss = base_loss.min(0)[0]
-
-#    for i, (model, criterion) in enumerate(models):
-#        c_prime = c
-#        gain = 1.0
-#        iters = 0
-#        while gain >= threshold:
-#            c = c_prime
-#            c_prime = c_prime + delta
-#            losses = []
-#            for j, (mod, crit) in enumerate(models):
-#                l = loss(mod, crit, corpus, c)
-#                losses.append(l)
-#
-#            #l = loss(model, criterion, corpus, c)
-#            #losses.append(l)
-#
-#            lossc = torch.cat(losses).view(-1, c).t().contiguous()
-#            base = lossc.min(1)[0]
-#
-#            basec, tau = base.topk(round(c * args.initr))
-#            tau = tau - c
-#            gain = relative_gain(model, criterion, corpus, base, c, c_prime, tau)
-#            print(gain)
-#            iters += 1
-#            viz.line(np.array([[np.NaN] * i + [gain] + [np.NaN] * (len(args.model_names) - i - 1)]), np.array([c]), opts={
-#                'legend': args.model_names,
-#                'showlegend': True
-#                }, win="gain", update="append")
-#        print("%s RECL: %s" % (model.name, c))
-
 
 if __name__ == "__main__":
     args = parse_args()
