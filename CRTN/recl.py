@@ -428,12 +428,13 @@ def main(args):
         long_index = []
         for n in range(args.batch_size):
             batch_idx = idx[:, n]
+            gain = ppl_gain[:, n]
             target_text = text[start_idx + n * batch_len: start_idx + n * batch_len + args.target_len]
             for i, w in enumerate(target_text):
                 if i in batch_idx:
                     long_index.append(start_idx + n * batch_len + i)
                     if args.debug:
-                        print("\033[1;31m %s \033[0m" % w, end=" ")
+                        print("\033[1;31m %s\033[0m|%.4f" % (w, gain[i].item()), end=" ")
                 else:
                     if args.debug:
                         print(w, end=" ")
