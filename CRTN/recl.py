@@ -172,14 +172,19 @@ def evaluate(model, criterion, data_loader, args):
     loss = torch.cat(losses, dim=0)
     e = args.end_bias
     l = args.target_len
+    selected_loss = loss[-1 - l - e:-1 - e]
 
     if args.debug:
         vocab = data_loader.dataset.fields["text"].vocab
         texts = torch.cat(texts, dim=0)
-        print(" ".join([vocab.itos[w] for w in texts[-1-l-e:-1-e,0]]))
+        selected_text = texts[-1-l-e:-1-e,0]
         print("batch_len: %s" % loss.size(0))
+        print("Batch 0:")
+        for i, w in enumerate(selected_text):
+            print("%s|%.4f" % (vocab.itos[w], selected_loss[i, 0]), end=" ")
+        print("")
 
-    return loss[-1 - l - e:-1 - e], (loss.size(0) - 1 - l - e, loss.size(0))
+    return selected_loss, (loss.size(0) - 1 - l - e, loss.size(0))
 
 
 
@@ -252,11 +257,15 @@ def loss(model, criterion, data_loader, args):
                         loss_tensor = loss_tensor.reshape_as(target)
                 losses = losses + list(loss_tensor[-1].unsqueeze(0).split(args.batch_size, dim=1))
                 pbar.update(args.parallel_num)
-            if args.debug:
-                vocab = data_loader.dataset.fields["text"].vocab
-                print(" ".join([vocab.itos[w] for w in txts[::-1]]))
 
             loss = torch.cat(losses[::-1], dim=0)
+            if args.debug:
+                vocab = data_loader.dataset.fields["text"].vocab
+                txts = txts[::-1]
+                print("Batch 0:")
+                for i, w in enumerate(txts):
+                    print("%s|%.4f" % (vocab.itos[w], loss[i, 0]), end=" ")
+                print("")
         
     return loss
 
