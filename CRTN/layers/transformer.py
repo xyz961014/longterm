@@ -163,12 +163,13 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, apex=False):
+    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, apex=False, same_length=True):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
         self.d_head = d_head
         self.apex = apex
+        self.same_length = same_length
 
         self.dropatt = nn.Dropout(dropatt)
         self.dropattout = LockedDropout(dropatt)
@@ -404,6 +405,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         if inf_ind is not None:
             mask = mask[inf_ind].unsqueeze(0)
+        if indice_bool is not None and self.same_length: 
+            pass
         if mask is not None:
             attn_score.masked_fill_(mask[:,:,:,None], -float('inf'))
 

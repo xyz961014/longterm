@@ -204,10 +204,15 @@ def loss(model, criterion, data_loader, args):
                 text, target = data.text.cuda(), data.target.cuda()
                 if args.debug:
                     txts.append(text[-1][0].item())
-                p_texts.append(text)
-                p_targets.append(target)
-                if len(p_texts) < args.parallel_num and not idata + 1 == args.target_len:
-                    continue
+                if len(p_texts) == 0 :
+                    p_texts.append(text)
+                    p_targets.append(target)
+                else:
+                    if text.size(0) == p_texts[-1].size(0):
+                        p_texts.append(text)
+                        p_targets.append(target)
+                        if len(p_texts) < args.parallel_num and not idata + 1 == args.target_len:
+                            continue
                 texts = torch.cat(p_texts, dim=1)
                 targets = torch.cat(p_targets, dim=1)
                 texts = texts.split(args.num_steps, dim=0)
