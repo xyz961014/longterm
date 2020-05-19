@@ -82,7 +82,7 @@ def parse_args():
                         help="computing loss in parallel")
     parser.add_argument("--select_ratio", type=float, default=0.05, 
                         help="ratio r to select long-term words")
-    parser.add_argument("--long_save", type=str, default="longterm_idx.txt",
+    parser.add_argument("--long_save", type=str, default=".data/longterm_idx.txt",
                         help="path to save selected long-term word indexes")
     # setting
     parser.add_argument("--seed", type=int, default=1111, 
@@ -148,7 +148,6 @@ def evaluate(model, criterion, data_loader, args):
                                                 keep_order=True)
                     else:
                         loss_tensor = criterion(output, target, reduction='none')
-                    loss_tensor = loss_tensor.reshape_as(target)
                 elif model.name == "CRTN":
                     if mem is not None:
                         mem = mem.detach()
@@ -420,6 +419,9 @@ def main(args):
         fixed_loss = loss(model, criterion, fixed_loader, args)
         min_loss = torch.cat((valid_loss.unsqueeze(0), fixed_loss.unsqueeze(0)), dim=0).min(dim=0)[0]
         ppl_gain = (fixed_loss.exp() - min_loss.exp()) / fixed_loss.exp()
+
+        if args.debug:
+            print("long-term PPL: %.2f | fixed context %s PPL: %.2f" % (valid_loss.mean().exp(), args.context_len, fixed_loss.mean().exp()))
 
         tau = math.ceil(args.select_ratio * ppl_gain.size(0))
         _, idx = ppl_gain.topk(tau, dim=0, sorted=False)
