@@ -260,14 +260,14 @@ def loss(model, criterion, data_loader, args):
                 losses = losses + list(loss_tensor[-1].unsqueeze(0).split(args.batch_size, dim=1))
                 pbar.update(args.parallel_num)
 
-            loss = torch.cat(losses[::-1], dim=0)
-            if args.debug:
-                vocab = data_loader.dataset.fields["text"].vocab
-                txts = txts[::-1]
-                print("fixed context Batch 0:")
-                for i, w in enumerate(txts):
-                    print("%s|%.4f" % (vocab.itos[w], loss[i, 0]), end=" ")
-                print("")
+    loss = torch.cat(losses[::-1], dim=0)
+    if args.debug:
+        vocab = data_loader.dataset.fields["text"].vocab
+        txts = txts[::-1]
+        print("fixed context Batch 0:")
+        for i, w in enumerate(txts):
+            print("%s|%.4f" % (vocab.itos[w], loss[i, 0]), end=" ")
+        print("")
         
     return loss
 
@@ -353,11 +353,11 @@ def main(args):
                 print("REDEFINE cache_L: {} --> {}".format(model_args.cache_L, 
                                                            args.cache_L))
                 model_args.cache_L = args.cache_L
-        if hasattr(model_args, "same_length"):
-            if not model_args.same_length == args.same_length:
-                print("REDEFINE same_length: {} --> {}".format(model_args.same_length, 
-                                                           args.same_length))
-                model_args.same_length = args.same_length
+        if hasattr(model_args, "cache_L"):
+            if not model_args.cache_L == args.cache_L:
+                print("REDEFINE cache_L: {} --> {}".format(model_args.cache_L, 
+                                                           args.cache_L))
+                model_args.cache_L = args.cache_L
 
         model_args.device = args.device
         model_args.batch_size = args.batch_size
@@ -430,6 +430,7 @@ def main(args):
         model, criterion = models[0]
         valid_loader = corpus.get_valid_loader(args.batch_size)
         fixed_loader = corpus.recl_loader(args.batch_size, args.target_len, args.context_len, end_bias=args.end_bias)
+        text = valid_loader.dataset.examples[0].text
 
         valid_loss, (start_idx, batch_len) = evaluate(model, criterion, valid_loader, args)
         fixed_loss = loss(model, criterion, fixed_loader, args)
@@ -442,7 +443,6 @@ def main(args):
         tau = math.ceil(args.select_ratio * ppl_gain.size(0))
         _, idx = ppl_gain.topk(tau, dim=0, sorted=False)
 
-        text = valid_loader.dataset.examples[0].text
         long_index = []
         for n in range(args.batch_size):
             batch_idx = idx[:, n]

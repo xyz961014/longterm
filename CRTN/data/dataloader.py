@@ -363,8 +363,12 @@ class RECLIterator(data.Iterator):
 
                 seq_len = self.context_len
 
-                batch_text = _data[-3 - i - seq_len - e:-2 - i - e]
-                batch_target = _data[-2 - i - seq_len - e:-1 - i - e]
+                start = -3 - i - seq_len - e
+                end = -2 - i - e
+                if start + len(_data) < 0:
+                    start = 0
+                batch_text = _data[start: end]
+                batch_target = _data[start + 1: end + 1]
 
                 if TEXT.batch_first:
                     batch_text = batch_text.t().contiguous()
