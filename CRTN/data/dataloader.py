@@ -349,7 +349,7 @@ class RECLIterator(data.Iterator):
         #text = text[:len(text) // self.batch_size * self.batch_size]
         _data = TEXT.numericalize([text], device=self.device)
         _data = _data.view(self.batch_size, -1).t().contiguous()
-        #pad = TEXT.numericalize([[TEXT.pad_token]], device=self.device)
+        pad = TEXT.numericalize([[TEXT.pad_token]], device=self.device)
         #pad = pad.expand(self.context_len, self.batch_size)
         #_data = torch.cat((pad, _data), dim=0)
         dataset = Dataset(examples=self.dataset.examples, fields=[
@@ -366,9 +366,17 @@ class RECLIterator(data.Iterator):
                 start = -3 - i - seq_len - e
                 end = -2 - i - e
                 if start + len(_data) < 0:
+                    pad_tensor = pad.expand(-start - len(_data), -1)
                     start = 0
+                    padded = True
+                else:
+                    padded = False
                 batch_text = _data[start: end]
                 batch_target = _data[start + 1: end + 1]
+                if padded:
+                    batch_text = torch.cat((pad_tensor, batch_text), dim=0)
+                    batch_target = torch.cat((pad_tensor, batch_target), dim=0)
+
 
                 if TEXT.batch_first:
                     batch_text = batch_text.t().contiguous()

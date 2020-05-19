@@ -406,7 +406,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         if inf_ind is not None:
             mask = mask[inf_ind].unsqueeze(0)
         if indice_bool is not None and self.same_length: 
-            pass
+            ipdb.set_trace()
         if mask is not None:
             attn_score.masked_fill_(mask[:,:,:,None], -float('inf'))
 
