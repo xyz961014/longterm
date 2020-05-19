@@ -60,6 +60,8 @@ def parse_args():
                         help="length of segments in cache, default: 80")
     parser.add_argument('--same_length', action='store_true',
                         help='use the same attn length for all tokens')
+    parser.add_argument('--same_length_query', action='store_true',
+                        help='use the same attn length for all tokens in query')
     # recl settings
     parser.add_argument("--target_len", type=int, default=30, 
                         help="target length")
@@ -354,11 +356,16 @@ def main(args):
                 print("REDEFINE cache_L: {} --> {}".format(model_args.cache_L, 
                                                            args.cache_L))
                 model_args.cache_L = args.cache_L
-        if hasattr(model_args, "cache_L"):
-            if not model_args.cache_L == args.cache_L:
-                print("REDEFINE cache_L: {} --> {}".format(model_args.cache_L, 
-                                                           args.cache_L))
-                model_args.cache_L = args.cache_L
+        if hasattr(model_args, "same_length"):
+            if not model_args.same_length == args.same_length:
+                print("REDEFINE same_length: {} --> {}".format(model_args.same_length, 
+                                                           args.same_length))
+                model_args.same_length = args.same_length
+        if hasattr(model_args, "same_length_query"):
+            if not model_args.same_length_query == args.same_length_query:
+                print("REDEFINE same_length_query: {} --> {}".format(model_args.same_length_query, 
+                                                           args.same_length_query))
+                model_args.same_length_query = args.same_length_query
 
         model_args.device = args.device
         model_args.batch_size = args.batch_size

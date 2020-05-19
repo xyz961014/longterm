@@ -171,6 +171,8 @@ def parse_args():
     # eval setting
     parser.add_argument('--eval_batch_size', type=int, default=10, 
                         help='eval batch size')
+    parser.add_argument('--eval_index', type=str, default='none',
+                        help='file including indexes of words to compute PPL')
     parser.add_argument('--eval_temperature', type=float, default=1.0, 
                         help='eval temperature, divide logits.')
     parser.add_argument('--eval_temp_search', action="store_true",
@@ -399,6 +401,13 @@ def evaluate(model, eval_loader, criterion, writer, args):
                               num_steps=args.num_steps)         
         loss_obj.clear()
 
+    if not args.eval_index == "none":
+        assert args.eval_batch_size == 1
+        losses = []
+        with open(args.eval_index, "r") as f:
+            line = f.readline()
+            idxs = torch.tensor([int(x) for x in line.split()])
+
     with torch.no_grad():
         with tqdm(total=total_len) as pbar:
             for i, data in enumerate(eval_loader):
@@ -427,8 +436,12 @@ def evaluate(model, eval_loader, criterion, writer, args):
                                             temperature=args.eval_temperature)
                     loss = loss_tensor.sum()
                 else:
-                    loss = criterion(output.view(-1, args.vocab_size), 
-                                                 targets.view(-1))
+                    loss_tensor = criterion(output.view(-1, args.vocab_size), targets.view(-1), 
+                                            reduction="none")
+                    loss = loss_tensor.sum()
+
+                if not args.eval_index == "none":
+                    losses.append(loss_tensor)
                 total_loss += loss.item()
 
                 if args.word_loss:
@@ -446,6 +459,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
                         loss_obj.add_losss(word_loss)
 
                 pbar.update(1)
+    
 
     if args.word_loss and args.rank == 0:
         pkl.dump(loss_obj, loss_file)
@@ -458,7 +472,12 @@ def evaluate(model, eval_loader, criterion, writer, args):
         dist.reduce(len_eval, 0)
         total_loss = total_loss.item()
         len_eval = len_eval.item()
-    ppl = math.exp(total_loss / len_eval)
+    if not args.eval_index == "none":
+        loss = torch.cat(losses, dim=0)
+        mean_loss = loss.index_select(0, idxs.cuda()).mean()
+        ppl = mean_loss.exp().item()
+    else:
+        ppl = math.exp(total_loss / len_eval)
     model.train()
     criterion.train()
     return ppl
@@ -633,6 +652,7 @@ def main(args):
         model_args.eval_temperature = args.eval_temperature
         model_args.eval_temp_search = args.eval_temp_search
         model_args.eval_theta_search = args.eval_theta_search
+        model_args.eval_index = args.eval_index
 
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
@@ -988,13 +1008,17 @@ def main(args):
 
     best_eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
-    test_ppl = evaluate(model, test_loader, criterion, writer, args)
+    if args.eval_index == "none":
+        test_ppl = evaluate(model, test_loader, criterion, writer, args)
 
     if args.rank == 0:
         print('=' * 89)
-        print('| End of training | best valid ppl {:8.2f}'.format(best_eval_ppl))
-        print('=' * 89)
-        print('| test ppl {:8.2f}'.format(test_ppl))
+        if not args.eval_index == "none":
+            print('| End of training | best valid ppl {:8.2f} on {}'.format(best_eval_ppl, args.eval_index))
+        else:
+            print('| End of training | best valid ppl {:8.2f}'.format(best_eval_ppl))
+            print('=' * 89)
+            print('| test ppl {:8.2f}'.format(test_ppl))
         print('=' * 89)
 
     if args.distributed:

@@ -405,8 +405,35 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         if inf_ind is not None:
             mask = mask[inf_ind].unsqueeze(0)
-        if indice_bool is not None and self.same_length: 
-            ipdb.set_trace()
+        #if indice_bool is not None and self.same_length: 
+        #    # Maybe there is a better way than for
+        #    cache_ones = mask.new_ones(x_len, cache_len)
+        #    cache_masks = torch.tril(cache_ones, diagonal=-1).split(cache_L, dim=1)
+        #    same_length_masks = []
+        #    for b in range(batch_size):
+        #        indice_m = indice_bool[:, b, :]
+        #        mini_masks = []
+        #        for isel, sel in enumerate(indice_m):
+        #            tiny_masks = []
+        #            i = 0
+        #            for s in sel:
+        #                if s:
+        #                    tiny_masks.append(cache_masks[i])
+        #                    i += 1
+        #                else:
+        #                    tiny_masks.append(cache_masks[-1])
+        #            tiny_mask = torch.cat(tiny_masks, dim=1)
+        #            mini_masks.append(tiny_mask[isel].unsqueeze(0))
+        #        mini_mask = torch.cat(mini_masks, dim=0)
+        #        same_length_masks.append(mini_mask.unsqueeze(0))
+        #    same_length_mask = torch.cat(same_length_masks, dim=0)
+        #    same_length_mask = same_length_mask.permute(1, 2, 0)
+        #    same_length_mask = torch.cat((same_length_mask, mask.new_zeros(x_len, 
+        #                                                                   mask.size(1) - same_length_mask.size(1),
+        #                                                                   batch_size)),
+        #                                 dim=1)
+        #    mask = same_length_mask + mask
+
         if mask is not None:
             attn_score.masked_fill_(mask[:,:,:,None], -float('inf'))
 
@@ -498,12 +525,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, apex):
+    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, apex, same_length):
         super().__init__()
 
 
         self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropatt, 
-                                                    dropwei, apex)
+                                                    dropwei, apex, same_length)
 
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, dropfor, apex)
@@ -599,7 +626,8 @@ class TransformerLM(nn.Module):
                 dropatt=args.dropatt,
                 dropwei=args.dropwei,
                 dropfor=args.dropfor,
-                apex=args.apex))
+                apex=args.apex,
+                same_length=args.same_length))
 
 
 
@@ -734,13 +762,24 @@ class TransformerLM(nn.Module):
             pos_indices = indices
             indice_bool = None
 
-        if self.same_length_query and indices is None:
-            all_ones = word_emb.new_ones(seq_len, total_len)
-            simple_mask = torch.triu(all_ones, diagonal=1+nei_len)
-            mask = simple_mask + torch.tril(all_ones, diagonal=-1)
+        if indices is None:
+            if self.same_length_query:
+                all_ones = word_emb.new_ones(seq_len, total_len)
+                simple_mask = torch.triu(all_ones, diagonal=1+nei_len)
+                mask = simple_mask + torch.tril(all_ones, diagonal=-1)
+            else:
+                mask = torch.triu(word_emb.new_ones(seq_len, total_len), 
+                                  diagonal=1+mem_len+nei_len) 
         else:
-            mask = torch.triu(word_emb.new_ones(seq_len, total_len), 
-                              diagonal=1+mem_len+nei_len) 
+            if self.same_length:
+                all_ones = word_emb.new_ones(seq_len, seq_len + nei_len)
+                simple_mask = torch.triu(all_ones, diagonal=1+nei_len)
+                mask = simple_mask + torch.tril(all_ones, diagonal=-1)
+                mask = torch.cat((mask.new_zeros(seq_len, mem_len), mask), dim=1)
+            else:
+                mask = torch.triu(word_emb.new_ones(seq_len, total_len), 
+                                  diagonal=1+mem_len+nei_len) 
+
         mask = mask.bool()[:,:,None]
 
 
