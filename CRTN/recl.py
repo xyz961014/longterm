@@ -200,13 +200,13 @@ def loss(model, criterion, data_loader, args):
     with torch.no_grad():
         with tqdm(total=args.target_len) as pbar:
             pbar.set_description(model.name)
-            for data in data_loader:
+            for idata, data in enumerate(data_loader):
                 text, target = data.text.cuda(), data.target.cuda()
                 if args.debug:
                     txts.append(text[-1][0].item())
                 p_texts.append(text)
                 p_targets.append(target)
-                if len(p_texts) < args.parallel_num:
+                if len(p_texts) < args.parallel_num and not idata + 1 == args.target_len:
                     continue
                 texts = torch.cat(p_texts, dim=1)
                 targets = torch.cat(p_targets, dim=1)
