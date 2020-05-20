@@ -435,6 +435,7 @@ def main(args):
 
     if args.select_long:
         assert len(models) == 1, "plz only use one model to select long-term words"
+        assert args.batch_size == 1, "plz set batch_size = 1"
         model, criterion = models[0]
         valid_loader = corpus.get_valid_loader(args.batch_size)
         fixed_loader = corpus.recl_loader(args.batch_size, args.target_len, args.context_len, end_bias=args.end_bias)
@@ -445,11 +446,9 @@ def main(args):
         min_loss = torch.cat((valid_loss.unsqueeze(0), fixed_loss.unsqueeze(0)), dim=0).min(dim=0)[0]
         ppl_gain = (fixed_loss.exp() - min_loss.exp()) / fixed_loss.exp()
 
-        if args.debug:
-            print("long-term PPL: %.2f | fixed context %s PPL: %.2f" % (valid_loss.mean().exp(), args.context_len, fixed_loss.mean().exp()))
 
         tau = math.ceil(args.select_ratio * ppl_gain.size(0))
-        _, idx = ppl_gain.topk(tau, dim=0, sorted=False)
+        selected_gain, idx = ppl_gain.topk(tau, dim=0, sorted=False)
 
         long_index = []
         for n in range(args.batch_size):
@@ -466,6 +465,13 @@ def main(args):
                         print(w, end=" ")
             if args.debug:
                 print("")
+        if args.debug:
+            print("WHOLE TEXT long-term PPL: %.2f | fixed context %s PPL: %.2f" % (valid_loss.mean().exp(), args.context_len, fixed_loss.mean().exp()))
+        valid_selected_loss = valid_loss.squeeze().index_select(0, idx.squeeze())
+        fixed_selected_loss = fixed_loss.squeeze().index_select(0, idx.squeeze())
+        print("SELECTED WORDS INFO: {}/{}".format(idx.size(0), args.target_len))
+        print("MIN/MEAN/MAX gain: {:.4f}/{:.4f}/{:.4f}".format(selected_gain.min(), selected_gain.mean(), selected_gain.max()))
+        print("SELECTED WORDS long-term PPL: %.2f | fixed context %s PPL: %.2f" % (valid_selected_loss.mean().exp(), args.context_len, fixed_selected_loss.mean().exp()))
         with open(args.long_save, "w") as f:
             f.write(" ".join([str(p) for p in long_index]))
 
