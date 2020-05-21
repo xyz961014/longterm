@@ -77,7 +77,7 @@ class CRTNModel(nn.Module):
         nhid = self.args.nhid
 
         if cache_key is None and cache_value is None:
-            cache_key, cache_value = self.cache.new_key_and_values()
+            cache_key, cache_value = self.cache.new_key_and_values(inputs)
         
         if self.args.farnear:
             nei_len = self.args.neighbor_len

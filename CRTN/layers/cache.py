@@ -43,13 +43,14 @@ class Cache(nn.Module):
         self.pos_emb = PositionalEmbedding(args.nhid)
 
 
-    def new_key_and_values(self):
+    def new_key_and_values(self, text):
+        batch_size = text.size(1)
         cache_key = torch.zeros(self.N, 
-                                self.batch_size,
+                                batch_size,
                                 self.dk).cuda()
         nn.init.normal_(cache_key, std=self.args.init_std)
         cache_value = torch.zeros(self.N, 
-                                  self.batch_size,
+                                  batch_size,
                                   self.L,
                                   self.dv * (self.args.nlayers + 1)).cuda()
 
@@ -89,7 +90,7 @@ class Cache(nn.Module):
     def renew(self, inputs, words=None, cache_info=None, keys=None, values=None):
 
         if keys is None and values is None:
-            keys, values = self.new_key_and_values()
+            keys, values = self.new_key_and_values(inputs)
 
         keys, values = keys.detach(), values.detach()
         
