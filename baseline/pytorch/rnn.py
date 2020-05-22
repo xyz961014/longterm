@@ -8,11 +8,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
+from torchnlp.nn import LockedDropout
 import os
 import sys
 import ipdb
-
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 class RNNModel(nn.Module):
     def __init__(self, args):

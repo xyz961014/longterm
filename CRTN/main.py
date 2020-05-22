@@ -31,6 +31,7 @@ from torch.utils.data import DataLoader
 from data.dataloader import TextDataset, ExistingDataset
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
 from utils.visual import TargetText
+from utils.utils import partial_shuffle
 from models.CRTNModel import CRTNModel
 
 import torch.distributed as dist
@@ -211,6 +212,8 @@ def parse_args():
                         help="attention theta annealing steps, default: 200")
     parser.add_argument('--random_seq_len', action="store_true",
                         help='random sequence length rather than fixed')
+    parser.add_argument('--partial_shuffle', action="store_true",
+                        help='partial shuffle training text use Press et al. 2019')
     parser.add_argument('--distributed', action="store_true",
                         help='enable distributed multiple gpus')
     parser.add_argument('--devices', type=int, default=[0], nargs="+",
@@ -357,10 +360,14 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         if args.distributed:
             batch_start, batch_end = batch_division(data.target.size(1), 
                                                     args.rank)
-            text, targets = (data.text[:,batch_start:batch_end].to(device), 
+            text, target = (data.text[:,batch_start:batch_end].to(device), 
                              data.target[:,batch_start:batch_end].to(device))
         else:
-            text, targets = data.text.to(device), data.target.to(device)
+            text, target = data.text.to(device), data.target.to(device)
+
+        if args.partial_shuffle:
+            text = partial_shuffle(text)
+            target = partial_shuffle(target)
 
         if counter % args.update_cycle == 0:
             model.zero_grad()
@@ -384,10 +391,10 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                                                       cache_info)
 
         if args.adaptive:
-            loss = criterion(output, targets)
+            loss = criterion(output, target)
             loss = loss.mean()
         else:
-            loss = criterion(output.reshape(-1, args.vocab_size), targets.reshape(-1))
+            loss = criterion(output.reshape(-1, args.vocab_size), target.reshape(-1))
 
         # Activiation Regularization
         if args.alpha:

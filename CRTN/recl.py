@@ -9,14 +9,13 @@ from tqdm import tqdm
 
 import ipdb
 import visdom
-#viz = visdom.Visdom()
-#assert viz.check_connection()
-
+import warnings
+warnings.filterwarnings("ignore")
 
 import os
 import sys
 sys.path.append("..")
-sys.path.append("../..")
+sys.path.append("../../awd-lstm-lm")
 
                     
 from data import dataloader
@@ -28,10 +27,9 @@ from torchtext import datasets
 from models.CRTNModel import CRTNModel
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
 from data.dataloader import TextDataset, ExistingDataset
+from utils.utils import repackage_hidden
 
 from baseline.pytorch.transformer import TransformerLM
-
-from baseline.pytorch.rnn import RNNModel
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -82,6 +80,8 @@ def parse_args():
                         help="switch of select long-term words")
     parser.add_argument("--context_len", type=int, default=100, 
                         help="fixed context length to compare with")
+    parser.add_argument("--compared_len", type=int, default=-1, 
+                        help="long context length to compare with, -1 to disable")
     parser.add_argument("--parallel_num", type=int, default=1, 
                         help="computing loss in parallel")
     parser.add_argument("--select_ratio", type=float, default=0.05, 
@@ -129,8 +129,8 @@ def evaluate(model, criterion, data_loader, args):
             pbar.set_description(model.name)
 
             # initial model
-            if model.name == "LSTM":
-                pass
+            if model.name == "AWD-LSTM":
+                hidden = model.init_hidden(args.batch_size)
             elif model.name == "Transformer-XL":
                 memory = None
             elif model.name == "CRTN":
@@ -143,8 +143,11 @@ def evaluate(model, criterion, data_loader, args):
                 if args.debug:
                     texts.append(text)
 
-                if model.name == "LSTM":
-                    pass
+                if model.name == "AWD-LSTM":
+                    target = target.view(-1)
+                    hidden = repackage_hidden(hidden)
+                    output, hidden = model(text, hidden)
+                    loss_tensor = criterion(model.decoder.weight, model.decoder.bias, output, target, output=True)
                 elif model.name == "Transformer-XL":
                     output, memory = model(text, memory)
                     if model.adaptive:
@@ -188,7 +191,7 @@ def evaluate(model, criterion, data_loader, args):
             print("%s|%.4f" % (vocab.itos[w], selected_loss[i, 0]), end=" ")
         print("")
 
-    return selected_loss, (loss.size(0) - 1 - l - e, loss.size(0))
+    return selected_loss, loss.size(0) - 1 - l - e
 
 
 
@@ -219,8 +222,8 @@ def loss(model, criterion, data_loader, args):
 
 
                 # initial model
-                if model.name == "LSTM":
-                    pass
+                if model.name == "AWD-LSTM":
+                    hidden = model.init_hidden(args.batch_size)
                 elif model.name == "Transformer-XL":
                     memory = None
                 elif model.name == "CRTN":
@@ -231,8 +234,10 @@ def loss(model, criterion, data_loader, args):
 
                 for text, target in list(zip(texts, targets)):
 
-                    if model.name == "LSTM":
-                        pass
+                    if model.name == "AWD-LSTM":
+                        hidden = repackage_hidden(hidden)
+                        output, hidden = model(text, hidden)
+                        loss_tensor = criterion(model.decoder.weight, model.decoder.bias, output, target, output=True)
                     elif model.name == "Transformer-XL":
                         output, memory = model(text, memory)
                         if model.adaptive:
@@ -240,7 +245,6 @@ def loss(model, criterion, data_loader, args):
                                                     keep_order=True)
                         else:
                             loss_tensor = criterion(output, target, reduction='none')
-                        loss_tensor = loss_tensor.reshape_as(target)
                     elif model.name == "CRTN":
                         if mem is not None:
                             mem = mem.detach()
@@ -259,7 +263,7 @@ def loss(model, criterion, data_loader, args):
                                                     keep_order=True)
                         else:
                             loss_tensor = criterion(output, target, reduction='none')
-                        loss_tensor = loss_tensor.reshape_as(target)
+                    loss_tensor = loss_tensor.reshape_as(target)
                 losses = losses + list(loss_tensor[-1].unsqueeze(0).split(args.batch_size, dim=1))
                 pbar.update(parallel_num)
 
@@ -267,7 +271,7 @@ def loss(model, criterion, data_loader, args):
     if args.debug:
         vocab = data_loader.dataset.fields["text"].vocab
         txts = txts[::-1]
-        print("fixed context Batch 0:")
+        print("fixed context %s Batch 0:" % data_loader.context_len)
         for i, w in enumerate(txts):
             print("%s|%.4f" % (vocab.itos[w], loss[i, 0]), end=" ")
         print("")
@@ -322,60 +326,63 @@ def main(args):
 
     for path in args.model_path:
         checkpoint = torch.load(path, map_location=device)
-        model_args = checkpoint["model_args"]
-        name = model_args.name
+        if type(checkpoint) == list:
+            # model from AWD-LSTM
+            name = "AWD-LSTM"
+        else:
+            model_args = checkpoint["model_args"]
+            name = model_args.name
 
-        # redefine hyperparams
+            # redefine hyperparams
 
-        if not model_args.num_steps == args.num_steps:
-            print("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
-                                                         args.num_steps))
-            model_args.num_steps = args.num_steps
-        if hasattr(model_args, "mem_len"):
-            if not model_args.mem_len == args.mem_len:
-                print("REDEFINE mem_len: {} --> {}".format(model_args.mem_len, 
-                                                           args.mem_len))
-                model_args.mem_len = args.mem_len
-        if hasattr(model_args, "neighbor_len"):
-            if not model_args.neighbor_len == args.neighbor_len:
-                print("REDEFINE neighbor_len: {} --> {}".format(model_args.neighbor_len, 
-                                                                args.neighbor_len))
-                model_args.neighbor_len = args.neighbor_len
-        if hasattr(model_args, "cache_N"):
-            if not model_args.cache_N == args.cache_N:
-                print("REDEFINE cache_N: {} --> {}".format(model_args.cache_N, 
-                                                           args.cache_N))
-                model_args.cache_N = args.cache_N
-        if hasattr(model_args, "cache_k"):
-            if not model_args.cache_k == args.cache_k:
-                print("REDEFINE cache_k: {} --> {}".format(model_args.cache_k, 
-                                                           args.cache_k))
-                model_args.cache_k = args.cache_k
-        if hasattr(model_args, "cache_L"):
-            if not model_args.cache_L == args.cache_L:
-                print("REDEFINE cache_L: {} --> {}".format(model_args.cache_L, 
-                                                           args.cache_L))
-                model_args.cache_L = args.cache_L
-        if hasattr(model_args, "same_length"):
-            if not model_args.same_length == args.same_length:
-                print("REDEFINE same_length: {} --> {}".format(model_args.same_length, 
-                                                           args.same_length))
-                model_args.same_length = args.same_length
-        if hasattr(model_args, "same_length_query"):
-            if not model_args.same_length_query == args.same_length_query:
-                print("REDEFINE same_length_query: {} --> {}".format(model_args.same_length_query, 
-                                                           args.same_length_query))
-                model_args.same_length_query = args.same_length_query
+            if not model_args.num_steps == args.num_steps:
+                print("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
+                                                             args.num_steps))
+                model_args.num_steps = args.num_steps
+            if hasattr(model_args, "mem_len"):
+                if not model_args.mem_len == args.mem_len:
+                    print("REDEFINE mem_len: {} --> {}".format(model_args.mem_len, 
+                                                               args.mem_len))
+                    model_args.mem_len = args.mem_len
+            if hasattr(model_args, "neighbor_len"):
+                if not model_args.neighbor_len == args.neighbor_len:
+                    print("REDEFINE neighbor_len: {} --> {}".format(model_args.neighbor_len, 
+                                                                    args.neighbor_len))
+                    model_args.neighbor_len = args.neighbor_len
+            if hasattr(model_args, "cache_N"):
+                if not model_args.cache_N == args.cache_N:
+                    print("REDEFINE cache_N: {} --> {}".format(model_args.cache_N, 
+                                                               args.cache_N))
+                    model_args.cache_N = args.cache_N
+            if hasattr(model_args, "cache_k"):
+                if not model_args.cache_k == args.cache_k:
+                    print("REDEFINE cache_k: {} --> {}".format(model_args.cache_k, 
+                                                               args.cache_k))
+                    model_args.cache_k = args.cache_k
+            if hasattr(model_args, "cache_L"):
+                if not model_args.cache_L == args.cache_L:
+                    print("REDEFINE cache_L: {} --> {}".format(model_args.cache_L, 
+                                                               args.cache_L))
+                    model_args.cache_L = args.cache_L
+            if hasattr(model_args, "same_length"):
+                if not model_args.same_length == args.same_length:
+                    print("REDEFINE same_length: {} --> {}".format(model_args.same_length, 
+                                                               args.same_length))
+                    model_args.same_length = args.same_length
+            if hasattr(model_args, "same_length_query"):
+                if not model_args.same_length_query == args.same_length_query:
+                    print("REDEFINE same_length_query: {} --> {}".format(model_args.same_length_query, 
+                                                               args.same_length_query))
+                    model_args.same_length_query = args.same_length_query
 
-        model_args.device = args.device
-        model_args.batch_size = args.batch_size
-        if not hasattr(model_args, "d_head"):
-            model_args.d_head = model_args.nhid // model_args.nhead
+            model_args.device = args.device
+            model_args.batch_size = args.batch_size
+            if not hasattr(model_args, "d_head"):
+                model_args.d_head = model_args.nhid // model_args.nhead
 
 
-        if name == 'LSTM':
-            model = RNNModel(model_args)
-            criterion = nn.CrossEntropyLoss()
+        if name == 'AWD-LSTM':
+            model, criterion, _ = checkpoint
         elif name == 'Transformer-XL':
             model = TransformerLM(
                     vocab_size=model_args.vocab_size,
@@ -411,25 +418,26 @@ def main(args):
             model = CRTNModel(model_args)
             model.load_state_dict(checkpoint["model_state_dict"])
 
-        if model_args.adaptive:
-            model.adaptive = model_args.adaptive
-            criterion = ProjectedAdaptiveLogSoftmax(model_args.vocab_size, 
-                                                    model_args.emsize, 
-                                                    model_args.nhid, 
-                                                    model_args.cutoffs, 
-                                                    div_val=model_args.div_val, 
-                                                    init_std=model_args.init_std,
-                                                    proj_init_std=model_args.proj_init_std,
-                                                    mos=model_args.mos,
-                                                    n_experts=model_args.n_experts,
-                                                    dropmos=model_args.dropmos
-                                                    ) 
-            criterion.load_state_dict(checkpoint["criterion"])
-        else:
-            criterion = nn.CrossEntropyLoss()
+        if not name == "AWD-LSTM":
+            if model_args.adaptive:
+                model.adaptive = model_args.adaptive
+                criterion = ProjectedAdaptiveLogSoftmax(model_args.vocab_size, 
+                                                        model_args.emsize, 
+                                                        model_args.nhid, 
+                                                        model_args.cutoffs, 
+                                                        div_val=model_args.div_val, 
+                                                        init_std=model_args.init_std,
+                                                        proj_init_std=model_args.proj_init_std,
+                                                        mos=model_args.mos,
+                                                        n_experts=model_args.n_experts,
+                                                        dropmos=model_args.dropmos
+                                                        ) 
+                criterion.load_state_dict(checkpoint["criterion"])
+            else:
+                criterion = nn.CrossEntropyLoss()
 
-        model.to(device)
-        criterion.to(device)
+        model.cuda()
+        criterion.cuda()
 
         models.append((model, criterion))
 
@@ -437,11 +445,19 @@ def main(args):
         assert len(models) == 1, "plz only use one model to select long-term words"
         assert args.batch_size == 1, "plz set batch_size = 1"
         model, criterion = models[0]
-        valid_loader = corpus.get_valid_loader(args.batch_size)
+        if args.compared_len == -1:
+            valid_loader = corpus.get_valid_loader(args.batch_size)
+        else:
+            valid_loader = corpus.recl_loader(args.batch_size, args.target_len, args.compared_len, 
+                                              end_bias=args.end_bias)
         fixed_loader = corpus.recl_loader(args.batch_size, args.target_len, args.context_len, end_bias=args.end_bias)
         text = valid_loader.dataset.examples[0].text
 
-        valid_loss, (start_idx, batch_len) = evaluate(model, criterion, valid_loader, args)
+        if args.compared_len == -1:
+            valid_loss, start_idx = evaluate(model, criterion, valid_loader, args)
+        else:
+            valid_loss = loss(model, criterion, valid_loader, args) 
+            start_idx = len(text) - 2 - args.end_bias - args.target_len
         fixed_loss = loss(model, criterion, fixed_loader, args)
         min_loss = torch.cat((valid_loss.unsqueeze(0), fixed_loss.unsqueeze(0)), dim=0).min(dim=0)[0]
         ppl_gain = (fixed_loss.exp() - min_loss.exp()) / fixed_loss.exp()
@@ -451,22 +467,23 @@ def main(args):
         selected_gain, idx = ppl_gain.topk(tau, dim=0, sorted=False)
 
         long_index = []
-        for n in range(args.batch_size):
-            batch_idx = idx[:, n]
-            gain = ppl_gain[:, n]
-            target_text = text[start_idx + n * batch_len: start_idx + n * batch_len + args.target_len]
-            for i, w in enumerate(target_text):
-                if i in batch_idx:
-                    long_index.append(start_idx + n * batch_len + i)
-                    if args.debug:
-                        print("\033[1;31m %s\033[0m|%.4f" % (w, gain[i].item()), end=" ")
-                else:
-                    if args.debug:
-                        print(w, end=" ")
-            if args.debug:
-                print("")
-        if args.debug:
-            print("WHOLE TEXT long-term PPL: %.2f | fixed context %s PPL: %.2f" % (valid_loss.mean().exp(), args.context_len, fixed_loss.mean().exp()))
+        batch_idx = idx[:, 0]
+        gain = ppl_gain[:, 0]
+        target_text = text[start_idx: start_idx + args.target_len]
+        for i, w in enumerate(target_text):
+            if i in batch_idx:
+                long_index.append(start_idx + i)
+                if args.debug:
+                    print("\033[1;31m %s\033[0m|%.4f" % (w, gain[i].item()), end=" ")
+            else:
+                if args.debug:
+                    print(w, end=" ")
+        print("\n" + "-" * 80)
+        compared_len = float("inf") if args.compared_len == -1 else args.compared_len
+        print("WHOLE TEXT long-term %s PPL: %.2f | fixed context %s PPL: %.2f" % (compared_len, 
+                                                                                  valid_loss.mean().exp(), 
+                                                                                  args.context_len, 
+                                                                                  fixed_loss.mean().exp()))
         valid_selected_loss = valid_loss.squeeze().index_select(0, idx.squeeze())
         fixed_selected_loss = fixed_loss.squeeze().index_select(0, idx.squeeze())
         print("SELECTED WORDS INFO: {}/{}".format(idx.size(0), args.target_len))
