@@ -29,7 +29,6 @@ from torch.utils.data import DataLoader
 from CRTN.data.dataloader import TextDataset, ExistingDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from CRTN.utils.visual import TargetText
-from CRTN.utils.utils import partial_shuffle
 from transformer import TransformerLM
 
 import torch.distributed as dist
@@ -278,10 +277,6 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                              data.target[:,batch_start:batch_end].to(device))
         else:
             text, target = data.text.to(device), data.target.to(device)
-
-        if args.partial_shuffle:
-            text = partial_shuffle(text)
-            target = partial_shuffle(target)
 
         model.zero_grad()
         criterion.zero_grad()
@@ -539,9 +534,13 @@ def main(args):
     if args.datasets == "ptb":
         if args.rank == 0:
             print("Loading %s dataset from torchtext" % args.datasets)
-        if args.random_seq_len:
+        if args.random_seq_len or args.partial_shuffle:
             corpus = ExistingDataset("ptb", args.num_steps)
-            train_loader = corpus.randomlen_train_loader(args.batch_size)
+            if args.random_seq_len:
+                train_loader = corpus.randomlen_train_loader(args.batch_size, 
+                                                             partial_shuffled=args.partial_shuffle)
+            else:
+                train_loader = corpus.partial_shuffle_loader(args.batch_size)
             valid_loader = corpus.get_valid_loader(args.eval_batch_size)
             test_loader = corpus.get_test_loader(args.eval_batch_size)
         else:
@@ -558,9 +557,13 @@ def main(args):
     elif args.datasets == "wt2":
         if args.rank == 0:
             print("Loading %s dataset from torchtext" % args.datasets)
-        if args.random_seq_len:
+        if args.random_seq_len or args.partial_shuffle:
             corpus = ExistingDataset("wt2", args.num_steps)
-            train_loader = corpus.randomlen_train_loader(args.batch_size)
+            if args.random_seq_len:
+                train_loader = corpus.randomlen_train_loader(args.batch_size, 
+                                                             partial_shuffled=args.partial_shuffle)
+            else:
+                train_loader = corpus.partial_shuffle_loader(args.batch_size)
             valid_loader = corpus.get_valid_loader(args.eval_batch_size)
             test_loader = corpus.get_test_loader(args.eval_batch_size)
         else:
@@ -577,9 +580,13 @@ def main(args):
     elif args.datasets == "wt103":
         if args.rank == 0:
             print("Loading %s dataset from torchtext" % args.datasets)
-        if args.random_seq_len:
+        if args.random_seq_len or args.partial_shuffle:
             corpus = ExistingDataset("wt103", args.num_steps)
-            train_loader = corpus.randomlen_train_loader(args.batch_size)
+            if args.random_seq_len:
+                train_loader = corpus.randomlen_train_loader(args.batch_size, 
+                                                             partial_shuffled=args.partial_shuffle)
+            else:
+                train_loader = corpus.partial_shuffle_loader(args.batch_size)
             valid_loader = corpus.get_valid_loader(args.eval_batch_size)
             test_loader = corpus.get_test_loader(args.eval_batch_size)
         else:

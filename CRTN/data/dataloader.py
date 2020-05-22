@@ -8,12 +8,14 @@ import sys
 import re
 import math
 #import mosestokenizer
+sys.path.append("..")
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
 from torchtext import data, datasets
 from torchtext.data import Batch, Dataset
+from CRTN.utils.utils import partial_shuffle
 import ipdb
 
 UNK_token = 0  # Unknown word token
@@ -269,15 +271,58 @@ class ExistingDataset(object):
         return RandomLengthBPTTIterator(self.train_set, batch_size, self.num_steps,
                                         **kwargs)
 
+    def partial_shuffle_loader(self, batch_size, **kwargs):
+        return PartialShuffleBPTTIterator(self.train_set, batch_size, self.num_steps, 
+                                          **kwargs)
+
     def recl_loader(self, batch_size, target_len, context_len, **kwargs):
         return RECLIterator(self.valid_set, batch_size, target_len, context_len, 
                             **kwargs)
 
 
+class PartialShuffleBPTTIterator(data.Iterator):
+    def __init__(self, dataset, batch_size, bptt_len, **kwargs):
+        self.bptt_len = bptt_len
+        super().__init__(dataset, batch_size, **kwargs)
+
+    def __len__(self):
+        return math.ceil((len(self.dataset[0].text) / self.batch_size - 1)
+                         / self.bptt_len)
+
+    def __iter__(self):
+        text = self.dataset[0].text
+        TEXT = self.dataset.fields['text']
+        TEXT.eos_token = None
+        text = text + ([TEXT.pad_token] * int(math.ceil(len(text) / self.batch_size)
+                                              * self.batch_size - len(text)))
+        _data = TEXT.numericalize(
+            [text], device=self.device)
+        _data = _data.view(self.batch_size, -1).t().contiguous()
+        _data = partial_shuffle(_data)
+        dataset = Dataset(examples=self.dataset.examples, fields=[
+            ('text', TEXT), ('target', TEXT)])
+        while True:
+            for i in range(0, len(self) * self.bptt_len, self.bptt_len):
+                self.iterations += 1
+                seq_len = min(self.bptt_len, len(_data) - i - 1)
+                batch_text = _data[i:i + seq_len]
+                batch_target = _data[i + 1:i + 1 + seq_len]
+                if TEXT.batch_first:
+                    batch_text = batch_text.t().contiguous()
+                    batch_target = batch_target.t().contiguous()
+                yield Batch.fromvars(
+                    dataset, self.batch_size,
+                    text=batch_text,
+                    target=batch_target)
+            if not self.repeat:
+                return
+
+
 class RandomLengthBPTTIterator(data.Iterator):
-    def __init__(self, dataset, batch_size, bptt_len, mem_len=0, **kwargs):
+    def __init__(self, dataset, batch_size, bptt_len, mem_len=0, partial_shuffled=False, **kwargs):
         self.bptt_len = bptt_len
         self.mem_len = mem_len
+        self.partial_shuffled = partial_shuffled
         super().__init__(dataset, batch_size, **kwargs)
 
     def __len__(self):
@@ -292,6 +337,8 @@ class RandomLengthBPTTIterator(data.Iterator):
                                               * self.batch_size - len(text)))
         _data = TEXT.numericalize([text], device=self.device)
         _data = _data.view(self.batch_size, -1).t().contiguous()
+        if self.partial_shuffled:
+            _data = partial_shuffle(_data)
         dataset = Dataset(examples=self.dataset.examples, fields=[
             ('text', TEXT), ('target', TEXT)])
         mem_len = self.mem_len
