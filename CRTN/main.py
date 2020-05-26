@@ -7,6 +7,7 @@ import socket
 import re
 from itertools import chain
 from tqdm import tqdm
+from copy import copy, deepcopy
 import pickle as pkl
 
 #ignore future warning from tensorboard
@@ -853,6 +854,20 @@ def main(args):
 
     elif args.load_xl:
         checkpoint = torch.load(args.load_xl, map_location=device)
+        weight_keys = list(checkpoint["model_state_dict"].keys())
+        for key in weight_keys:
+            layers = key.split(".")
+            if "lin_qkv" in layers:
+                idx = layers.index("lin_qkv")
+                weight = checkpoint["model_state_dict"].pop(key)
+                weight_q, weight_k, weight_v = weight.chunk(3, dim=0)
+                weight_kv = torch.cat((weight_k, weight_v), dim=0)
+                layers_q = copy(layers)
+                layers_kv = copy(layers)
+                layers_q[idx] = "lin_q"
+                layers_kv[idx] = "lin_kv"
+                checkpoint["model_state_dict"][".".join(layers_q)] = weight_q
+                checkpoint["model_state_dict"][".".join(layers_kv)] = weight_kv
         
     args.mem_len = args.cache_k * args.cache_L
     if not args.eval:
@@ -1104,6 +1119,21 @@ def main(args):
 
         module = model.module if args.distributed else model
         if args.load_xl and args.eval:
+            weight_keys = list(model_state_dict.keys())
+            for key in weight_keys:
+                layers = key.split(".")
+                if "lin_qkv" in layers:
+                    idx = layers.index("lin_qkv")
+                    weight = model_state_dict.pop(key)
+                    weight_q, weight_k, weight_v = weight.chunk(3, dim=0)
+                    weight_kv = torch.cat((weight_k, weight_v), dim=0)
+                    layers_q = copy(layers)
+                    layers_kv = copy(layers)
+                    layers_q[idx] = "lin_q"
+                    layers_kv[idx] = "lin_kv"
+                    model_state_dict[".".join(layers_q)] = weight_q
+                    model_state_dict[".".join(layers_kv)] = weight_kv
+ 
             module.encoder.load_state_dict(model_state_dict)
         else:
             module.load_state_dict(model_state_dict)
