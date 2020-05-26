@@ -173,8 +173,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
         self.dropatt = nn.Dropout(dropatt)
         self.dropattnout = LockedDropout(dropatt)
 
-        self.lin_qkv = WeightDropLinear(d_model, 3 * num_head * d_head, bias=False, 
-                                        weight_dropout=dropwei)
+        self.lin_q = WeightDropLinear(d_model, num_head * d_head, bias=False,
+                                      weight_dropout=dropwei)
+        self.lin_kv = WeightDropLinear(d_model, 2 * num_head * d_head, bias=False,
+                                       weight_dropout=dropwei)
+        #self.lin_qkv = WeightDropLinear(d_model, 3 * num_head * d_head, bias=False, 
+        #                                weight_dropout=dropwei)
         self.lin_relemb = WeightDropLinear(d_model, num_head * d_head, bias=False, 
                                            weight_dropout=dropwei)
         #self.lin_qkv = nn.Linear(d_model, 3 * num_head * d_head, bias=False) 
@@ -211,10 +215,14 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         total_len, batch_size = c.size(0), c.size(1)
 
-        heads_matrix = self.lin_qkv(c)
+        #heads_matrix = self.lin_qkv(c)
+        heads_q = self.lin_q(c)
+        heads_matrix = self.lin_kv(c)
+        heads_k, heads_v = torch.chunk(heads_matrix, 2, dim=-1)
+
         rel_emb_matrix = self.lin_relemb(pos_emb)
 
-        heads_q, heads_k, heads_v = torch.chunk(heads_matrix, 3, dim=-1)
+        #heads_q, heads_k, heads_v = torch.chunk(heads_matrix, 3, dim=-1)
 
         heads_q = heads_q.view(total_len, batch_size, self.num_head, self.d_head)[-seq_len:]
         heads_k = heads_k.view(total_len, batch_size, self.num_head, self.d_head)

@@ -5,13 +5,12 @@ import sys
 import argparse
 import socket
 import re
-from copy import copy
 from itertools import chain
 from tqdm import tqdm
+import pickle as pkl
 
 #ignore future warning from tensorboard
 import warnings
-import pickle as pkl
 warnings.filterwarnings("ignore")
 
 sys.path.append("..")
@@ -253,6 +252,8 @@ def parse_args():
                         help='compare loss between far and near')
     parser.add_argument('--load', type=str, default='',
                         help='path to load the model')
+    parser.add_argument('--load_xl', type=str, default='',
+                        help='path to load the transformer-xl model')
     parser.add_argument('--rank', type=int, default=0,
                         help='rank in nccl')
     parser.add_argument('--apex', action="store_true",
@@ -849,6 +850,9 @@ def main(args):
         model_args.eval_index = args.eval_index
 
         args = model_args
+
+    elif args.load_xl:
+        checkpoint = torch.load(args.load_xl, map_location=device)
         
     args.mem_len = args.cache_k * args.cache_L
     if not args.eval:
@@ -876,12 +880,17 @@ def main(args):
 
         model.load_state_dict(checkpoint["model_state_dict"])
         model.set_batch_size(batch_size)
+    elif args.load_xl:
+        model = CRTNModel(args)
+        model.encoder.load_state_dict(checkpoint["model_state_dict"])
     else:
         #create model
         if args.demo:
             model = CRTNModel(args, corpus=corpus)
         else:
             model = CRTNModel(args)
+
+        model.apply(init_weights)
 
     
     if args.adaptive:
@@ -906,7 +915,7 @@ def main(args):
                     criterion.out_projs[i] = model.encoder.embedding.emb_projs[0]
                 elif tie_proj and args.div_val != 1:
                     criterion.out_projs[i] = model.encoder.embedding.emb_projs[i]
-        if args.load:
+        if args.load or args.load_xl:
             criterion.load_state_dict(checkpoint["criterion"])
 
     else:
@@ -927,8 +936,6 @@ def main(args):
             print("SKIP TRAINING")
         else:
             print("TRAINING......")
-
-    model.apply(init_weights)
 
     model.cuda()
     criterion.cuda()
@@ -1085,7 +1092,10 @@ def main(args):
 
     if args.rank == 0:
         if args.eval:
-            best_model = args.load
+            if args.load:
+                best_model = args.load
+            elif args.load_xl:
+                best_model = args.load_xl
         else:
             best_model = args.savepath + "/" + args.save + "_best.pt"
 
@@ -1093,7 +1103,10 @@ def main(args):
         model_state_dict = eval_checkpoint["model_state_dict"]
 
         module = model.module if args.distributed else model
-        module.load_state_dict(model_state_dict)
+        if args.load_xl and args.eval:
+            module.encoder.load_state_dict(model_state_dict)
+        else:
+            module.load_state_dict(model_state_dict)
 
         if args.adaptive:
             criterion.load_state_dict(eval_checkpoint["criterion"])
