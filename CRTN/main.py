@@ -774,6 +774,7 @@ def main(args):
         model_args.stat = args.stat
         model_args.eval = args.eval
         model_args.load = args.load
+        model_args.load_xl = args.load_xl
         model_args.adam = args.adam
         model_args.lr = args.lr
         model_args.emb_mult = args.emb_mult
