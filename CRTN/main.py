@@ -777,6 +777,7 @@ def main(args):
         model_args.load_xl = args.load_xl
         model_args.adam = args.adam
         model_args.lr = args.lr
+        model_args.warmup_steps = args.warmup_steps
         model_args.emb_mult = args.emb_mult
         model_args.ema_lr_mult = args.ema_lr_mult
         model_args.scheduler = args.scheduler
