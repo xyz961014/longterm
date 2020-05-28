@@ -156,6 +156,8 @@ def parse_args():
                         help='number of epochs with ema of params')
     parser.add_argument('--nonmono', type=int, default=-1,
                         help='non mono epochs to skip std epochs, -1 to disable it')
+    parser.add_argument('--update_cycle', type=int, default=1,
+                        help='gradient update cycle, use for simullate large batch_size')
     parser.add_argument('--mu', type=float, default=-1,
                         help='mu used for EMA. set to -1 to use 1 / step.')
     parser.add_argument("--theta_annealing_alpha", type=float, default=1.0, 
@@ -264,7 +266,9 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
     else:
         device = torch.device("cpu")
 
-    memory = None
+    params = [p for group in optimizer.param_groups for p in group["params"]]
+
+    memories = [None for _ in range(args.update_cycle)]
 
     for batch, data in enumerate(train_loader):
         #if not data.text.size(0) == args.num_steps:
@@ -280,36 +284,51 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
 
         model.zero_grad()
         criterion.zero_grad()
+        texts = text.chunk(args.update_cycle, dim=1)
+        targets = target.chunk(args.update_cycle, dim=1)
 
-        output, memory = model(text, memory)
+        memory_chunks = []
+        for text, target, memory in list(zip(texts, targets, memories)):
+            output, memory = model(text, memory)
 
-        if args.adaptive:
-            loss = criterion(output, target)
-            loss = loss.mean()
-        else:
-            loss = criterion(output.view(-1, args.vocab_size), target.view(-1))
+            memory_chunks.append(memory)
 
-        # Activiation Regularization
-        if args.alpha:
-            loss = loss + args.alpha * output.pow(2).mean()
+            if args.adaptive:
+                loss = criterion(output, target)
+                loss = loss.mean()
+            else:
+                loss = criterion(output.view(-1, args.vocab_size), target.view(-1))
 
-        # Temporal Activation Regularization (slowness)
-        if args.beta:
-            loss = loss + args.beta * (output[1:] - output[:-1]).pow(2).mean()
+            # Activiation Regularization
+            if args.alpha:
+                loss = loss + args.alpha * output.pow(2).mean()
+
+            # Temporal Activation Regularization (slowness)
+            if args.beta:
+                loss = loss + args.beta * (output[1:] - output[:-1]).pow(2).mean()
+
+            if args.apex:
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
+
+        for group in optimizer.param_groups:
+            for p in group["params"]:
+                if p is not None:
+                    p.grad.mul_(1 / args.update_cycle)
 
         if args.apex:
-            with amp.scale_loss(loss, optimizer) as scaled_loss:
-                scaled_loss.backward()
             torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
         else:
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            torch.nn.utils.clip_grad_norm_(criterion.parameters(), args.clip)
+            torch.nn.utils.clip_grad_norm_(params, args.clip)
 
         optimizer.step()
+        step += 1
 
         total_loss += loss.item()
-        step += 1
+
+        memories = memory_chunks
 
         if ema is not None:
             # parameters average
@@ -317,7 +336,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 ema_mu = 1 / max(1, step - args.decay_steps)
             else:
                 ema_mu = args.mu
-            for p in chain(model.parameters(), criterion.parameters()):
+            for p in params:
                 ema[p].add_(p.data.sub(ema[p]).mul(ema_mu))
         else:
             if step <= args.warmup_steps:
@@ -890,7 +909,7 @@ def main(args):
             ema_start = epoch
             if args.ema_epochs > 0:
                 print("Starting EMA at epoch {}".format(epoch))
-                for p in chain(model.parameters(), criterion.parameters()):
+                for p in params:
                     ema[p] = p.data.clone()
                 for k in range(len(optimizer.param_groups)):
                     optimizer.param_groups[k]["lr"] *= args.ema_lr_mult
@@ -912,7 +931,7 @@ def main(args):
                 tmp = dict()
 
                 # load ema params
-                for prm in chain(model.parameters(), criterion.parameters()):
+                for prm in params:
                     tmp[prm] = prm.data.clone()
                     prm.data.copy_(ema[prm])
 
@@ -944,7 +963,7 @@ def main(args):
                     writer.flush()                
 
                 # restore params
-                for prm in chain(model.parameters(), criterion.parameters()):
+                for prm in params:
                     prm.data.copy_(tmp[prm])
 
 

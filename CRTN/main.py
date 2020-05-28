@@ -344,13 +344,15 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         device = torch.device("cuda:" + str(module.args.devices[args.rank]))
     else:
         device = torch.device("cpu")
+
+    params = [p for group in optimizer.param_groups for p in group["params"]]
     
-    key = None
-    value = None
-    counter = 0
-    if args.farnear:
-        mem = None
+    keys = [None for _ in range(args.update_cycle)]
+    values = [None for _ in range(args.update_cycle)]
+    mems = [None for _ in range(args.update_cycle)]
+    mem = None
     cache_info = init_cache_info(args, device)
+    cache_infos = cache_info.chunk(args.update_cycle, dim=1)
 
     for batch, data in enumerate(train_loader):
 
@@ -367,56 +369,71 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             text, target = data.text.to(device), data.target.to(device)
 
 
-        if counter % args.update_cycle == 0:
-            model.zero_grad()
-            criterion.zero_grad()
-       
-        # train
-        if args.farnear:
-            if mem is not None:
-                mem = mem.detach()
-            output, hidden, mem = model(text, key, value, 
-                                        neighbor_mem=mem, 
-                                        cache_info=cache_info)
-        else:
-            output, hidden = model(text, key, value, cache_info=cache_info)
+        model.zero_grad()
+        criterion.zero_grad()
+        texts = text.chunk(args.update_cycle, dim=1)
+        targets = target.chunk(args.update_cycle, dim=1)
 
-        module, cache_info, key, value = update_cache(module, 
-                                                      text.size(1), 
-                                                      key, value, 
-                                                      hidden, 
-                                                      text, 
-                                                      cache_info)
+        key_chunks, value_chunks, mem_chunks, info_chunks = [], [], [], []
+        for text, target, key, value, mem, cache_info in list(zip(texts, targets, keys, values, mems, cache_infos)):
+            # train
+            if args.farnear:
+                output, hidden, mem = model(text, key, value, 
+                                            neighbor_mem=mem, 
+                                            cache_info=cache_info)
+            else:
+                output, hidden = model(text, key, value, cache_info=cache_info)
 
-        if args.adaptive:
-            loss = criterion(output, target)
-            loss = loss.mean()
-        else:
-            loss = criterion(output.reshape(-1, args.vocab_size), target.reshape(-1))
+            module, cache_info, key, value = update_cache(module, 
+                                                          text.size(1), 
+                                                          key, value, 
+                                                          hidden, 
+                                                          text, 
+                                                          cache_info)
+            
+            key_chunks.append(key)
+            value_chunks.append(value)
+            mem_chunks.append(mem)
+            info_chunks.append(cache_info)
 
-        # Activiation Regularization
-        if args.alpha:
-            loss = loss + args.alpha * output.pow(2).mean()
+            if args.adaptive:
+                loss = criterion(output, target)
+                loss = loss.mean() 
+            else:
+                loss = criterion(output.reshape(-1, args.vocab_size), target.reshape(-1))
 
-        # Temporal Activation Regularization (slowness)
-        if args.beta:
-            loss = loss + args.beta * (output[1:] - output[:-1]).pow(2).mean()
+
+            # Activiation Regularization
+            if args.alpha:
+                loss = loss + args.alpha * output.pow(2).mean()
+
+            # Temporal Activation Regularization (slowness)
+            if args.beta:
+                loss = loss + args.beta * (output[1:] - output[:-1]).pow(2).mean()
+
+            if args.apex:
+                with amp.scale_loss(loss, optimizer) as scaled_loss:
+                    scaled_loss.backward()
+            else:
+                loss.backward()
+
+        for group in optimizer.param_groups:
+            for p in group["params"]:
+                if p is not None:
+                    p.grad.mul_(1 / args.update_cycle)
 
         if args.apex:
-            with amp.scale_loss(loss, optimizer) as scaled_loss:
-                scaled_loss.backward()
             torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
         else:
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-            torch.nn.utils.clip_grad_norm_(criterion.parameters(), args.clip)
+            torch.nn.utils.clip_grad_norm_(params, args.clip)
 
-        if counter % args.update_cycle == 0:
-            optimizer.step()
-            step += 1
-        counter += 1
+        optimizer.step()
+        step += 1
 
         total_loss += loss.item()
+
+        keys, values, mems, cache_infos = key_chunks, value_chunks, mem_chunks, info_chunks
+
 
         if ema is not None:
             # parameters average
@@ -424,7 +441,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 ema_mu = 1 / max(1, step - args.decay_steps)
             else:
                 ema_mu = args.mu
-            for p in chain(model.parameters(), criterion.parameters()):
+            for p in params:
                 ema[p].add_(p.data.sub(ema[p]).mul(ema_mu))
         else:
             if step <= args.warmup_steps:
@@ -1043,7 +1060,7 @@ def main(args):
             ema_start = epoch
             if args.ema_epochs > 0:
                 print("Starting EMA at epoch {}".format(epoch))
-                for p in chain(model.parameters(), criterion.parameters()):
+                for p in params:
                     ema[p] = p.data.clone()
                 for k in range(len(optimizer.param_groups)):
                     optimizer.param_groups[k]["lr"] *= args.ema_lr_mult
@@ -1065,7 +1082,7 @@ def main(args):
                 tmp = dict()
 
                 # load ema params
-                for prm in chain(model.parameters(), criterion.parameters()):
+                for prm in params:
                     tmp[prm] = prm.data.clone()
                     prm.data.copy_(ema[prm])
 
@@ -1097,7 +1114,7 @@ def main(args):
                     writer.flush()                
 
                 # restore params
-                for prm in chain(model.parameters(), criterion.parameters()):
+                for prm in params:
                     prm.data.copy_(tmp[prm])
 
 
