@@ -1060,7 +1060,7 @@ def main(args):
             ema_start = epoch
             if args.ema_epochs > 0:
                 print("Starting EMA at epoch {}".format(epoch))
-                for p in params:
+                for p in chain(model.parameters(), criterion.parameters()):
                     ema[p] = p.data.clone()
                 for k in range(len(optimizer.param_groups)):
                     optimizer.param_groups[k]["lr"] *= args.ema_lr_mult
@@ -1082,7 +1082,7 @@ def main(args):
                 tmp = dict()
 
                 # load ema params
-                for prm in params:
+                for prm in chain(model.parameters(), criterion.parameters()):
                     tmp[prm] = prm.data.clone()
                     prm.data.copy_(ema[prm])
 
@@ -1114,7 +1114,7 @@ def main(args):
                     writer.flush()                
 
                 # restore params
-                for prm in params:
+                for prm in chain(model.parameters(), criterion.parameters()):
                     prm.data.copy_(tmp[prm])
 
 
