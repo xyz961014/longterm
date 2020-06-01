@@ -173,6 +173,8 @@ def parse_args():
                         help='method to summary key of segments')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
+    parser.add_argument('--no_pos', action="store_true",
+                        help='disable pos embedding')
     parser.add_argument('--no_pos_bias', action="store_true",
                         help='disable pos bias u and v')
     parser.add_argument('--farnear', action="store_true",
@@ -364,8 +366,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         if args.distributed:
             dist.broadcast(text, 0)
             dist.broadcast(target, 0)
-            batch_start, batch_end = batch_division(target.size(1), 
-                                                    args.rank)
+            batch_start, batch_end = batch_division(target.size(1), args.rank)
             text, target = (text[:,batch_start:batch_end], 
                             target[:,batch_start:batch_end])
 
@@ -419,7 +420,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
 
         for group in optimizer.param_groups:
             for p in group["params"]:
-                if p is not None:
+                if p.grad is not None:
                     p.grad.mul_(1 / args.update_cycle)
 
         if args.apex:

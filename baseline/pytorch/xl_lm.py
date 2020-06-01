@@ -131,6 +131,8 @@ def parse_args():
                         help='parameters initialized by N(0.0, proj_init_std)')
     parser.add_argument('--tied', action="store_true",
                         help='tied embedding weights')
+    parser.add_argument('--no_pos', action="store_true",
+                        help='disable pos embedding')
     parser.add_argument('--no_pos_bias', action="store_true",
                         help='disable pos bias u and v')
     parser.add_argument('--adaptive', action="store_true",
@@ -274,13 +276,13 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         #if not data.text.size(0) == args.num_steps:
         #    continue
 
+        text, target = data.text.cuda(), data.target.cuda()
         if args.distributed:
-            batch_start, batch_end = batch_division(data.target.size(1), 
-                                                    args.rank)
-            text, target = (data.text[:,batch_start:batch_end].to(device), 
-                             data.target[:,batch_start:batch_end].to(device))
-        else:
-            text, target = data.text.to(device), data.target.to(device)
+            dist.broadcast(text, 0)
+            dist.broadcast(target, 0)
+            batch_start, batch_end = batch_division(target.size(1), args.rank)
+            text, target = (data.text[:,batch_start:batch_end], 
+                             data.target[:,batch_start:batch_end])
 
         model.zero_grad()
         criterion.zero_grad()
@@ -315,7 +317,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
 
         for group in optimizer.param_groups:
             for p in group["params"]:
-                if p is not None:
+                if p.grad is not None:
                     p.grad.mul_(1 / args.update_cycle)
 
         if args.apex:
@@ -733,7 +735,8 @@ def main(args):
                 theta=model_args.theta,
                 theta_alpha=model_args.theta_annealing_alpha,
                 apex=model_args.apex,
-                no_pos_bias=model_args.no_pos_bias
+                no_pos_bias=model_args.no_pos_bias,
+                no_pos=model_args.no_pos
                 )
 
         model.load_state_dict(checkpoint["model_state_dict"])
@@ -766,7 +769,8 @@ def main(args):
                 theta=args.theta,
                 theta_alpha=args.theta_annealing_alpha,
                 apex=args.apex,
-                no_pos_bias=args.no_pos_bias
+                no_pos_bias=args.no_pos_bias,
+                no_pos=args.no_pos
                 )
 
     

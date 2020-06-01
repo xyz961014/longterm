@@ -163,13 +163,14 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, apex=False, same_length=True):
+    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, apex=False, same_length=True, no_pos=False):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
         self.d_head = d_head
         self.apex = apex
         self.same_length = same_length
+        self.no_pos = no_pos
 
         self.dropatt = nn.Dropout(dropatt)
         self.dropattout = LockedDropout(dropatt)
@@ -396,8 +397,10 @@ class LearnableMultiheadSelfAttention(nn.Module):
             valid_len = BD.size(1) - (x_len - 1 - inf_ind)
             BD[:,:valid_len,:,:] = BD.clone()[:,x_len-1-inf_ind:,:,:]
 
-
-        attn_score = AC + BD
+        if self.no_pos:
+            attn_score = AC
+        else:
+            attn_score = AC + BD
         attn_score.mul_(self.scale)
         attn_score.mul_(theta)
         attn_score = attn_score.reshape(attn_score.size(0), -1, 
@@ -525,12 +528,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, apex, same_length):
+    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, apex, same_length, no_pos):
         super().__init__()
 
 
         self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropatt, 
-                                                    dropwei, apex, same_length)
+                                                    dropwei, apex, same_length, no_pos)
 
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, dropfor, apex)
@@ -601,7 +604,7 @@ class TransformerLM(nn.Module):
         self.dropout = LockedDropout(args.dropout)
         self.dropinp = LockedDropout(args.dropinp)
 
-        if not args.no_pos_bias:
+        if not args.no_pos and not args.no_pos_bias:
             self.pos_bias_u = nn.Parameter(torch.Tensor(num_head, d_head))
             self.pos_bias_v = nn.Parameter(torch.Tensor(num_head, d_head))
             self.init_weights(init_std)
@@ -627,7 +630,8 @@ class TransformerLM(nn.Module):
                 dropwei=args.dropwei,
                 dropfor=args.dropfor,
                 apex=args.apex,
-                same_length=args.same_length))
+                same_length=args.same_length,
+                no_pos=args.no_pos))
 
 
 

@@ -163,12 +163,13 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, apex=False):
+    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, apex=False, no_pos=False):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
         self.d_head = d_head
         self.apex = apex
+        self.no_pos = no_pos
 
         self.dropatt = nn.Dropout(dropatt)
         self.dropattnout = LockedDropout(dropatt)
@@ -244,8 +245,10 @@ class LearnableMultiheadSelfAttention(nn.Module):
         
         BD = self._rel_shift(BD)
 
-
-        attn_score = AC + BD
+        if self.no_pos:
+            attn_score = AC
+        else:
+            attn_score = AC + BD
         attn_score.mul_(self.scale)
         attn_score.mul_(theta)
 
@@ -274,10 +277,10 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, apex):
+    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, apex, no_pos):
         super().__init__()
 
-        self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropatt, dropwei, apex)
+        self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropatt, dropwei, apex, no_pos)
 
         self.pos_ff = PostionwiseFF(d_model, d_ff, dropfor, apex)
 
@@ -291,7 +294,7 @@ class TransformerUnit(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, dropfor=0.0, drophid=0.0, theta=1.0, theta_alpha=1.0, apex=False, no_pos_bias=False):
+    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, dropfor=0.0, drophid=0.0, theta=1.0, theta_alpha=1.0, apex=False, no_pos_bias=False, no_pos=False):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layer = num_layer
@@ -352,7 +355,8 @@ class TransformerLM(nn.Module):
                 dropatt=dropatt,
                 dropwei=dropwei,
                 dropfor=dropfor,
-                apex=apex))
+                apex=apex,
+                no_pos=no_pos))
 
 
     def theta_annealing_step(self):
