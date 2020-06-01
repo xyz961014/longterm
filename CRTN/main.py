@@ -360,14 +360,14 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         #    continue
 
         # load data
+        text, target = data.text.cuda(), data.target.cuda()
         if args.distributed:
-            batch_start, batch_end = batch_division(data.target.size(1), 
+            dist.broadcast(text, 0)
+            dist.broadcast(target, 0)
+            batch_start, batch_end = batch_division(target.size(1), 
                                                     args.rank)
-            text, target = (data.text[:,batch_start:batch_end].to(device), 
-                             data.target[:,batch_start:batch_end].to(device))
-        else:
-            text, target = data.text.to(device), data.target.to(device)
-
+            text, target = (text[:,batch_start:batch_end], 
+                            target[:,batch_start:batch_end])
 
         model.zero_grad()
         criterion.zero_grad()
