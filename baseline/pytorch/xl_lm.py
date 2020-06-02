@@ -653,6 +653,7 @@ def main(args):
         model_args.clip = args.clip
         model_args.std_epochs = args.std_epochs
         model_args.ema_epochs = args.ema_epochs
+        model_args.no_pos = args.no_pos
         model_args.mu = args.mu
         model_args.ema_lr_mult = args.ema_lr_mult
         model_args.distributed = args.distributed
