@@ -281,8 +281,8 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             dist.broadcast(text, 0)
             dist.broadcast(target, 0)
             batch_start, batch_end = batch_division(target.size(1), args.rank)
-            text, target = (data.text[:,batch_start:batch_end], 
-                             data.target[:,batch_start:batch_end])
+            text, target = (text[:,batch_start:batch_end], 
+                            target[:,batch_start:batch_end])
 
         model.zero_grad()
         criterion.zero_grad()
