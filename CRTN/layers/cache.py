@@ -56,7 +56,6 @@ class Cache(nn.Module):
 
         return cache_key, cache_value
 
-
     def set_batch_size(self, batch_size):
         self.batch_size = batch_size
 

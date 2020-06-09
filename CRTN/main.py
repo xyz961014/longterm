@@ -31,6 +31,7 @@ from torch.utils.data import DataLoader
 from data.dataloader import TextDataset, ExistingDataset
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
 from utils.visual import TargetText
+from utils.utils import init_cache_info, batch_division, param_in
 from models.CRTNModel import CRTNModel
 
 import torch.distributed as dist
@@ -285,54 +286,6 @@ class DistributedDataParallel(nn.parallel.DistributedDataParallel):
         self.module.set_batch_size(batch_size)
 
 
-def batch_division(batch_size, rank=0, world_size=None, single_value=False):
-    if world_size is None:
-        world_size = dist.get_world_size()
-    batch_div = batch_size // world_size
-    if rank < world_size - 1:
-        if not single_value:
-            return batch_div * rank, batch_div * (rank + 1)
-        else:
-            return batch_div
-    elif rank == world_size - 1:
-        if not single_value:
-            return batch_div * rank, batch_size
-        else:
-            return batch_size - batch_div * rank
-
-def init_cache_info(args, device, evaluate=False):
-    """
-    store relative position of cahce chunk and its recall times
-    [pos, recall times, all query times]
-    """
-    batch_size = args.eval_batch_size if evaluate else args.batch_size
-    if args.distributed:
-        batch_size = batch_division(batch_size, args.rank, single_value=True)
-    pos = torch.arange(args.cache_N, 0, -1, 
-                       dtype=torch.float,
-                       device=device)
-    recall_query = torch.zeros((args.cache_N, 2), dtype=torch.float, device=device)
-    cache_info = torch.cat((pos.unsqueeze(-1), recall_query), dim=-1).unsqueeze(1)
-    cache_info = cache_info.expand(-1, batch_size, -1).contiguous()
-    return cache_info
-
-def update_cache(model, batch_size, key, value, hidden, text, cache_info):
-    
-    keys, values, cache_info = model.cache.renew(hidden, 
-                                                 text, 
-                                                 cache_info, 
-                                                 keys=key, 
-                                                 values=value)
-    return model, cache_info, keys, values
-
-def param_in(p, params):
-    for param in params:
-        if p.equal(param):
-            return True
-    else:
-        return False
- 
-
 def train(model, train_loader, valid_loader, criterion, scheduler, 
           args, epoch, step, optimizer, best_eval_ppl, writer, ema=None):
 
@@ -353,7 +306,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
     values = [None for _ in range(args.update_cycle)]
     mems = [None for _ in range(args.update_cycle)]
     mem = None
-    cache_info = init_cache_info(args, device)
+    cache_info = init_cache_info(args)
     cache_infos = cache_info.chunk(args.update_cycle, dim=1)
 
     for batch, data in enumerate(train_loader):
@@ -385,12 +338,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             else:
                 output, hidden = model(text, key, value, cache_info=cache_info)
 
-            module, cache_info, key, value = update_cache(module, 
-                                                          text.size(1), 
-                                                          key, value, 
-                                                          hidden, 
-                                                          text, 
-                                                          cache_info)
+            key, value, cache_info = module.cache.renew(hidden, text, cache_info, key, value)
             
             key_chunks.append(key)
             value_chunks.append(value)
@@ -522,7 +470,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
     value = None                
     if args.farnear:            
         mem = None              
-    cache_info = init_cache_info(args, device, True)
+    cache_info = init_cache_info(args, True)
 
     if args.word_loss and args.rank == 0:
         vocab = eval_loader.dataset.fields["text"].vocab 
@@ -571,12 +519,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
                 else:
                     output, hidden = model(text, key, value, cache_info=cache_info)
 
-                module, cache_info, key, value = update_cache(module, 
-                                                              text.size(1), 
-                                                              key, value, 
-                                                              hidden, 
-                                                              text, 
-                                                              cache_info)
+                key, value, cache_info = module.cache.renew(hidden, text, cache_info, key, value)
 
                 if args.adaptive:
                     loss_tensor = criterion(output, targets,
