@@ -212,25 +212,28 @@ class CRTNModel(nn.Module):
 
         
         if self.args.farnear and inf_ind is None:
-            total_mem = torch.cat((neighbor_mem, hidden), dim=1)
-            if self.cache.L > total_mem.size(1):
-                #print("current segment ({}) not long enough,"
-                #      " padding ({}) added".format(total_mem.size(1), self.cache.L - total_mem.size(1)))
-                padding = total_mem.new_zeros(total_mem.size(0), 
-                                              self.cache.L - total_mem.size(1), 
-                                              *total_mem.size()[2:])
-                total_mem = torch.cat((total_mem, padding), dim=1)
+            if not self.args.sentence_cache:
+                total_mem = torch.cat((neighbor_mem, hidden), dim=1)
+                if self.cache.L > total_mem.size(1):
+                    #print("current segment ({}) not long enough,"
+                    #      " padding ({}) added".format(total_mem.size(1), self.cache.L - total_mem.size(1)))
+                    padding = total_mem.new_zeros(total_mem.size(0), 
+                                                  self.cache.L - total_mem.size(1), 
+                                                  *total_mem.size()[2:])
+                    total_mem = torch.cat((padding, total_mem), dim=1)
 
-            cache_blocks = max(1, (total_mem.size(1) - nei_len) // self.cache.L)
-            cache_len = cache_blocks * self.cache.L
-            nei_len = total_mem.size(1) - cache_len
-            hidden, neighbor_mem = total_mem.split([cache_len, nei_len], dim=1)
-            neighbor_mem = neighbor_mem.reshape(-1, bsz, nhid)
+                cache_blocks = max(1, (total_mem.size(1) - nei_len) // self.cache.L)
+                cache_len = cache_blocks * self.cache.L
+                nei_len = total_mem.size(1) - cache_len
+                hidden, neighbor_mem = total_mem.split([cache_len, nei_len], dim=1)
+            else:
+                hidden = hidden.transpose(1, 2)
 
         hidden = hidden.transpose(1, 2)
+        neighbor_mem = neighbor_mem.reshape(-1, bsz, nhid)
 
         if self.args.farnear:
-            return output, hidden, neighbor_mem.detach()
+            return output, hidden.detach(), neighbor_mem.detach()
         else:
             return output, hidden
 

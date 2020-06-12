@@ -129,9 +129,7 @@ class Cache(nn.Module):
             elif self.args.summary_method == "linear":
                 new_key = self.summary(input_block[-1].reshape(-1, self.L * self.dv))
 
-            new_value = torch.einsum("mblh->lbmh", 
-                                     input_block
-                                     ).reshape(self.L, -1, (self.args.nlayers+1) * self.dv)
+            new_value = input_block.permute(2, 1, 0, 3).reshape(self.L, -1, (self.args.nlayers+1) * self.dv)
 
             key_blocks[-1] = new_key.unsqueeze(0).detach()
             value_blocks[-1] = new_value.transpose(0, 1).unsqueeze(0).detach()
@@ -153,7 +151,8 @@ class Cache(nn.Module):
         return key_blocks, value_blocks
 
     def merge(self, key_blocks, value_blocks, cache_info):
-        
+       
+        # merge is not compatible with sentence_cache, since sentences are not in same length, we do not update length when merge, the length stay at L.
         eli_key = key_blocks[0]
         eli_value = value_blocks[0]
 
@@ -169,7 +168,7 @@ class Cache(nn.Module):
         key_blocks[-1] = torch.zeros_like(key_blocks[0])
         value_blocks[-1] = torch.zeros_like(value_blocks[0])
 
-        pos, recall = cache_info.split([1,2], dim=-1)
+        pos, recall, length = cache_info.split([1,2,1], dim=-1)
         pos = pos.squeeze(-1)
         merge_matrix = torch.eye(pos.size(0),
                                  pos.size(0) - 1,
@@ -179,12 +178,12 @@ class Cache(nn.Module):
         merge_matrix[0][0], merge_matrix[0][1] = alpha, 1 - alpha
         pos = torch.matmul(merge_matrix, pos + 1)
         pos = pos.unsqueeze(-1)
-        cache_info = torch.cat((pos, recall), dim=-1)
+        cache_info = torch.cat((pos, recall, length), dim=-1)
         return key_blocks, value_blocks, cache_info
 
     def discard_worst(self, key_blocks, value_blocks, cache_info):
 
-        pos, recalls, queries = cache_info.chunk(3, dim=-1)
+        pos, recalls, queries, lengths = cache_info.chunk(4, dim=-1)
         recall_mean = recalls / queries
 
         # discard the least used block
@@ -194,6 +193,7 @@ class Cache(nn.Module):
                 pos[i,b,:] = pos[i+1,b,:]
                 recalls[i,b,:] = recalls[i+1,b,:]
                 queries[i,b,:] = queries[i+1,b,:]
+                lengths[i,b,:] = lengths[i+1,b,:]
                 key_blocks[i][:,b,:] = key_blocks[i+1][:,b,:]
                 value_blocks[i][:,b,:,:] = value_blocks[i+1][:,b,:,:]
         key_blocks[-1] = torch.zeros_like(key_blocks[0])
@@ -202,8 +202,9 @@ class Cache(nn.Module):
         pos[-1] = torch.ones_like(pos[0])
         recalls[-1] = torch.zeros_like(recalls[0])
         queries[-1] = torch.zeros_like(queries[0])
+        lengths[-1] = torch.zeros_like(queries[0])
 
-        cache_info = torch.cat((pos, recalls, queries), dim=-1)
+        cache_info = torch.cat((pos, recalls, queries, lengths), dim=-1)
 
         return key_blocks, value_blocks, cache_info
 

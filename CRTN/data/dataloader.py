@@ -8,7 +8,7 @@ import sys
 import re
 import math
 #import mosestokenizer
-sys.path.append("..")
+sys.path.append("../..")
 
 import numpy as np
 import torch
@@ -271,6 +271,17 @@ class ExistingDataset(object):
         return RandomLengthBPTTIterator(self.train_set, batch_size, self.num_steps,
                                         **kwargs)
 
+    def sentence_train_loader(self, batch_size, sent_num, **kwargs):
+        return SentenceBPTTIterator(self.train_set, batch_size, sent_num, **kwargs)
+
+    def sentence_valid_loader(self, batch_size, sent_num, **kwargs):
+        return SentenceBPTTIterator(self.valid_set, batch_size, sent_num,
+                                    train=False, shuffle=False, sort=False, **kwargs)
+
+    def sentence_test_loader(self, batch_size, sent_num, **kwargs):
+        return SentenceBPTTIterator(self.test_set, batch_size, sent_num,
+                                    train=False, shuffle=False, sort=False, **kwargs)
+
     def partial_shuffle_loader(self, batch_size, **kwargs):
         return PartialShuffleBPTTIterator(self.train_set, batch_size, self.num_steps, 
                                           **kwargs)
@@ -307,6 +318,7 @@ class PartialShuffleBPTTIterator(data.Iterator):
                 seq_len = min(self.bptt_len, len(_data) - i - 1)
                 batch_text = _data[i:i + seq_len]
                 batch_target = _data[i + 1:i + 1 + seq_len]
+
                 if TEXT.batch_first:
                     batch_text = batch_text.t().contiguous()
                     batch_target = batch_target.t().contiguous()
@@ -373,6 +385,119 @@ class RandomLengthBPTTIterator(data.Iterator):
                     mem_len = mem_len + seq_len - self.bptt_len
             if not self.repeat:
                 return
+
+class SentenceBPTTIterator(data.Iterator):
+    def __init__(self, dataset, batch_size, sent_num, partial_shuffled=False, max_sent_len=50, **kwargs):
+        """
+            The dataset should be already segmented by <eos> in sentence level.
+            output:
+                text: sent_num sentences
+                target: target of text
+                eos: sentence length labels, every <eos> indices, includin fake ones.
+        """
+        self.sent_num = sent_num
+        self.max_sent_len = max_sent_len
+        self.partial_shuffled = partial_shuffled
+        super().__init__(dataset, batch_size, **kwargs)
+
+        text = self.dataset[0].text
+        TEXT = self.dataset.fields['text']
+        TEXT.eos_token = None
+        eos_token = TEXT.vocab.stoi["<eos>"]
+        _data = TEXT.numericalize([text], device=self.device)
+        eos_indices, _ = _data.eq(eos_token).nonzero(as_tuple=True)
+
+        # insert addition fake <eos> for too long sentence ( > max_sent_len)
+        fake_eoses = []
+        ind = -1
+        for ie in range(eos_indices.size(0)):
+            curr_ind = eos_indices[ie].item()    
+            while curr_ind - ind > self.max_sent_len:
+                ind += self.max_sent_len
+                fake_eoses.append(ind)
+            ind = curr_ind
+        eos_indices = torch.cat((torch.tensor(fake_eoses), eos_indices))
+        eos_indices, _ = eos_indices.sort()
+
+        self._data = _data
+        self.eos_indices = eos_indices
+
+    def __len__(self):
+        return math.ceil((self.eos_indices.size(0) // self.batch_size) / self.sent_num)
+
+    def __iter__(self):
+       
+        TEXT = self.dataset.fields['text']
+        IND = data.Field(sequential=False, use_vocab=False)
+        pad_token = TEXT.vocab.stoi["<pad>"]
+        _data = self._data
+        eos_indices = self.eos_indices
+
+        # cut into batches
+        data_len = eos_indices.size(0)
+        batch_len = data_len // self.batch_size
+        boundry_indices = torch.arange(batch_len, data_len, batch_len)[:self.batch_size-1] - 1
+        boundries = torch.gather(eos_indices, 0, boundry_indices)
+        split_len = torch.cat((boundries, boundries.new_ones(1) * (_data.size(0) - 1))) - \
+                    torch.cat((boundries.new_ones(1) * (-1), boundries))
+        _data = _data.squeeze(1).split(split_len.tolist(), dim=0)
+
+        # rebuild batch-wise eos indices
+        eos_indices = eos_indices.narrow(0, 0, batch_len * self.batch_size).reshape(self.batch_size, batch_len)
+        rel_eos_pos_bias = torch.cat((eos_indices.new_zeros(1), (eos_indices[:-1, -1] + 1))).expand(batch_len, -1).t()
+        eos_indices = eos_indices - rel_eos_pos_bias
+        eos_indices = torch.cat((eos_indices.new_ones(self.batch_size, 1) * (-1), eos_indices), dim=1)
+        if self.partial_shuffled:
+            _data = partial_shuffle(_data)
+        dataset = Dataset(examples=self.dataset.examples, fields=[
+            ('text', TEXT), ('target', TEXT), ('eos', IND)])
+        while True:
+            for i in range(0, batch_len, self.sent_num):
+                self.iterations += 1
+
+                batch_texts, batch_targets = [], []
+                max_len = 0
+                for ib, batch in enumerate(_data):
+                    if i + self.sent_num < batch_len:
+                        start_idx, end_idx = eos_indices[ib][i] + 1, eos_indices[ib][i + self.sent_num] + 1
+                    else:
+                        start_idx, end_idx = eos_indices[ib][i] + 1, -2
+
+                    text = batch[start_idx:end_idx]
+                    target = batch[start_idx + 1:end_idx + 1]
+                    if not text.size(0) == target.size(0):
+                        text = text[:-1]
+                    text_len = text.size(0)
+                    if text_len > max_len:
+                        max_len = text_len
+                    batch_texts.append(text)
+                    batch_targets.append(target)
+                for ib in range(self.batch_size):
+                    seq_len = batch_texts[ib].size(0)
+                    batch_texts[ib] = torch.cat((batch_texts[ib], batch_texts[ib].new_ones(max_len - seq_len) \
+                                      * pad_token)).unsqueeze(-1)
+                    batch_targets[ib] = torch.cat((batch_targets[ib], batch_targets[ib].new_ones(max_len - seq_len) \
+                                      * pad_token)).unsqueeze(-1)
+
+                batch_text = torch.cat(batch_texts, dim=1)
+                batch_target = torch.cat(batch_targets, dim=1)
+                batch_eos = eos_indices[:,i:i+self.sent_num+1]
+                batch_eos = batch_eos.t() - (batch_eos[:,0] + 1).expand(batch_eos.size(1), -1)
+                batch_eos = batch_eos[1:]
+
+                if TEXT.batch_first:
+                    batch_text = batch_text.t().contiguous()
+                    batch_target = batch_target.t().contiguous()
+                    batch_eos = batch_eos.t().contiguous()
+                yield Batch.fromvars(
+                    dataset, self.batch_size,
+                    text=batch_text,
+                    target=batch_target,
+                    eos=batch_eos)
+
+            if not self.repeat:
+                return
+
 
 
 class RECLIterator(data.Iterator):
@@ -444,8 +569,8 @@ if __name__ == "__main__":
     TEXT = data.Field(sequential=True)
     ptb_train, ptb_valid, ptb_test = datasets.PennTreebank.splits(TEXT)
     wt2_train, wt2_valid, wt2_test = datasets.WikiText2.splits(TEXT)
-    TEXT.build_vocab(wt2_train)
-    iterator = RECLIterator(wt2_valid, batch_size=10, target_len=10, context_len=50)
+    TEXT.build_vocab(ptb_train)
+    iterator = SentenceBPTTIterator(ptb_train, batch_size=20, sent_num=3, max_sent_len=20)
     ds = []
     for d in iterator:
         ds.append(d.text.size(0))

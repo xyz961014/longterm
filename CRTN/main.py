@@ -32,6 +32,7 @@ from data.dataloader import TextDataset, ExistingDataset
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
 from utils.visual import TargetText
 from utils.utils import init_cache_info, batch_division, param_in
+from utils.utils import padding_hidden, padding_cache
 from models.CRTNModel import CRTNModel
 
 import torch.distributed as dist
@@ -151,7 +152,8 @@ def parse_args():
     parser.add_argument("--cache_k", type=int, default=3, 
                         help="select top k values, default: 3")
     parser.add_argument("--cache_L", type=int, default=20, 
-                        help="length of segments in cache, default: 20")
+                        help="length of segments in cache, default: 20 "
+                             "it is the max sentence length in sentence_cache mode")
     parser.add_argument('--adaptive', action="store_true",
                         help='use adaptive embedding and softmax')
     parser.add_argument('--vocab_size', type=int, default=10000,
@@ -172,6 +174,8 @@ def parse_args():
                         choices=['no_summary', 'max', 'mean', 'sum', 
                                  'weighted_sum', 'last_state', 'linear', 'conv'],
                         help='method to summary key of segments')
+    parser.add_argument('--sentence_cache', action="store_true",
+                        help='store a sentence in per cache slot, in this mode, cache_L is the max sentence length')
     parser.add_argument('--not_weighted', action="store_true",
                         help='use not-weighted values directly as memory')
     parser.add_argument('--no_pos', action="store_true",
@@ -293,6 +297,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
     criterion.train()
     start_time = time.time()
     total_loss = 0.
+    len_train = 0
     module = model.module if args.distributed else model
 
     if torch.cuda.is_available():
@@ -300,11 +305,15 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
     else:
         device = torch.device("cpu")
 
+    vocab = train_loader.dataset.fields["text"].vocab
+    pad_token = vocab.stoi["<pad>"]
+
     params = [p for group in optimizer.param_groups for p in group["params"]]
     
     keys = [None for _ in range(args.update_cycle)]
     values = [None for _ in range(args.update_cycle)]
     mems = [None for _ in range(args.update_cycle)]
+    nei_eoss = [None for _ in range(args.update_cycle)]
     mem = None
     cache_info = init_cache_info(args)
     cache_infos = cache_info.chunk(args.update_cycle, dim=1)
@@ -322,15 +331,30 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             batch_start, batch_end = batch_division(target.size(1), args.rank)
             text, target = (text[:,batch_start:batch_end], 
                             target[:,batch_start:batch_end])
+            if args.sentence_cache:
+                eos = data.eos[:,batch_start:batch_end]
+        else:
+            if args.sentence_cache:
+                eos = data.eos
 
         model.zero_grad()
         criterion.zero_grad()
         texts = text.chunk(args.update_cycle, dim=1)
         targets = target.chunk(args.update_cycle, dim=1)
+        if args.sentence_cache:
+            eoss = eos.chunk(args.update_cycle, dim=1)
+        else:
+            eoss = [None for _ in range(args.update_cycle)]
 
-        key_chunks, value_chunks, mem_chunks, info_chunks = [], [], [], []
-        for text, target, key, value, mem, cache_info in list(zip(texts, targets, keys, values, mems, cache_infos)):
+        key_chunks, value_chunks, mem_chunks, info_chunks, nei_eos_chunks = [], [], [], [], []
+        for text, target, eos, nei_eos, key, value, mem, cache_info in \
+            list(zip(texts, targets, eoss, nei_eoss, keys, values, mems, cache_infos)):
+
             # train
+
+            len_target = (target.view(-1).size(0) - target.eq(pad_token).nonzero().size(0))
+            len_train += len_target
+
             if args.farnear:
                 output, hidden, mem = model(text, key, value, 
                                             neighbor_mem=mem, 
@@ -338,18 +362,69 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             else:
                 output, hidden = model(text, key, value, cache_info=cache_info)
 
+            if args.sentence_cache:
+                # turn indice of eos to sentence length by +1
+                if nei_eos is None:
+                    total_mem = hidden
+                    total_eos = torch.cat((eos.new_zeros(args.neighbor_len, eos.size(1)), (eos + 1)), dim=0)
+                else:
+                    total_mem = torch.cat((mem.reshape(hidden.size(0), -1, *mem.size()[1:]), hidden), dim=1)
+                    eos = eos + nei_eos[-1].expand_as(eos) + 1
+                    total_eos = torch.cat((nei_eos, eos), dim=0)
+                    
+                total_num = total_eos.size(0)
+                nei_num = args.neighbor_len
+                cache_num = total_num - nei_num
+
+                split_idx = total_eos[cache_num-1]
+                hiddens, mems = [], []
+                for isp, idx in enumerate(split_idx):
+                    batch_mem = total_mem[:,:,isp,:]
+                    batch_mem_text = text[:,isp]
+
+                    real_mem_len = total_eos[args.neighbor_len-1,isp] 
+                    seq_len = real_mem_len + batch_mem_text.size(0) - batch_mem_text.eq(pad_token).sum()
+                    if nei_eos is not None:
+                        mem_len = mem.size(0) // hidden.size(0)
+                        start = mem_len - real_mem_len
+                    else:
+                        start = 0
+                    hidden_unit, mem_unit = batch_mem[:,start:start+seq_len,:].split([idx, seq_len-idx], dim=1)
+
+                    hiddens.append(hidden_unit)
+                    mems.append(mem_unit)
+                
+                cache_eos = total_eos[:cache_num,:]
+                nei_eos = total_eos[cache_num:,:]
+                nei_eos = nei_eos - cache_eos[-1].expand_as(nei_eos)
+
+                mem = padding_hidden(mems)
+                hidden = padding_cache(hiddens, cache_eos, args.cache_L)
+
+                mem = mem.permute(1, 2, 0, 3).reshape(-1, mem.size(0), mem.size(-1))
+                hidden = hidden.permute(2, 0, 1, 3, 4).reshape(hidden.size(2), hidden.size(0), -1, hidden.size(-1))
+
+
             key, value, cache_info = module.cache.renew(hidden, text, cache_info, key, value)
             
             key_chunks.append(key)
             value_chunks.append(value)
             mem_chunks.append(mem)
             info_chunks.append(cache_info)
+            nei_eos_chunks.append(nei_eos)
 
             if args.adaptive:
-                loss = criterion(output, target)
-                loss = loss.mean() 
+                loss = criterion(output, target, keep_order=True)
             else:
-                loss = criterion(output.reshape(-1, args.vocab_size), target.reshape(-1))
+                loss = criterion(output.reshape(-1, args.vocab_size), target.reshape(-1),
+                                 reduction="none")
+
+            if args.sentence_cache:
+                loss = loss.view_as(target)
+                pad_mask = target.eq(pad_token)
+                loss = loss.masked_fill(pad_mask, 0).sum() / len_target
+            else:
+                loss = loss.mean() 
 
 
             # Activiation Regularization
@@ -366,6 +441,8 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             else:
                 loss.backward()
 
+            total_loss += loss.item() * len_target
+
         for group in optimizer.param_groups:
             for p in group["params"]:
                 if p.grad is not None:
@@ -379,9 +456,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         optimizer.step()
         step += 1
 
-        total_loss += loss.item()
-
-        keys, values, mems, cache_infos = key_chunks, value_chunks, mem_chunks, info_chunks
+        keys, values, mems, cache_infos, nei_eoss = key_chunks, value_chunks, mem_chunks, info_chunks, nei_eos_chunks
 
 
         if ema is not None:
@@ -409,7 +484,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
 
 
         if batch % args.log_interval == 0 and batch > 0:
-            cur_loss = total_loss / args.log_interval
+            cur_loss = total_loss / len_train
             if args.distributed:
                 cur_loss = torch.tensor([cur_loss]).cuda()
                 dist.reduce(cur_loss, 0)
@@ -427,6 +502,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                                 batch + (epoch - 1) * len(train_loader))
             writer.flush()
             total_loss = 0.
+            len_train = 0
             start_time = time.time()
 
         if batch % args.eval_steps == 0 and batch > 0:
@@ -462,6 +538,9 @@ def evaluate(model, eval_loader, criterion, writer, args):
         device = torch.device("cuda:" + str(module.args.devices[args.rank]))
     else:
         device = torch.device("cpu")
+
+    vocab = eval_loader.dataset.fields["text"].vocab
+    pad_token = vocab.stoi["<pad>"]
     
     total_loss = 0.
     len_eval = 0
@@ -471,6 +550,8 @@ def evaluate(model, eval_loader, criterion, writer, args):
     if args.farnear:            
         mem = None              
     cache_info = init_cache_info(args, True)
+
+    nei_eos = None
 
     if args.word_loss and args.rank == 0:
         vocab = eval_loader.dataset.fields["text"].vocab 
@@ -502,13 +583,17 @@ def evaluate(model, eval_loader, criterion, writer, args):
                     batch_start, batch_end = batch_division(eval_batch_size, 
                                                             args.rank)
                     
-                    text, targets = (data.text[:,batch_start:batch_end].to(device), 
+                    text, target = (data.text[:,batch_start:batch_end].to(device), 
                                      data.target[:,batch_start:batch_end].to(device))
+                    if args.sentence_cache:
+                        eos = data.eos[:,batch_start:batch_end]
                 else:
-                    text, targets = data.text.to(device), data.target.to(device)
-                               
+                    text, target = data.text.to(device), data.target.to(device)
+                    if args.sentence_cache:
+                        eos = data.eos
+
                 eval_batch_size = text.size(1)
-                len_eval += targets.view(-1).size(0)
+                len_eval += (target.view(-1).size(0) - target.eq(pad_token).nonzero().size(0))
 
                 if args.farnear:
                     if mem is not None:
@@ -519,32 +604,80 @@ def evaluate(model, eval_loader, criterion, writer, args):
                 else:
                     output, hidden = model(text, key, value, cache_info=cache_info)
 
+                if args.sentence_cache:
+                    # turn indice of eos to sentence length by +1
+                    if nei_eos is None:
+                        total_mem = hidden
+                        total_eos = torch.cat((eos.new_zeros(args.neighbor_len, eos.size(1)), (eos + 1)), dim=0)
+                    else:
+                        total_mem = torch.cat((mem.reshape(hidden.size(0), -1, *mem.size()[1:]), hidden), dim=1)
+                        eos = eos + nei_eos[-1].expand_as(eos) + 1
+                        total_eos = torch.cat((nei_eos, eos), dim=0)
+                        
+                    total_num = total_eos.size(0)
+                    nei_num = args.neighbor_len
+                    cache_num = total_num - nei_num
+
+                    split_idx = total_eos[cache_num-1]
+                    hiddens, mems = [], []
+                    for isp, idx in enumerate(split_idx):
+                        batch_mem = total_mem[:,:,isp,:]
+                        batch_mem_text = text[:,isp]
+
+                        real_mem_len = total_eos[args.neighbor_len-1,isp] 
+                        seq_len = real_mem_len + batch_mem_text.size(0) - batch_mem_text.eq(pad_token).sum()
+                        if nei_eos is not None:
+                            mem_len = mem.size(0) // hidden.size(0)
+                            start = mem_len - real_mem_len
+                        else:
+                            start = 0
+                        hidden_unit, mem_unit = batch_mem[:,start:start+seq_len,:].split([idx, seq_len-idx], dim=1)
+
+                        hiddens.append(hidden_unit)
+                        mems.append(mem_unit)
+                    
+                    cache_eos = total_eos[:cache_num,:]
+                    nei_eos = total_eos[cache_num:,:]
+                    nei_eos = nei_eos - cache_eos[-1].expand_as(nei_eos)
+
+                    mem = padding_hidden(mems)
+                    hidden = padding_cache(hiddens, cache_eos, args.cache_L)
+
+                    mem = mem.permute(1, 2, 0, 3).reshape(-1, mem.size(0), mem.size(-1))
+                    hidden = hidden.permute(2, 0, 1, 3, 4).reshape(hidden.size(2), hidden.size(0), -1, hidden.size(-1))
+
                 key, value, cache_info = module.cache.renew(hidden, text, cache_info, key, value)
 
                 if args.adaptive:
-                    loss_tensor = criterion(output, targets,
+                    loss_tensor = criterion(output, target,
                                             keep_order=True,
                                             temperature=args.eval_temperature)
-                    loss = loss_tensor.sum()
                 else:
-                    loss_tensor = criterion(output.view(-1, args.vocab_size), targets.view(-1), 
+                    loss_tensor = criterion(output.view(-1, args.vocab_size), target.view(-1), 
                                             reduction="none")
-                    loss = loss_tensor.sum()
+
+                if args.sentence_cache:
+                    loss = loss_tensor.view_as(target)
+                    pad_mask = target.eq(pad_token)
+                    loss = loss.masked_fill(pad_mask, 0).sum()
+                else:
+                    loss = loss_tensor.sum() 
 
                 if not args.eval_index == "none":
                     losses.append(loss_tensor)
+
                 total_loss += loss.item()
 
                 if args.word_loss:
                     if args.distributed:
-                        targets_list = [targets.new_zeros(targets.size(0), batch_division(data.target.size(1), r, single_value=True)) for r in range(dist.get_world_size())]
-                        loss_list = [loss_tensor.new_zeros(targets.size(0) * batch_division(data.target.size(1), r, single_value=True)) for r in range(dist.get_world_size())]
-                        dist.all_gather(targets_list, targets)
+                        target_list = [target.new_zeros(target.size(0), batch_division(data.target.size(1), r, single_value=True)) for r in range(dist.get_world_size())]
+                        loss_list = [loss_tensor.new_zeros(target.size(0) * batch_division(data.target.size(1), r, single_value=True)) for r in range(dist.get_world_size())]
+                        dist.all_gather(target_list, target)
                         dist.all_gather(loss_list, loss_tensor)
-                        targets = torch.cat(targets_list, dim=1)
+                        target = torch.cat(target_list, dim=1)
                         loss_tensor = torch.cat(loss_list, dim=0)
                     if args.rank == 0:
-                        words = [vocab.itos[w] for w in targets.view(-1)]
+                        words = [vocab.itos[w] for w in target.view(-1)]
                         word_loss = [l.item() for l in loss_tensor]
                         loss_obj.add_words(words)
                         loss_obj.add_losss(word_loss)
@@ -579,16 +712,26 @@ def load_dataset(args):
     if args.datasets == "ptb":
         if args.rank == 0:
             print("Loading %s dataset from torchtext" % args.datasets)
-        if args.random_seq_len or args.partial_shuffle:
+        if args.random_seq_len or args.partial_shuffle or args.sentence_cache:
             corpus = ExistingDataset("ptb", args.num_steps)
             if args.random_seq_len:
                 train_loader = corpus.randomlen_train_loader(args.batch_size, 
                                                              mem_len=args.neighbor_len,
                                                              partial_shuffled=args.partial_shuffle)
+                valid_loader = corpus.get_valid_loader(args.eval_batch_size)
+                test_loader = corpus.get_test_loader(args.eval_batch_size)
+            elif args.sentence_cache:
+                train_loader = corpus.sentence_train_loader(args.batch_size, args.num_steps, 
+                                                            partial_shuffled=args.partial_shuffle,
+                                                            max_sent_len=args.cache_L)
+                valid_loader = corpus.sentence_valid_loader(args.eval_batch_size, args.num_steps,
+                                                            max_sent_len=args.cache_L)
+                test_loader = corpus.sentence_test_loader(args.eval_batch_size, args.num_steps,
+                                                          max_sent_len=args.cache_L)
             else:
                 train_loader = corpus.partial_shuffle_loader(args.batch_size)
-            valid_loader = corpus.get_valid_loader(args.eval_batch_size)
-            test_loader = corpus.get_test_loader(args.eval_batch_size)
+                valid_loader = corpus.get_valid_loader(args.eval_batch_size)
+                test_loader = corpus.get_test_loader(args.eval_batch_size)
         else:
             train_loader, _, _ = torchtext.datasets.PennTreebank.iters(
                     batch_size=args.batch_size, 
@@ -723,7 +866,10 @@ def main(args):
     total_steps = len(train_loader) * args.epochs
     args.decay_steps = decay_steps
 
-    assert args.num_steps >= args.cache_L, "cache_L should <= num_steps"
+    if not args.sentence_cache:
+        assert args.num_steps >= args.cache_L, "cache_L should <= num_steps"
+    else:
+        assert args.num_steps <= args.cache_N, "cache_N should >= num_steps in sentence_cache mode"
 
     if args.load:
         # Load Model

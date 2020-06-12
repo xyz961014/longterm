@@ -746,7 +746,7 @@ class TransformerLM(nn.Module):
                 # update recalls
                 query_len = indice_bool.size(0)
                 recall = indice_bool.sum(0).t()
-                pos, recalls, queries = cache_info.chunk(3, dim=-1)
+                pos, recalls, queries, lengths = cache_info.chunk(4, dim=-1)
                 recalls += recall.unsqueeze(-1)
                 queries += query_len
 
