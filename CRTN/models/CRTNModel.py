@@ -65,7 +65,7 @@ class CRTNModel(nn.Module):
 
     def forward(self, inputs, cache_key, cache_value, cache_info=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None, **kwargs):
         """
-        inputs: num_steps * batch_size
+        inputs: num_steps * batch_size, with padding behind in sentence_cache mode
         cache_key: cache_N * batch_size * (num_steps * nhid)
         cache_value: cache_N * batch_size * num_steps * ((nlayers+1) * nhid)
         cache_info: cache_N * batch_size * 3 [pos, recalls, queries]

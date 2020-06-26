@@ -37,15 +37,26 @@ def partial_shuffle(data):
 def init_cache_info(args, evaluate=False):
     """
     store relative position of cahce chunk and its recall times
-    [pos, recall times, all query times, length]
+    [length, distance, recall times, all query times]
+    postions including each cache slots and neighbor mem if exsists, final shape is 
+    [cache_N ( + nei_len), batch_size, 4] neighbor_mem info at last
     """
     batch_size = args.eval_batch_size if evaluate else args.batch_size
     if args.distributed:
         batch_size = batch_division(batch_size, args.rank, single_value=True)
-    pos = torch.arange(args.cache_N, 0, -1, dtype=torch.float).cuda()
-    recall_query_length = torch.zeros((args.cache_N, 3), dtype=torch.float).cuda()
-    cache_info = torch.cat((pos.unsqueeze(-1), recall_query_length), dim=-1).unsqueeze(1)
-    cache_info = cache_info.expand(-1, batch_size, -1).contiguous()
+
+    #pos = torch.arange(args.cache_N, 0, -1, dtype=torch.float).cuda()
+    #recall_query = torch.zeros((args.cache_N, 2), dtype=torch.float).cuda()
+    #cache_info = torch.cat((pos.unsqueeze(-1), recall_query), dim=-1).unsqueeze(1)
+    #cache_info = cache_info.expand(-1, batch_size, -1).contiguous()
+
+    if args.farnear:
+        if args.sentence_cache:
+            cache_info = torch.zeros(args.cache_N + args.neighbor_len, batch_size, 4).cuda()
+        else:
+            cache_info = torch.zeros(args.cache_N + 1, batch_size, 4).cuda()
+    else:
+        cache_info = torch.zeros(args.cache_N, batch_size, 4).cuda()
 
     return cache_info
 

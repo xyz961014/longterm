@@ -86,7 +86,7 @@ class Cache(nn.Module):
         return attention, topk_indices
 
 
-    def renew(self, inputs, words=None, cache_info=None, keys=None, values=None):
+    def renew(self, inputs, words=None, cache_info=None, keys=None, values=None, cache_eos=None):
 
         if keys is None and values is None:
             keys, values = self.new_key_and_values(inputs)
@@ -97,17 +97,52 @@ class Cache(nn.Module):
     
         key_blocks = list(keys.split(1))
         value_blocks = list(values.split(1))
-        for input_block in input_blocks:    
+
+        if cache_eos is not None:
+            sent_infos = cache_eos - torch.cat((torch.zeros_like(cache_eos[0]).unsqueeze(0), cache_eos[:-1]))
+            sent_infos = sent_infos.split(1, dim=0)
+        else:
+            sent_infos = [cache_info.new_ones(1, cache_info.size(1)) * self.L for i in input_blocks]
+
+        if self.args.sentence_cache:
+            # compute distance of sentences
+            if len(sent_infos) <= self.args.neighbor_len:
+                # all sentences into cache is a part of neighbor
+                sent_infos = cache_info[self.N:self.N+len(sent_infos),:,:2]
+            else:
+                # some sentences into cache is a part of input
+                sent_infos_nei = cache_info[self.N:,:,:2]
+                sent_infos_inp = torch.cat(sent_infos[self.args.neighbor_len:], dim=0)
+                sent_dis_inp = -torch.matmul(
+                    torch.tril(sent_infos_inp.new_ones(sent_infos_inp.size(0), sent_infos_inp.size(0)), diagonal=-1),
+                    sent_infos_inp)
+                sent_infos_inp = torch.cat((sent_infos_inp.unsqueeze(-1), sent_dis_inp.unsqueeze(-1)), dim=-1)
+                sent_infos = torch.cat((sent_infos_nei, sent_infos_inp.to(sent_infos_nei)), dim=0)
+        else:
+            nei_len = cache_info[-1,0,0].item()
+            cache_len = inputs.size(2)
+            sent_len = torch.cat(sent_infos, dim=0).unsqueeze(-1)
+            sent_dis = torch.arange(nei_len, nei_len - cache_len, step=-self.L).to(sent_len)
+            sent_infos = torch.cat((sent_len, sent_dis[:,None,None].expand_as(sent_len)), dim=-1)
+
+        sent_infos = sent_infos.split(1, dim=0)
+            
+
+        for input_block, sent_info in list(zip(input_blocks, sent_infos)):    
             if self.args.merge:
                 key_blocks, value_blocks, cache_info = self.merge(key_blocks, 
                                                                   value_blocks, 
-                                                                  cache_info)
+                                                                  cache_info, sent_info)
             elif self.args.discard_worst:
                 key_blocks, value_blocks, cache_info = self.discard_worst(key_blocks, 
                                                                           value_blocks, 
-                                                                          cache_info)
+                                                                          cache_info,
+                                                                          sent_info)
             else:
-                key_blocks, value_blocks = self.eliminate_last(key_blocks, value_blocks)
+                key_blocks, value_blocks, cache_info = self.eliminate_last(key_blocks, 
+                                                                           value_blocks, 
+                                                                           cache_info,
+                                                                           sent_info)
 
             if self.args.summary_method == "no_summary":
                 new_key = input_block[-1].reshape(self.batch_size, -1)
@@ -140,17 +175,19 @@ class Cache(nn.Module):
         return keys, values, cache_info.detach()
 
 
-    def eliminate_last(self, key_blocks, value_blocks):
+    def eliminate_last(self, key_blocks, value_blocks, cache_info, sent_info):
 
         for i in range(self.N - 1):
             key_blocks[i] = key_blocks[i+1]
             value_blocks[i] = value_blocks[i+1]
+            cache_info[i] = cache_info[i+1]
         key_blocks[-1] = torch.zeros_like(key_blocks[0])
         value_blocks[-1] = torch.zeros_like(value_blocks[0])
+        cache_info[self.N-1,:,:2] = sent_info
 
-        return key_blocks, value_blocks
+        return key_blocks, value_blocks, cache_info
 
-    def merge(self, key_blocks, value_blocks, cache_info):
+    def merge(self, key_blocks, value_blocks, cache_info, sent_info):
        
         # merge is not compatible with sentence_cache, since sentences are not in same length, we do not update length when merge, the length stay at L.
         eli_key = key_blocks[0]
@@ -165,10 +202,11 @@ class Cache(nn.Module):
         for i in range(1, self.N - 1):
             key_blocks[i] = key_blocks[i+1]
             value_blocks[i] = value_blocks[i+1]
+            cache_info[i] = cache_info[i+1]
         key_blocks[-1] = torch.zeros_like(key_blocks[0])
         value_blocks[-1] = torch.zeros_like(value_blocks[0])
 
-        pos, recall, length = cache_info.split([1,2,1], dim=-1)
+        length, pos, recall, = cache_info.split([1,1,2], dim=-1)
         pos = pos.squeeze(-1)
         merge_matrix = torch.eye(pos.size(0),
                                  pos.size(0) - 1,
@@ -178,33 +216,40 @@ class Cache(nn.Module):
         merge_matrix[0][0], merge_matrix[0][1] = alpha, 1 - alpha
         pos = torch.matmul(merge_matrix, pos + 1)
         pos = pos.unsqueeze(-1)
-        cache_info = torch.cat((pos, recall, length), dim=-1)
+        cache_info = torch.cat((length, pos, recall), dim=-1)
+ 
+        cache_info[self.N-1,:,:2] = sent_info
+        cache_info[0,:,0] = torch.ones_like(sent_info) * self.L
+
         return key_blocks, value_blocks, cache_info
 
-    def discard_worst(self, key_blocks, value_blocks, cache_info):
+    def discard_worst(self, key_blocks, value_blocks, cache_info, sent_info):
 
-        pos, recalls, queries, lengths = cache_info.chunk(4, dim=-1)
+        nei_info = cache_info[self.N:]
+        lengths, pos, recalls, queries = cache_info[:self.N].chunk(4, dim=-1)
+
         recall_mean = recalls / queries
 
         # discard the least used block
         eli_indice = recall_mean.squeeze(-1).argmin(dim=0)
         for b, eli_index in enumerate(eli_indice):
             for i in range(eli_index, self.N - 1):
+                lengths[i,b,:] = lengths[i+1,b,:]
                 pos[i,b,:] = pos[i+1,b,:]
                 recalls[i,b,:] = recalls[i+1,b,:]
                 queries[i,b,:] = queries[i+1,b,:]
-                lengths[i,b,:] = lengths[i+1,b,:]
                 key_blocks[i][:,b,:] = key_blocks[i+1][:,b,:]
                 value_blocks[i][:,b,:,:] = value_blocks[i+1][:,b,:,:]
         key_blocks[-1] = torch.zeros_like(key_blocks[0])
         value_blocks[-1] = torch.zeros_like(value_blocks[0])
-        pos = pos + 1
-        pos[-1] = torch.ones_like(pos[0])
+
+        lengths[-1] = sent_info.squeeze(0)[:,:1]
+        pos[-1] = sent_info.squeeze(0)[:,1:]
         recalls[-1] = torch.zeros_like(recalls[0])
         queries[-1] = torch.zeros_like(queries[0])
-        lengths[-1] = torch.zeros_like(queries[0])
 
-        cache_info = torch.cat((pos, recalls, queries, lengths), dim=-1)
+        cache_info = torch.cat((lengths, pos, recalls, queries), dim=-1)
+        cache_info = torch.cat((cache_info, nei_info), dim=0)
 
         return key_blocks, value_blocks, cache_info
 
