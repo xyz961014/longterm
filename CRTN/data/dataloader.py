@@ -407,7 +407,7 @@ class SentenceBPTTIterator(data.Iterator):
         _data = TEXT.numericalize([text], device=self.device)
         eos_indices, _ = _data.eq(eos_token).nonzero(as_tuple=True)
 
-        # insert addition fake <eos> for too long sentence ( > max_sent_len)
+        # insert additional fake <eos> for too long sentence ( > max_sent_len)
         fake_eoses = []
         ind = -1
         for ie in range(eos_indices.size(0)):
@@ -416,8 +416,9 @@ class SentenceBPTTIterator(data.Iterator):
                 ind += self.max_sent_len
                 fake_eoses.append(ind)
             ind = curr_ind
-        eos_indices = torch.cat((torch.tensor(fake_eoses), eos_indices))
-        eos_indices, _ = eos_indices.sort()
+        if len(fake_eoses) > 0:
+            eos_indices = torch.cat((torch.tensor(fake_eoses), eos_indices))
+            eos_indices, _ = eos_indices.sort()
 
         self._data = _data
         self.eos_indices = eos_indices
