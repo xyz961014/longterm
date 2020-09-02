@@ -86,13 +86,19 @@ class CRTNModel(nn.Module):
                                                     -1,
                                                     bsz, nhid)
             else:
-                neighbor_mem = torch.zeros(self.args.nlayers+1,
-                                           nei_len,
-                                           bsz, nhid, device=inputs.device)
+                if not self.args.sentence_cache:
+                    neighbor_mem = torch.zeros(self.args.nlayers+1,
+                                               nei_len,
+                                               bsz, nhid, device=inputs.device)
+                else:
+                    neighbor_mem = torch.zeros(self.args.nlayers+1,
+                                               0,
+                                               bsz, nhid, device=inputs.device)
+
         ### computing query ###
 
         if self.args.query_method == "vanilla":
-            near_output, wise_inputs, _ = self.encoder(inputs)
+            near_output, wise_inputs, _ = self.encoder(inputs, cache_info=cache_info)
             query = wise_inputs[-1]
             mask = torch.triu(query.new_ones(seq_len, seq_len), diagonal=1)
             if inf_ind is None:
@@ -104,14 +110,16 @@ class CRTNModel(nn.Module):
             query = query.masked_fill(mask, 0)
         else:
             if self.args.farnear:
-                near_output, wise_inputs, _ = self.encoder(inputs, 
-                                                    neighbor_mem=neighbor_mem)
+                near_output, wise_inputs, _ = self.encoder(inputs,
+                                                           cache_info=cache_info,
+                                                           neighbor_mem=neighbor_mem)
             else:
                 prev_value = cache_value[-1].transpose(0, 1)
                 prev_value.unsqueeze_(0)
                 prev_indice = torch.zeros_like(inputs).view(-1)
                 prev_indice.unsqueeze_(0)
-                near_output, wise_inputs, _ = self.encoder(inputs, 
+                near_output, wise_inputs, _ = self.encoder(inputs,
+                                                           cache_info=cache_info,
                                                            values=prev_value,
                                                            indices=prev_indice)
             if self.args.query_method == "last_l":
@@ -207,8 +215,8 @@ class CRTNModel(nn.Module):
         values = cache_value.transpose(1, 2).contiguous()
 
         output, hidden, attn_map = self.encoder(inputs, cache_info, values, weights, 
-                                              indices, words, draw, neighbor_mem,
-                                              inf_ind, inf_blocks)
+                                                indices, words, draw, neighbor_mem,
+                                                inf_ind, inf_blocks)
 
         
         if self.args.farnear and inf_ind is None:

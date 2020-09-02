@@ -10,6 +10,7 @@ import torch.nn.functional as F
 import os
 from CRTN.utils.adaptive import AdaptiveEmbedding
 from CRTN.utils.fancy_dropout import WeightDropLinear
+from CRTN.utils.utils import padding_hidden
 from torchnlp.nn import LockedDropout
 
 import ipdb
@@ -592,8 +593,7 @@ class TransformerLM(nn.Module):
             if args.tied:
                 self.embedding = nn.Embedding(vocab_size, 
                                               d_embedding, 
-                                              padding_idx=1).from_pretrained(
-                                                      self.decoder.weight)
+                                              padding_idx=1).from_pretrained(self.decoder.weight)
                 self.embedding.weight = self.decoder.weight
             else:
                 self.embedding = nn.Embedding(vocab_size, d_embedding, padding_idx=1)
@@ -657,10 +657,11 @@ class TransformerLM(nn.Module):
         else:
             return None
 
-    def forward(self, inputs, cache_info=None, values=None, weights=None, indices=None, words=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None):
+    def forward(self, inputs, cache_info=None, values=None, weights=None, indices=None, words=None, draw=False, neighbor_mem=None, inf_ind=None, inf_blocks=None, padding_idx=1):
         #input shape should be seq_len * bsz or seq_len * bsz * emsize
 
         cache_L = self.args.cache_L
+        cache_N = self.args.cache_N
         if inputs.dim() == 2:
             word_emb = self.embedding(inputs)
             seq_len, batch_size = inputs.size()
@@ -766,6 +767,10 @@ class TransformerLM(nn.Module):
             pos_indices = indices
             indice_bool = None
 
+        pos_seq = pos_seq.view(batch_size, -1)
+
+        # build mask to avoid seeing following words    
+
         if indices is None:
             if self.same_length_query:
                 all_ones = word_emb.new_ones(seq_len, total_len)
@@ -786,8 +791,49 @@ class TransformerLM(nn.Module):
 
         mask = mask.bool()[:,:,None]
 
+        if self.args.sentence_cache:
+            # edit mask according to actual length
+            # compute positional embedding
+            mask = mask.repeat(1, 1, batch_size)
 
-        pos_seq = pos_seq.view(batch_size, -1)
+            input_padding = inputs.eq(1)
+            nei_padding = padding_hidden([input_padding.new_ones(1, l.int().item(), 1) 
+                                          for l in cache_info[cache_N,:,1]])
+            nei_padding = nei_padding.squeeze(1).squeeze(-1).t().eq(False)
+
+            if indices is None:
+                # when computing query
+                total_padding = torch.cat((nei_padding, input_padding), dim=0)
+                # edit mask
+                mask = mask.masked_fill(total_padding[None,:,:], True)
+                # no need to edit pos_seq, because there are no padding between nei and input
+            else:
+                # when computing attention
+                cache_padding = padding_hidden([input_padding.new_ones(1, l.int().item(), 1) 
+                                                for l in cache_info[:cache_N,:,0].flatten()],
+                                               length=cache_L,
+                                               before=False)
+                cache_padding = cache_padding.view(cache_N, batch_size, cache_L).eq(False)
+                cache_padding = cache_padding.transpose(1, 2).reshape(cache_N * cache_L, batch_size)
+
+                total_padding = torch.cat((cache_padding, nei_padding, input_padding), dim=0)
+                # edit mask
+                mask = mask.masked_fill(total_padding[None,:,:], True)
+
+                # edit pos_seq
+                new_pos = []
+                for b in range(batch_size):
+                    cache_pos = torch.cat([torch.arange(cache_info[i,b,1].int().item() + x_len, 
+                                                        cache_info[i,b,1].int().item() + x_len - cache_L,
+                                                        -1) 
+                                           for i in range(cache_N)])
+                    nei_x_pos = torch.arange(x_len + nei_len, 0, -1)
+                    batch_pos = torch.cat((cache_pos, nei_x_pos))
+                    
+                    new_pos.append(batch_pos.unsqueeze(0))
+
+                pos_seq = torch.cat(new_pos).to(pos_seq)
+
 
         if self.args.clamp_len > 0:
             pos_seq = pos_seq.clamp(max=self.args.clamp_len)
