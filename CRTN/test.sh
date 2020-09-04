@@ -24,7 +24,7 @@ python main.py \
     --adaptive \
     --cutoffs 2000 4000 8000 \
     --farnear \
-    --summary_method sum \
+    --summary_method last_state \
     --query_method single \
     --distributed \
     --save demo \

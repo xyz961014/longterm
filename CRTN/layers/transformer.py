@@ -806,6 +806,10 @@ class TransformerLM(nn.Module):
                 total_padding = torch.cat((nei_padding, input_padding), dim=0)
                 # edit mask
                 mask = mask.masked_fill(total_padding[None,:,:], True)
+                # a word or padding can at least see itself
+                self_mask = torch.diag(torch.ones(seq_len), diagonal=nei_len).to(mask)[:seq_len,:]
+                mask = mask.masked_fill(self_mask[:,:,None], False)
+                pass
                 # no need to edit pos_seq, because there are no padding between nei and input
             else:
                 # when computing attention
