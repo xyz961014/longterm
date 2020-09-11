@@ -634,8 +634,8 @@ def evaluate(model, eval_loader, criterion, writer, args):
                         total_eos = torch.cat((eos.new_zeros(args.neighbor_len, eos.size(1)), (eos + 1)), dim=0)
                     else:
                         total_mem = torch.cat((mem.reshape(hidden.size(0), -1, *mem.size()[1:]), hidden), dim=1)
-                        eos = eos + nei_eos[-1].expand_as(eos) + 1
-                        total_eos = torch.cat((nei_eos, eos), dim=0)
+                        rel_eos = eos + nei_eos[-1].expand_as(eos) + 1
+                        total_eos = torch.cat((nei_eos, rel_eos), dim=0)
                         
                     total_num = total_eos.size(0)
                     nei_num = args.neighbor_len
@@ -669,7 +669,31 @@ def evaluate(model, eval_loader, criterion, writer, args):
                     mem = mem.permute(1, 2, 0, 3).reshape(-1, mem.size(0), mem.size(-1))
                     hidden = hidden.permute(2, 0, 1, 3, 4).reshape(hidden.size(2), hidden.size(0), -1, hidden.size(-1))
 
-                key, value, cache_info = module.cache.renew(hidden, text, cache_info, key, value)
+                    # renew cache
+                    key, value, cache_info = module.cache.renew(hidden, text, cache_info, key, value, 
+                                                                cache_eos=cache_eos)
+
+                    # distance translation 
+                    cache_info[:,:,1] += (eos[-1] + 1).expand_as(cache_info[:,:,1]).to(cache_info)
+                    # update near info
+                    if args.farnear:
+                        # length
+                        len_sents = nei_eos - torch.cat((torch.zeros_like(nei_eos[0]).unsqueeze(0), nei_eos[:-1]))
+                        cache_info[args.cache_N:,:,0] = len_sents
+                        # distance
+                        cache_info[args.cache_N:,:,1] = torch.matmul(torch.triu(len_sents.new_ones(len_sents.size(0),
+                                                                                                   len_sents.size(0))),
+                                                                     len_sents)
+                else:
+                    # renew cache
+                    key, value, cache_info = module.cache.renew(hidden, text, cache_info, key, value)
+
+                    # distance translation 
+                    cache_info[:,:,1] += text.size(0)
+                    # update near info
+                    if args.farnear:
+                        nei_len = mem.size(0) / (args.nlayers + 1)
+                        cache_info[-1,:,:2] = torch.ones_like(cache_info[-1,:,:2]) * nei_len 
 
                 if args.adaptive:
                     loss_tensor = criterion(output, target,

@@ -434,20 +434,23 @@ class SentenceBPTTIterator(data.Iterator):
         _data = self._data
         eos_indices = self.eos_indices
 
-        # cut into batches
+        # batchify sentences
         data_len = eos_indices.size(0)
         batch_len = data_len // self.batch_size
-        boundry_indices = torch.arange(batch_len, data_len, batch_len)[:self.batch_size-1] - 1
+        # cut into batches
+        boundry_indices = torch.arange(batch_len, data_len, batch_len)[:self.batch_size] - 1
         boundries = torch.gather(eos_indices, 0, boundry_indices)
-        split_len = torch.cat((boundries, boundries.new_ones(1) * (_data.size(0) - 1))) - \
-                    torch.cat((boundries.new_ones(1) * (-1), boundries))
-        _data = _data.squeeze(1).split(split_len.tolist(), dim=0)
+        # cut tail of _data and batchify
+        split_len = boundries - torch.cat((boundries.new_ones(1) * (-1), boundries[:-1]))
+        _data = _data.squeeze(1).narrow(0, 0, split_len.sum()).split(split_len.tolist(), dim=0)
 
         # rebuild batch-wise eos indices
-        eos_indices = eos_indices.narrow(0, 0, batch_len * self.batch_size).reshape(self.batch_size, batch_len)
+        eos_indices = eos_indices.narrow(0, 0, batch_len * self.batch_size)
+        eos_indices = eos_indices.reshape(self.batch_size, batch_len)
         rel_eos_pos_bias = torch.cat((eos_indices.new_zeros(1), (eos_indices[:-1, -1] + 1))).expand(batch_len, -1).t()
         eos_indices = eos_indices - rel_eos_pos_bias
         eos_indices = torch.cat((eos_indices.new_ones(self.batch_size, 1) * (-1), eos_indices), dim=1)
+
         if self.partial_shuffled:
             _data = partial_shuffle(_data)
         dataset = Dataset(examples=self.dataset.examples, fields=[
@@ -571,8 +574,7 @@ if __name__ == "__main__":
     ptb_train, ptb_valid, ptb_test = datasets.PennTreebank.splits(TEXT)
     wt2_train, wt2_valid, wt2_test = datasets.WikiText2.splits(TEXT)
     TEXT.build_vocab(ptb_train)
-    iterator = SentenceBPTTIterator(ptb_train, batch_size=20, sent_num=3, max_sent_len=20)
+    iterator = SentenceBPTTIterator(ptb_valid, batch_size=100, sent_num=3, max_sent_len=20)
     ds = []
     for d in iterator:
-        ds.append(d.text.size(0))
-    print(max(ds))
+        print(d.text.shape, d.eos)
