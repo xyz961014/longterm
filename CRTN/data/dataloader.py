@@ -245,11 +245,11 @@ class ExistingDataset(object):
         
         self.TEXT = data.Field(sequential=True)
         if name == "ptb":
-            self.train_set, self.valid_set, self.test_set = datasets.PennTreebank.splits(self.TEXT)
+            self.train_set, self.valid_set, self.test_set = datasets.PennTreebank.splits(self.TEXT, root="../.data")
         elif name == "wt2":
-            self.train_set, self.valid_set, self.test_set = datasets.WikiText2.splits(self.TEXT)
+            self.train_set, self.valid_set, self.test_set = datasets.WikiText2.splits(self.TEXT, root="../.data")
         elif name == "wt103":
-            self.train_set, self.valid_set, self.test_set = datasets.WikiText103.splits(self.TEXT)
+            self.train_set, self.valid_set, self.test_set = datasets.WikiText103.splits(self.TEXT, root="../.data")
 
         self.TEXT.build_vocab(self.train_set)
 

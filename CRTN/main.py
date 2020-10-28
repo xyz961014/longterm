@@ -1363,7 +1363,7 @@ def broadcast(model):
 if __name__ == "__main__":
 
     args = parse_args()
-    savepath = "../../../experiment/crtn/save/"
+    savepath = ""
     timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
     savepath += args.save + timestr
 
@@ -1371,7 +1371,10 @@ if __name__ == "__main__":
     args.savepath = savepath
     args.timestr = timestr
     args.epochs = args.std_epochs + args.ema_epochs
+
     
+    if not os.path.exists("./log/"):
+        os.mkdir("./log/")
     if not os.path.exists("./log/" + args.save + timestr):
         os.mkdir("./log/" + args.save + timestr)
     if not os.path.exists(savepath):
