@@ -781,10 +781,12 @@ def load_dataset(args):
                 test_loader = corpus.get_test_loader(args.eval_batch_size)
         else:
             train_loader, _, _ = torchtext.datasets.PennTreebank.iters(
+                    root="../.data",
                     batch_size=args.batch_size, 
                     device=torch.device("cpu"),
                     bptt_len=args.num_steps)
             _, valid_loader, test_loader = torchtext.datasets.PennTreebank.iters(
+                    root="../.data",
                     batch_size=args.eval_batch_size, 
                     device=torch.device("cpu"),
                     bptt_len=args.num_steps)
@@ -805,10 +807,12 @@ def load_dataset(args):
             test_loader = corpus.get_test_loader(args.eval_batch_size)
         else:
             train_loader, _, _ = torchtext.datasets.WikiText2.iters(
+                    root="../.data",
                     batch_size=args.batch_size, 
                     device=torch.device("cpu"),
                     bptt_len=args.num_steps)
             _, valid_loader, test_loader = torchtext.datasets.WikiText2.iters(
+                    root="../.data",
                     batch_size=args.eval_batch_size, 
                     device=torch.device("cpu"),
                     bptt_len=args.num_steps)
@@ -829,10 +833,12 @@ def load_dataset(args):
             test_loader = corpus.get_test_loader(args.eval_batch_size)
         else:
             train_loader, _, _ = torchtext.datasets.WikiText103.iters(
+                    root="../.data",
                     batch_size=args.batch_size, 
                     device=torch.device("cpu"),
                     bptt_len=args.num_steps)
             _, valid_loader, test_loader = torchtext.datasets.WikiText103.iters(
+                    root="../.data",
                     batch_size=args.eval_batch_size, 
                     device=torch.device("cpu"),
                     bptt_len=args.num_steps)
