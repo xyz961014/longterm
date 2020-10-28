@@ -29,7 +29,7 @@ import torch.multiprocessing as mp
 from CRTN.data.tail_loader import TailDataset, ROCDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from CRTN.utils.visual import TargetText
-from transformer import TransformerLM
+from CRTN.baseline.pytorch.transformer import TransformerLM
 
 if torch.__version__ < "1.2.0":
     from tensorboardX import SummaryWriter

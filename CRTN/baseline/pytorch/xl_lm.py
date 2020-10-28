@@ -28,7 +28,7 @@ from torch.utils.data import DataLoader
 from CRTN.data.dataloader import TextDataset, ExistingDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from CRTN.utils.visual import TargetText
-from transformer import TransformerLM
+from CRTN.baseline.pytorch.transformer import TransformerLM
 
 import torch.distributed as dist
 import torch.multiprocessing as mp
