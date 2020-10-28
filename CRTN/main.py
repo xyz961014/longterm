@@ -352,7 +352,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
 
             # train
 
-            len_target = (target.view(-1).size(0) - target.eq(pad_token).nonzero().size(0))
+            len_target = (target.reshape(-1).size(0) - target.eq(pad_token).nonzero().size(0))
             len_train += len_target
 
             if args.farnear:
@@ -443,7 +443,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                                  reduction="none")
 
             if args.sentence_cache:
-                loss = loss.view_as(target)
+                loss = loss.reshape_as(target)
                 pad_mask = target.eq(pad_token)
                 loss = loss.masked_fill(pad_mask, 0).sum() / len_target
             else:
@@ -616,7 +616,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
                         eos = data.eos
 
                 eval_batch_size = text.size(1)
-                len_eval += (target.view(-1).size(0) - target.eq(pad_token).nonzero().size(0))
+                len_eval += (target.reshape(-1).size(0) - target.eq(pad_token).nonzero().size(0))
 
                 if args.farnear:
                     if mem is not None:
@@ -700,11 +700,11 @@ def evaluate(model, eval_loader, criterion, writer, args):
                                             keep_order=True,
                                             temperature=args.eval_temperature)
                 else:
-                    loss_tensor = criterion(output.view(-1, args.vocab_size), target.view(-1), 
+                    loss_tensor = criterion(output.reshape(-1, args.vocab_size), target.reshape(-1), 
                                             reduction="none")
 
                 if args.sentence_cache:
-                    loss = loss_tensor.view_as(target)
+                    loss = loss_tensor.reshape_as(target)
                     pad_mask = target.eq(pad_token)
                     loss = loss.masked_fill(pad_mask, 0).sum()
                 else:
@@ -724,7 +724,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
                         target = torch.cat(target_list, dim=1)
                         loss_tensor = torch.cat(loss_list, dim=0)
                     if args.rank == 0:
-                        words = [vocab.itos[w] for w in target.view(-1)]
+                        words = [vocab.itos[w] for w in target.reshape(-1)]
                         word_loss = [l.item() for l in loss_tensor]
                         loss_obj.add_words(words)
                         loss_obj.add_losss(word_loss)
