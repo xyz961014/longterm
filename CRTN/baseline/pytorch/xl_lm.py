@@ -13,8 +13,7 @@ import warnings
 import pickle as pkl
 warnings.filterwarnings("ignore")
 
-sys.path.append("../..")
-sys.path.append("../../CRTN/")
+sys.path.append("../../..")
 
 import numpy as np
 import math
@@ -1070,7 +1069,7 @@ def broadcast(model):
 
 if __name__ == "__main__":
     args = parse_args()
-    savepath = "../../../../experiment/crtn/save/"
+    savepath = "../../../../../experiment/crtn/save/"
     timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
     savepath += args.save + timestr
     
