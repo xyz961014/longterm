@@ -355,6 +355,7 @@ class RandomLengthBPTTIterator(data.Iterator):
             ('text', TEXT), ('target', TEXT)])
         mem_len = self.mem_len
         mem_min = round(mem_len / 2)
+        max_len = self.bptt_len + 20
         while True:
             i = 0
             while i < len(_data) - 1:
@@ -365,6 +366,8 @@ class RandomLengthBPTTIterator(data.Iterator):
                 #bptt = self.bptt_len
                 bptt = self.bptt_len if np.random.random() < 0.95 else self.bptt_len / 2.
                 seq_len = max(5, int(np.random.normal(bptt, 5)))
+                # set max_len in case of OOM
+                seq_len = min(seq_len, max_len)
                 if mem_len > 0:
                     seq_len = max(self.bptt_len - mem_len + mem_min, seq_len)
                 seq_len = min(seq_len, len(_data) - i - 1)
@@ -574,7 +577,7 @@ if __name__ == "__main__":
     ptb_train, ptb_valid, ptb_test = datasets.PennTreebank.splits(TEXT)
     wt2_train, wt2_valid, wt2_test = datasets.WikiText2.splits(TEXT)
     TEXT.build_vocab(ptb_train)
-    iterator = SentenceBPTTIterator(ptb_valid, batch_size=100, sent_num=3, max_sent_len=20)
+    iterator = RandomLengthBPTTIterator(ptb_valid, batch_size=10, bptt_len=80, mem_len=80)
     ds = []
     for d in iterator:
-        print(d.text.shape, d.eos)
+        print(d.text.shape[0])
