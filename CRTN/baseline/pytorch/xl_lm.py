@@ -53,7 +53,6 @@ except:
     print("No apex package found")
 
 from torch.utils.tensorboard import SummaryWriter
-import ipdb
 
 
 def parse_args():
@@ -1066,6 +1065,10 @@ def broadcast(model):
     for var in model.parameters():
         dist.broadcast(var.data, 0)
 
+def process_fn(rank, args):
+    local_args = copy(args)
+    local_args.rank = rank
+    main(local_args)
 
 if __name__ == "__main__":
     args = parse_args()
@@ -1087,8 +1090,6 @@ if __name__ == "__main__":
     writer = SummaryWriter("./log/" + args.save + timestr)
 
     world_size = len(args.devices)
-    if world_size == 1 and not args.apex:
-        args.distributed = False
 
     if args.distributed:
         # Pick a free port
@@ -1098,8 +1099,6 @@ if __name__ == "__main__":
             url = "tcp://localhost:" + str(port)
             args.url = url
 
-        from utils import dist_scripts
-        process_fn = dist_scripts.process_base_lm_fn
         mp.spawn(process_fn, args=(args, ), nprocs=world_size)
     else:
-        main(args)
+        process_fn(0, args)

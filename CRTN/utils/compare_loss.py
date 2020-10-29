@@ -1,7 +1,6 @@
 import argparse
 import os
 import sys
-import ipdb
 import numpy as np
 import pickle as pkl
 from pprint import pprint

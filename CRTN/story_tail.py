@@ -6,7 +6,6 @@ import argparse
 import socket
 from copy import copy
 from tqdm import tqdm
-import ipdb
 
 #ignore future warning from tensorboard
 import warnings
@@ -1360,6 +1359,10 @@ def broadcast(model):
     for var in model.parameters():
         dist.broadcast(var.data, 0)
 
+def process_fn(rank, args):
+    local_args = copy(args)
+    local_args.rank = rank
+    main(local_args)
 
 
 if __name__ == "__main__":
@@ -1378,8 +1381,6 @@ if __name__ == "__main__":
         os.mkdir(savepath)
 
     world_size = len(args.devices)
-    if world_size == 1:
-        args.distributed = False
 
     if args.distributed:
         # Pick a free port
@@ -1389,8 +1390,6 @@ if __name__ == "__main__":
             url = "tcp://localhost:" + str(port)
             args.url = url
 
-        from utils import dist_scripts
-        process_fn = dist_scripts.process_tail_fn
         mp.spawn(process_fn, args=(args, ), nprocs=world_size)
     else:
-        main(args)
+        process_fn(0, args)

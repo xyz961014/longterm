@@ -16,7 +16,6 @@ from torch.utils.data import DataLoader
 from torchtext import data, datasets
 from torchtext.data import Batch, Dataset
 from CRTN.utils.utils import partial_shuffle
-import ipdb
 
 UNK_token = 0  # Unknown word token
 PAD_token = 1  # Used for padding short sentences

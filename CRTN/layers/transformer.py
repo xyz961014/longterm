@@ -13,7 +13,6 @@ from CRTN.utils.fancy_dropout import WeightDropLinear
 from CRTN.utils.utils import padding_hidden
 from torchnlp.nn import LockedDropout
 
-import ipdb
 import visdom
 import time
 try:

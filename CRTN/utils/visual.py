@@ -1,6 +1,5 @@
 import pickle as pkl
 import numpy as np
-import ipdb
 
 class TargetText(object):
     def __init__(self, words=[], 
