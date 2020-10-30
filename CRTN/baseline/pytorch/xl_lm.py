@@ -524,7 +524,7 @@ def main(args):
             #if hasattr(model, 'bias') and model.bias is not None:
             #    nn.init.constant_(model.bias, 0.0)
 
-    writer = SummaryWriter("./log/" + args.save + args.timestr)
+    writer = SummaryWriter("../log/" + args.save + args.timestr)
 
     if torch.cuda.is_available():
         devices = [torch.device("cuda:" + str(i)) for i in args.devices]
@@ -1072,22 +1072,19 @@ def process_fn(rank, args):
 
 if __name__ == "__main__":
     args = parse_args()
-    savepath = ""
+    savepath = "."
     timestr = "-" + datetime.now().__format__("%Y%m%d%H%M%S")
-    savepath += args.save + timestr
     
     args.name = "Transformer-XL"
     args.savepath = savepath
     args.timestr = timestr
     args.epochs = args.std_epochs + args.ema_epochs
     
-    if not os.path.exists("./log/"):
-        os.mkdir("./log/")
-    if not os.path.exists("./log/" + args.save + timestr):
-        os.mkdir("./log/" + args.save + timestr)
-    if not os.path.exists(savepath):
-        os.mkdir(savepath)
-    writer = SummaryWriter("./log/" + args.save + timestr)
+    if not os.path.exists("../log/"):
+        os.mkdir("../log/")
+    if not os.path.exists("../log/" + args.save + timestr):
+        os.mkdir("../log/" + args.save + timestr)
+    writer = SummaryWriter("../log/" + args.save + timestr)
 
     world_size = len(args.devices)
 
