@@ -32,26 +32,6 @@ from CRTN.baseline.pytorch.transformer import TransformerLM
 
 import torch.distributed as dist
 import torch.multiprocessing as mp
-
-try:
-    from apex import amp
-    from apex.parallel import DistributedDataParallel as apexDDP
-    class ApexDataParallel(apexDDP):
-        def __init__(self, module, **kwargs):
-            super().__init__(module, **kwargs)
-            self.rank = dist.get_rank()
-            self.world_size = dist.get_world_size()
-    
-        def set_batch_size(self, batch_size):
-            batch_size = batch_division(batch_size, 
-                                        self.rank, 
-                                        self.world_size,
-                                        single_value=True)
-            self.batch_size = batch_size
-            self.module.set_batch_size(batch_size)
-except:
-    print("No apex package found")
-
 from torch.utils.tensorboard import SummaryWriter
 
 
@@ -204,10 +184,6 @@ def parse_args():
                         help='path to load the model')
     parser.add_argument('--rank', type=int, default=0,
                         help='rank in nccl')
-    parser.add_argument('--apex', action="store_true",
-                        help='use apex to train')
-    parser.add_argument('--opt_level', type=str, default='O1',
-                        help='apex opt level')
     args = parser.parse_args()
     return args
 
@@ -307,21 +283,14 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             if args.beta:
                 loss = loss + args.beta * (output[1:] - output[:-1]).pow(2).mean()
 
-            if args.apex:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
+            loss.backward()
 
         for group in optimizer.param_groups:
             for p in group["params"]:
                 if p.grad is not None:
                     p.grad.mul_(1 / args.update_cycle)
 
-        if args.apex:
-            torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
-        else:
-            torch.nn.utils.clip_grad_norm_(params, args.clip)
+        torch.nn.utils.clip_grad_norm_(params, args.clip)
 
         optimizer.step()
         step += 1
@@ -384,8 +353,6 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                         "model_state_dict": module.state_dict(),
                         "criterion": criterion.state_dict()
                         } 
-                    if args.apex:
-                        save_dict["amp"] = amp.state_dict()
                     torch.save(save_dict, 
                                args.savepath + "/" + args.save + "_best.pt")
                     print("save best model")
@@ -691,7 +658,6 @@ def main(args):
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
         model_args.word_loss = args.word_loss
-        model_args.apex = args.apex
 
         args = model_args
 
@@ -733,7 +699,6 @@ def main(args):
                 drophid=model_args.drophid,
                 theta=model_args.theta,
                 theta_alpha=model_args.theta_annealing_alpha,
-                apex=model_args.apex,
                 no_pos_bias=model_args.no_pos_bias,
                 no_pos=model_args.no_pos
                 )
@@ -767,7 +732,6 @@ def main(args):
                 drophid=args.drophid,
                 theta=args.theta,
                 theta_alpha=args.theta_annealing_alpha,
-                apex=args.apex,
                 no_pos_bias=args.no_pos_bias,
                 no_pos=args.no_pos
                 )
@@ -830,18 +794,10 @@ def main(args):
         optimizer = optim.SGD([{"params": p, "lr": lr} for p, lr in zip(param_list, lr_list)], 
                                weight_decay=args.weight_decay)
     
-    if args.apex:
-        [model, criterion], optimizer = amp.initialize([model, criterion], 
-                                                       optimizer, 
-                                                       opt_level=args.opt_level)
-
     if args.distributed:
-        if args.apex:
-            model = ApexDataParallel(model) 
-        else:
-            model = DistributedDataParallel(model, 
-                                            device_ids=[device], 
-                                            dim=1)
+        model = DistributedDataParallel(model, 
+                                        device_ids=[device], 
+                                        dim=1)
 
     if args.scheduler == "cosine":
         scheduler_steps = decay_steps - args.warmup_steps
@@ -891,8 +847,6 @@ def main(args):
                             "model_state_dict": module.state_dict(),
                             "criterion": criterion.state_dict()
                             } 
-                        if args.apex:
-                            save_dict["amp"] = amp.state_dict()
                         torch.save(save_dict, 
                                    args.savepath + "/" + args.save + "_best.pt")
                         print("save best model")
@@ -953,8 +907,6 @@ def main(args):
                             "model_state_dict": module.state_dict(),
                             "criterion": criterion.state_dict()
                             } 
-                        if args.apex:
-                            save_dict["amp"] = amp.state_dict()
                         torch.save(save_dict, 
                                    args.savepath + "/" + args.save + "_best.pt")
                         print("save averaged model")
@@ -974,16 +926,6 @@ def main(args):
             print('-' * 89)
             print('Exiting from training early')
 
-        ## save final model
-        #save_dict = {
-        #    "model_args": args,
-        #    "model_state_dict": module.state_dict(),
-        #    "criterion": criterion.state_dict()
-        #    } 
-        #if args.apex:
-        #    save_dict["amp"] = amp.state_dict()
-        #torch.save(save_dict, args.savepath + "/" + args.save + "_final.pt")
-
     ### Reload best model
 
     if args.rank == 0:
@@ -1000,8 +942,6 @@ def main(args):
 
         if args.adaptive:
             criterion.load_state_dict(eval_checkpoint["criterion"])
-        if args.apex:
-            amp.load_state_dict(eval_checkpoint["amp"])
 
         print("=" * 89)
         print("experiment name: {}".format(args.save))

@@ -6,8 +6,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 
-import ipdb
-
 import os
 import sys
 sys.path.append("..")

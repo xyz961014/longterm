@@ -23,8 +23,6 @@ from CRTN.data.dataloader import TextDataset, ExistingDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from models.CRTNModel import CRTNModel
 
-import ipdb
-
 def parse_args():
     parser = argparse.ArgumentParser()
     # data

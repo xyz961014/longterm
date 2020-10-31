@@ -15,10 +15,6 @@ from torchnlp.nn import LockedDropout
 
 import visdom
 import time
-try:
-    from apex.normalization import FusedLayerNorm
-except:
-    print("No apex package found")
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, d_model):
@@ -77,7 +73,7 @@ def bmm_einsum(tensor1, tensor2, eqn="ibnd,jbnd->ijbn"):
 
 
 class PostionwiseFF(nn.Module):
-    def __init__(self, d_model, d_ff, dropfor, apex=False):
+    def __init__(self, d_model, d_ff, dropfor):
         super().__init__()
 
         self.d_model = d_model
@@ -91,10 +87,7 @@ class PostionwiseFF(nn.Module):
                 LockedDropout(dropfor)
                 )
 
-        if apex:
-            self.layer_norm = FusedLayerNorm(d_model)
-        else:
-            self.layer_norm = nn.LayerNorm(d_model)
+        self.layer_norm = nn.LayerNorm(d_model)
 
     def forward(self, inputs):
         
@@ -163,12 +156,11 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, apex=False, same_length=True, no_pos=False):
+    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, same_length=True, no_pos=False):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
         self.d_head = d_head
-        self.apex = apex
         self.same_length = same_length
         self.no_pos = no_pos
 
@@ -186,10 +178,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
                                            weight_dropout=dropwei)
         self.lin_o = nn.Linear(num_head * d_head, d_model, bias=False)
 
-        if apex:
-            self.layer_norm = FusedLayerNorm(d_model)
-        else:
-            self.layer_norm = nn.LayerNorm(d_model)
+        self.layer_norm = nn.LayerNorm(d_model)
 
         self.scale = 1 / (d_head ** 0.5)
 
@@ -255,23 +244,15 @@ class LearnableMultiheadSelfAttention(nn.Module):
         rel_inp = rel_inp.view(x_len, batch_size, self.num_head, self.d_head)
         inp_k = inp_k.view(x_len, batch_size, self.num_head, self.d_head)
         inp_v = inp_v.view(x_len, batch_size, self.num_head, self.d_head)
-        if self.apex:
-            AC = bmm_einsum(heads_qu, inp_k)
-            BD = bmm_einsum(heads_qv, rel_inp)
-        else:
-            AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, inp_k))
-            BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_inp))
+        AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, inp_k))
+        BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_inp))
 
         if neighbor_mem is not None:
             nei_k = nei_k.view(nei_len, batch_size, self.num_head, self.d_head)
             nei_v = nei_v.view(nei_len, batch_size, self.num_head, self.d_head)
             rel_nei = rel_nei.view(nei_len, batch_size, self.num_head, self.d_head)
-            if self.apex:
-                nei_AC = bmm_einsum(heads_qu, nei_k)
-                nei_BD = bmm_einsum(heads_qv, rel_nei)
-            else:
-                nei_AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, nei_k))
-                nei_BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_nei))
+            nei_AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, nei_k))
+            nei_BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_nei))
 
             # if neighbor_mem is empty(0), mask it
 
@@ -291,12 +272,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
             cache_v = cache_v.view(cache_num, cache_L, batch_size, self.num_head, self.d_head)
 
             rel_cache = rel_cache.view(cache_num, cache_L, batch_size, self.num_head, self.d_head)
-            if self.apex:
-                cache_AC = bmm_einsum(pre_AC, cache_k, "kibnd,kjbnd->ikjbn")
-                cache_BD = bmm_einsum(pre_BD, rel_cache, "kibnd,kjbnd->ikjbn")
-            else:
-                cache_AC = torch.einsum("kibnd,kjbnd->ikjbn", pre_AC, cache_k)
-                cache_BD = torch.einsum("kibnd,kjbnd->ikjbn", pre_BD, rel_cache)
+            cache_AC = torch.einsum("kibnd,kjbnd->ikjbn", pre_AC, cache_k)
+            cache_BD = torch.einsum("kibnd,kjbnd->ikjbn", pre_BD, rel_cache)
             AC_mask = indice_bool.eq(0).transpose(1, 2)[:,:,None,:,None]
             cache_AC.masked_fill_(AC_mask, -float("inf")) 
 
@@ -332,12 +309,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         #        cache_rel = rel_emb_matrix.view(cache_num + 1, x_len, 
         #                                      batch_size, self.num_head, self.d_head)
-        #        if self.apex:
-        #            AC = bmm_einsum(cache_AC, cache_k, "kibnd,kjbnd->ikjbn")
-        #            BD = bmm_einsum(cache_BD, cache_rel, "kibnd,kjbnd->ikjbn")
-        #        else:
-        #            AC = torch.einsum("kibnd,kjbnd->ikjbn", cache_AC, cache_k)
-        #            BD = torch.einsum("kibnd,kjbnd->ikjbn", cache_BD, cache_rel)
+        #        AC = torch.einsum("kibnd,kjbnd->ikjbn", cache_AC, cache_k)
+        #        BD = torch.einsum("kibnd,kjbnd->ikjbn", cache_BD, cache_rel)
         #        AC_mask = indice_bool.eq(0).transpose(1, 2)[:,:,None,:,None]
         #        AC.masked_fill_(AC_mask, -float("inf")) 
 
@@ -353,12 +326,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
         #                               self.d_head)
         #        heads_v = heads_v.view(x_len, batch_size, self.num_head, 
         #                               self.d_head)
-        #        if self.apex:
-        #            AC = bmm_einsum(heads_qu, heads_k)
-        #            BD = bmm_einsum(heads_qv, rel_emb_matrix)
-        #        else:
-        #            AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
-        #            BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
+        #        AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
+        #        BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
 
         #        # if neighbor_mem is empty(0), mask it
         #        if neighbor_mem.eq(0).sum() == neighbor_mem.numel():
@@ -372,12 +341,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
         #        nei_k = nei_k.view(nei_len, batch_size, self.num_head, self.d_head)
         #        nei_v = nei_v.view(nei_len, batch_size, self.num_head, self.d_head)
         #        rel_nei = rel_nei.view(nei_len, batch_size, self.num_head, self.d_head)
-        #        if self.apex:
-        #            nei_AC = bmm_einsum(heads_qu, nei_k)
-        #            nei_BD = bmm_einsum(heads_qv, rel_nei)
-        #        else:
-        #            nei_AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, nei_k))
-        #            nei_BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_nei))
+        #        nei_AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, nei_k))
+        #        nei_BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_nei))
         #        
         #        AC_cache, AC_inp = AC.split([cache_num, 1], dim=1)
         #        BD_cache, BD_inp = BD.split([cache_num, 1], dim=1)
@@ -447,16 +412,10 @@ class LearnableMultiheadSelfAttention(nn.Module):
         prob_cache, prob_nei, prob_inp = attn_prob.split([cache_len,
                                                           nei_len,
                                                           x_len], dim=1)
-        if self.apex:
-            attn_vec = bmm_einsum(prob_inp, inp_v, "ilbn,lbnd->ibnd")
-        else:
-            attn_vec = torch.einsum("ilbn,lbnd->ibnd", prob_inp, inp_v)
+        attn_vec = torch.einsum("ilbn,lbnd->ibnd", prob_inp, inp_v)
 
         if nei_len > 0:
-            if self.apex:
-                nei_vec = bmm_einsum(prob_nei, nei_v, "ilbn,lbnd->ibnd")
-            else:
-                nei_vec = torch.einsum("ilbn,lbnd->ibnd", prob_nei, nei_v)
+            nei_vec = torch.einsum("ilbn,lbnd->ibnd", prob_nei, nei_v)
             attn_vec = attn_vec + nei_vec
 
         if cache_len > 0:
@@ -466,10 +425,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
                 prob_cache = torch.einsum("ikjbn,ibk->ikjbn", prob_cache, weights)
                 prob_cache = prob_cache.view(prob_cache.size(0), -1, *prob_cache.shape[3:])
             cache_v = cache_v.view(-1, *cache_v.shape[2:])
-            if self.apex:
-                cache_vec = bmm_einsum(prob_cache, cache_v, "ilbn,lbnd->ibnd")
-            else:
-                cache_vec = torch.einsum("ilbn,lbnd->ibnd", prob_cache, cache_v)
+            cache_vec = torch.einsum("ilbn,lbnd->ibnd", prob_cache, cache_v)
             attn_vec = attn_vec + cache_vec
             
 
@@ -481,10 +437,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         #                                                          nei_len,
         #                                                          x_len], dim=1)
         #        attn_prob = torch.cat((prob_cache, prob_inp), 1)
-        #        if self.apex:
-        #            nei_vec = bmm_einsum(prob_nei, nei_v, "ilbn,lbnd->ibnd")
-        #        else:
-        #            nei_vec = torch.einsum("ilbn,lbnd->ibnd", prob_nei, nei_v)
+        #        nei_vec = torch.einsum("ilbn,lbnd->ibnd", prob_nei, nei_v)
 
         #    if indice_bool is not None: 
         #        attn_prob = attn_prob.reshape(attn_prob.size(0), -1, x_len,
@@ -493,17 +446,11 @@ class LearnableMultiheadSelfAttention(nn.Module):
         #            attn_prob = torch.einsum("ikjbn,ibk->ikjbn", attn_prob, weights)
         #        attn_prob = attn_prob.view(attn_prob.size(0), -1, *attn_prob.shape[3:])
         #        cache_v = cache_v.view(-1, *cache_v.shape[2:])
-        #        if self.apex:
-        #            attn_vec = bmm_einsum(attn_prob, cache_v, "ilbn,lbnd->ibnd")
-        #        else:
-        #            attn_vec = torch.einsum("ilbn,lbnd->ibnd", attn_prob, cache_v)
+        #        attn_vec = torch.einsum("ilbn,lbnd->ibnd", attn_prob, cache_v)
         #        if neighbor_mem is not None and nei_len > 0:
         #            attn_vec = attn_vec + nei_vec
         #    else:
-        #        if self.apex:
-        #            attn_vec = bmm_einsum(attn_prob, heads_v, "ilbn,lbnd->ibnd")
-        #        else:
-        #            attn_vec = torch.einsum("ilbn,lbnd->ibnd", attn_prob, heads_v)
+        #        attn_vec = torch.einsum("ilbn,lbnd->ibnd", attn_prob, heads_v)
         #        attn_vec = attn_vec + nei_vec
 
         attn_vec = attn_vec.reshape(attn_vec.size(0), batch_size, 
@@ -528,15 +475,15 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, apex, same_length, no_pos):
+    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, same_length, no_pos):
         super().__init__()
 
 
         self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropatt, 
-                                                    dropwei, apex, same_length, no_pos)
+                                                    dropwei, same_length, no_pos)
 
 
-        self.pos_ff = PostionwiseFF(d_model, d_ff, dropfor, apex)
+        self.pos_ff = PostionwiseFF(d_model, d_ff, dropfor)
 
     def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, cache=None, indices=None, weights=None, neighbor_mem=None, inf_ind=None, theta=1.0):
         
@@ -628,7 +575,6 @@ class TransformerLM(nn.Module):
                 dropatt=args.dropatt,
                 dropwei=args.dropwei,
                 dropfor=args.dropfor,
-                apex=args.apex,
                 same_length=args.same_length,
                 no_pos=args.no_pos))
 

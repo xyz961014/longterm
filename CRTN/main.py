@@ -38,30 +38,6 @@ from models.CRTNModel import CRTNModel
 import torch.distributed as dist
 import torch.multiprocessing as mp
 
-try:
-    from apex import amp
-    from apex.parallel import DistributedDataParallel as apexDDP
-    class ApexDataParallel(apexDDP):
-        def __init__(self, module, **kwargs):
-            super().__init__(module, **kwargs)
-            self.rank = dist.get_rank()
-            self.world_size = dist.get_world_size()
-    
-        def set_batch_size(self, batch_size):
-            batch_size = batch_division(batch_size, 
-                                        self.rank, 
-                                        self.world_size,
-                                        single_value=True)
-            self.batch_size = batch_size
-            self.module.set_batch_size(batch_size)
-except:
-    print("No apex package found")
-
-#if torch.__version__ < "1.2.0":
-#    from tensorboardX import SummaryWriter
-#else:
-#    from torch.utils.tensorboard import SummaryWriter
-
 from torch.utils.tensorboard import SummaryWriter
 
 def parse_args():
@@ -263,10 +239,6 @@ def parse_args():
                         help='path to load the transformer-xl model')
     parser.add_argument('--rank', type=int, default=0,
                         help='rank in nccl')
-    parser.add_argument('--apex', action="store_true",
-                        help='use apex to train')
-    parser.add_argument('--opt_level', type=str, default='O1',
-                        help='apex opt level')
     args = parser.parse_args()
     return args
 
@@ -457,11 +429,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             if args.beta:
                 loss = loss + args.beta * (output[1:] - output[:-1]).pow(2).mean()
 
-            if args.apex:
-                with amp.scale_loss(loss, optimizer) as scaled_loss:
-                    scaled_loss.backward()
-            else:
-                loss.backward()
+            loss.backward()
 
             total_loss += loss.item() * len_target
 
@@ -470,10 +438,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 if p.grad is not None:
                     p.grad.mul_(1 / args.update_cycle)
 
-        if args.apex:
-            torch.nn.utils.clip_grad_norm_(amp.master_params(optimizer), args.clip)
-        else:
-            torch.nn.utils.clip_grad_norm_(params, args.clip)
+        torch.nn.utils.clip_grad_norm_(params, args.clip)
 
         optimizer.step()
         step += 1
@@ -534,12 +499,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                                                                        eval_ppl))
                 if eval_ppl < best_eval_ppl: 
                     best_eval_ppl = eval_ppl
-                    torch.save({
-                        "model_args": module.args,
-                        "model_state_dict": module.state_dict(),
-                        "criterion": criterion.state_dict()
-                        }, 
-                       args.savepath + "/" + args.save + "_best.pt")
+                    save_model(module.args, module, criterion)
                     print("save best model")
                 print('-' * 60)
             start_time = time.time()
@@ -881,6 +841,14 @@ def main(args):
             #if hasattr(model, 'bias') and model.bias is not None:
             #    nn.init.constant_(model.bias, 0.0)
 
+    def save_model(args, model, criterion, lattix="best"):
+        torch.save({
+            "model_args": args,
+            "model_state_dict": model.state_dict(),
+            "criterion": criterion.state_dict()
+            }, 
+            args.savepath + "/" + args.save + "_" + lattix + ".pt")
+
 
     writer = SummaryWriter("../log/" + args.save + args.timestr)
 
@@ -945,7 +913,6 @@ def main(args):
         model_args.ema_epochs = args.ema_epochs
         model_args.mu = args.mu
         model_args.distributed = args.distributed
-        model_args.apex = args.apex
         model_args.devices = args.devices
         model_args.save = args.save
 
@@ -1125,16 +1092,10 @@ def main(args):
         optimizer = optim.SGD([{"params": p, "lr": lr} for p, lr in zip(param_list, lr_list)], 
                                weight_decay=args.weight_decay)
     
-    if args.apex:
-        model, optimizer = amp.initialize(model, optimizer, opt_level=args.opt_level)
-
     if args.distributed:
-        if args.apex:
-            model = ApexDataParallel(model) 
-        else:
-            model = DistributedDataParallel(model, 
-                                            device_ids=[device], 
-                                            dim=1)
+        model = DistributedDataParallel(model, 
+                                        device_ids=[device], 
+                                        dim=1)
         model.set_batch_size(args.batch_size)
     
     if args.scheduler == "cosine":
@@ -1178,14 +1139,12 @@ def main(args):
                           '{:8.2f}'.format(epoch, 
                                            (time.time() - epoch_start_time),
                                            eval_ppl))
+                    # save model
+                    save_model(args, module, criterion, str(epoch))
                     if eval_ppl < best_eval_ppl:
+                        # save best model
                         best_eval_ppl = eval_ppl
-                        torch.save({
-                            "model_args": args,
-                            "model_state_dict": module.state_dict(),
-                            "criterion": criterion.state_dict()
-                            }, 
-                            args.savepath + "/" + args.save + "_best.pt")
+                        save_model(args, module, criterion)
                         print("save best model")
                     print('-' * 89)
 
@@ -1236,17 +1195,11 @@ def main(args):
                           '{:8.2f}'.format(epoch, 
                                            (time.time() - epoch_start_time),
                                            eval_ppl))
+                    # save model
+                    save_model(args, module, criterion, str(epoch))
                     if eval_ppl < best_eval_ppl:
                         best_eval_ppl = eval_ppl
-                        save_dict = {
-                            "model_args": args,
-                            "model_state_dict": module.state_dict(),
-                            "criterion": criterion.state_dict()
-                            } 
-                        if args.apex:
-                            save_dict["amp"] = amp.state_dict()
-                        torch.save(save_dict, 
-                                   args.savepath + "/" + args.save + "_best.pt")
+                        save_model(args, module, criterion)
                         print("save averaged model")
 
                     print('-' * 89)
