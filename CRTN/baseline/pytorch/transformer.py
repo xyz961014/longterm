@@ -11,10 +11,6 @@ sys.path.append("../..")
 from CRTN.utils.adaptive import AdaptiveEmbedding
 from CRTN.utils.fancy_dropout import WeightDropLinear
 from torchnlp.nn import LockedDropout
-try:
-    from apex.normalization import FusedLayerNorm
-except:
-    print("No apex package found")
 
 
 class PostionalEmbedding(nn.Module):
@@ -76,7 +72,7 @@ def bmm_einsum(tensor1, tensor2, eqn="ibnd,jbnd->ijbn"):
 
 
 class PostionwiseFF(nn.Module):
-    def __init__(self, d_model, d_ff, dropfor, apex):
+    def __init__(self, d_model, d_ff, dropfor):
         super().__init__()
 
         self.d_model = d_model
@@ -90,10 +86,7 @@ class PostionwiseFF(nn.Module):
                 LockedDropout(dropfor)
                 )
 
-        if apex:
-            self.layer_norm = FusedLayerNorm(d_model)
-        else:
-            self.layer_norm = nn.LayerNorm(d_model)
+        self.layer_norm = nn.LayerNorm(d_model)
 
     def forward(self, inputs):
         
@@ -162,12 +155,11 @@ class MultiheadSelfAttention(nn.Module):
         return output
 
 class LearnableMultiheadSelfAttention(nn.Module):
-    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, apex=False, no_pos=False):
+    def __init__(self, num_head, d_model, d_head, dropatt, dropwei, no_pos=False):
         super().__init__()
         self.num_head = num_head
         self.d_model = d_model
         self.d_head = d_head
-        self.apex = apex
         self.no_pos = no_pos
 
         self.dropatt = nn.Dropout(dropatt)
@@ -185,10 +177,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         #self.lin_relemb = nn.Linear(d_model, num_head * d_head, bias=False,)
         self.lin_o = nn.Linear(num_head * d_head, d_model, bias=False)
 
-        if apex:
-            self.layer_norm = FusedLayerNorm(d_model)
-        else:
-            self.layer_norm = nn.LayerNorm(d_model)
+        self.layer_norm = nn.LayerNorm(d_model)
 
         self.scale = 1 / (d_head ** 0.5)
 
@@ -235,12 +224,8 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
         rel_emb_matrix = rel_emb_matrix.unsqueeze(1)
         rel_emb_matrix = rel_emb_matrix.expand(-1, heads_qv.size(1), -1, -1)
-        if self.apex:
-            AC = bmm_einsum(heads_qu, heads_k, "ibnd,jbnd->ijbn")
-            BD = bmm_einsum(heads_qv, rel_emb_matrix, "ibnd,jbnd->ijbn")
-        else:
-            AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
-            BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
+        AC = torch.einsum("ibnd,jbnd->ijbn", (heads_qu, heads_k))
+        BD = torch.einsum("ibnd,jbnd->ijbn", (heads_qv, rel_emb_matrix))
         
         BD = self._rel_shift(BD)
 
@@ -257,10 +242,7 @@ class LearnableMultiheadSelfAttention(nn.Module):
         attn_prob = F.softmax(attn_score, 1)
         attn_prob = self.dropatt(attn_prob)
 
-        if self.apex:
-            attn_vec = bmm_einsum(attn_prob, heads_v, "ilbn,lbnd->ibnd")
-        else:
-            attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
+        attn_vec = torch.einsum("ijbn,jbnd->ibnd", attn_prob, heads_v)
         attn_vec = attn_vec.contiguous().view(seq_len, batch_size, self.num_head * self.d_head)
 
         attn_out = self.lin_o(attn_vec)
@@ -276,12 +258,12 @@ class LearnableMultiheadSelfAttention(nn.Module):
 
 
 class TransformerUnit(nn.Module):
-    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, apex, no_pos):
+    def __init__(self, num_head, d_model, d_head, d_ff, dropatt, dropwei, dropfor, no_pos):
         super().__init__()
 
-        self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropatt, dropwei, apex, no_pos)
+        self.attn = LearnableMultiheadSelfAttention(num_head, d_model, d_head, dropatt, dropwei, no_pos)
 
-        self.pos_ff = PostionwiseFF(d_model, d_ff, dropfor, apex)
+        self.pos_ff = PostionwiseFF(d_model, d_ff, dropfor)
 
     def forward(self, inputs, pos_emb, pos_bias_u=None, pos_bias_v=None, mask=None, memory=None, theta=1.0):
         
@@ -293,7 +275,7 @@ class TransformerUnit(nn.Module):
 
 
 class TransformerLM(nn.Module):
-    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, dropfor=0.0, drophid=0.0, theta=1.0, theta_alpha=1.0, apex=False, no_pos_bias=False, no_pos=False):
+    def __init__(self, vocab_size, num_layer, num_head, d_model, d_head, d_ff, d_embedding, tied_weights, num_steps, mem_len, clamp_len, same_length, init_std, adaptive=True, div_val=1, cutoffs=[], dropout=0.0, dropatt=0.0, dropemb=0.0, dropinp=0.0, dropwei=0.0, dropfor=0.0, drophid=0.0, theta=1.0, theta_alpha=1.0, no_pos_bias=False, no_pos=False):
         super().__init__()
         self.vocab_size = vocab_size
         self.num_layer = num_layer
@@ -354,7 +336,6 @@ class TransformerLM(nn.Module):
                 dropatt=dropatt,
                 dropwei=dropwei,
                 dropfor=dropfor,
-                apex=apex,
                 no_pos=no_pos))
 
 
