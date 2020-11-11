@@ -13,6 +13,16 @@ import pickle as pkl
 #ignore future warning from tensorboard
 import warnings
 warnings.filterwarnings("ignore")
+import logging
+logger = logging.getLogger()
+logger.setLevel("DEBUG")
+formatter = logging.Formatter("", "")
+file_h = logging.FileHandler("log")
+console_h = logging.StreamHandler()
+file_h.setFormatter(formatter)
+console_h.setFormatter(formatter)
+logger.addHandler(file_h)
+logger.addHandler(console_h)
 
 sys.path.append("..")
 sys.path.append("../baseline")
@@ -467,7 +477,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         if step % args.theta_annealing_steps == 0 and args.theta_annealing_alpha < 1:
             module.theta_annealing_step()
             if args.rank == 0:
-                print("STEP {:5d}, annealing theta to {:3.4f}".format(step, module.theta))
+                logger.info("STEP {:5d}, annealing theta to {:3.4f}".format(step, module.theta))
 
 
         if batch % args.log_interval == 0 and batch > 0:
@@ -478,7 +488,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 cur_loss = cur_loss.item() / dist.get_world_size()
             elapsed = time.time() - start_time
             if args.rank == 0:
-                print('| epoch {:1d} | {:5d}/{:5d} batches | lr {:02.2e} | '
+                logger.info('| epoch {:1d} | {:5d}/{:5d} batches | lr {:02.2e} | '
                       'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
                     epoch, batch, len(train_loader), 
                     optimizer.param_groups[0]["lr"],
@@ -495,13 +505,13 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         if batch % args.eval_steps == 0 and batch > 0:
             eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
             if args.rank == 0:
-                print('| eval at step {:3d} | eval ppl {:5.2f}'.format(batch, 
+                logger.info('| eval at step {:3d} | eval ppl {:5.2f}'.format(batch, 
                                                                        eval_ppl))
                 if eval_ppl < best_eval_ppl: 
                     best_eval_ppl = eval_ppl
                     save_model(module.args, module, criterion)
-                    print("save best model")
-                print('-' * 60)
+                    logger.info("save best model")
+                logger.info('-' * 60)
             start_time = time.time()
 
     if ema is not None:
@@ -717,7 +727,7 @@ def load_dataset(args):
     
     if args.datasets == "ptb":
         if args.rank == 0:
-            print("Loading %s dataset from torchtext" % args.datasets)
+            logger.info("Loading %s dataset from torchtext" % args.datasets)
         if args.random_seq_len or args.partial_shuffle or args.sentence_cache:
             corpus = ExistingDataset("ptb", args.num_steps)
             if args.random_seq_len:
@@ -753,7 +763,7 @@ def load_dataset(args):
         vocab_size = len(vocab.itos)
     elif args.datasets == "wt2":
         if args.rank == 0:
-            print("Loading %s dataset from torchtext" % args.datasets)
+            logger.info("Loading %s dataset from torchtext" % args.datasets)
         if args.random_seq_len or args.partial_shuffle:
             corpus = ExistingDataset("wt2", args.num_steps)
             if args.random_seq_len:
@@ -779,7 +789,7 @@ def load_dataset(args):
         vocab_size = len(vocab.itos)
     elif args.datasets == "wt103":
         if args.rank == 0:
-            print("Loading %s dataset from torchtext" % args.datasets)
+            logger.info("Loading %s dataset from torchtext" % args.datasets)
         if args.random_seq_len or args.partial_shuffle:
             corpus = ExistingDataset("wt103", args.num_steps)
             if args.random_seq_len:
@@ -805,7 +815,7 @@ def load_dataset(args):
         vocab_size = len(vocab.itos)
     else:
         if args.rank == 0:
-            print("Loading data from %s" % args.data)
+            logger.info("Loading data from %s" % args.data)
         corpus = TextDataset(args.data, args.vocab_size, args.num_steps)
         vocab_size = len(corpus.TEXT.vocab.itos)
 
@@ -879,7 +889,7 @@ def main(args):
     ### Load Data ###
     datasets, vocab_size, data_time = load_dataset(args)
     args.vocab_size = vocab_size
-    print("Data loading finished. time: {:.3f} s".format(data_time))
+    logger.info("Data loading finished. time: {:.3f} s".format(data_time))
     train_loader, valid_loader, test_loader = datasets
 
     decay_steps = len(train_loader) * args.std_epochs
@@ -929,32 +939,32 @@ def main(args):
             model_args.d_head = model_args.nhid // model_args.nhead
 
         if not model_args.num_steps == args.num_steps:
-            print("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
+            logger.info("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
                                                          args.num_steps))
             model_args.num_steps = args.num_steps
         if not model_args.neighbor_len == args.neighbor_len:
-            print("REDEFINE neighbor_len: {} --> {}".format(model_args.neighbor_len, 
+            logger.info("REDEFINE neighbor_len: {} --> {}".format(model_args.neighbor_len, 
                                                             args.neighbor_len))
             model_args.neighbor_len = args.neighbor_len
         if not model_args.cache_N == args.cache_N:
-            print("REDEFINE cache_N: {} --> {}".format(model_args.cache_N, 
+            logger.info("REDEFINE cache_N: {} --> {}".format(model_args.cache_N, 
                                                        args.cache_N))
             model_args.cache_N = args.cache_N
         if not model_args.cache_k == args.cache_k:
-            print("REDEFINE cache_k: {} --> {}".format(model_args.cache_k, 
+            logger.info("REDEFINE cache_k: {} --> {}".format(model_args.cache_k, 
                                                        args.cache_k))
             model_args.cache_k = args.cache_k
         if not model_args.cache_L == args.cache_L:
-            print("REDEFINE cache_L: {} --> {}".format(model_args.cache_L, 
+            logger.info("REDEFINE cache_L: {} --> {}".format(model_args.cache_L, 
                                                        args.cache_L))
             model_args.cache_L = args.cache_L
         if not model_args.clamp_len == args.clamp_len:
-            print("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
+            logger.info("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
                                                          args.clamp_len))
             model_args.clamp_len = args.clamp_len
         if hasattr(model_args, "cache_theta"):
             if not model_args.cache_theta == args.cache_theta:
-                print("REDEFINE cache_theta: {} --> {}".format(model_args.cache_theta, 
+                logger.info("REDEFINE cache_theta: {} --> {}".format(model_args.cache_theta, 
                                                          args.cache_theta))
                 model_args.cache_theta = args.cache_theta
         else:
@@ -962,7 +972,7 @@ def main(args):
 
         if hasattr(model_args, "attn_theta"):
             if not model_args.attn_theta == args.attn_theta:
-                print("REDEFINE attn_theta: {} --> {}".format(model_args.attn_theta, 
+                logger.info("REDEFINE attn_theta: {} --> {}".format(model_args.attn_theta, 
                                                          args.attn_theta))
                 model_args.attn_theta = args.attn_theta
         else:
@@ -1006,8 +1016,8 @@ def main(args):
     #Print Params
     if args.rank == 0:
         for argk, argv in args.__dict__.items():
-            print("{}: {}".format(argk, argv))
-        print("")
+            logger.info("{}: {}".format(argk, argv))
+        logger.info("")
 
 
 
@@ -1071,14 +1081,14 @@ def main(args):
     if args.rank == 0:
         nonemb_param_num = sum([p.numel() for p in nonemb_param])
         emb_param_num = sum([p.numel() for p in emb_param])
-        print("#model params = {}".format(nonemb_param_num + emb_param_num))
-        print('#non emb params = {}'.format(nonemb_param_num))
-        print('#emb params = {}'.format(emb_param_num))
+        logger.info("#model params = {}".format(nonemb_param_num + emb_param_num))
+        logger.info('#non emb params = {}'.format(nonemb_param_num))
+        logger.info('#emb params = {}'.format(emb_param_num))
 
         if args.eval:
-            print("SKIP TRAINING")
+            logger.info("SKIP TRAINING")
         else:
-            print("TRAINING......")
+            logger.info("TRAINING......")
 
     model.cuda()
     criterion.cuda()
@@ -1134,8 +1144,8 @@ def main(args):
 
                 if args.rank == 0:
 
-                    print('-' * 89)
-                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
+                    logger.info('-' * 89)
+                    logger.info('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
                           '{:8.2f}'.format(epoch, 
                                            (time.time() - epoch_start_time),
                                            eval_ppl))
@@ -1145,8 +1155,8 @@ def main(args):
                         # save best model
                         best_eval_ppl = eval_ppl
                         save_model(args, module, criterion)
-                        print("save best model")
-                    print('-' * 89)
+                        logger.info("save best model")
+                    logger.info('-' * 89)
 
                     writer.add_scalar("valid/ppl", eval_ppl, 
                                       epoch * len(train_loader))
@@ -1160,7 +1170,7 @@ def main(args):
 
             ema_start = epoch
             if args.ema_epochs > 0:
-                print("Starting EMA at epoch {}".format(epoch))
+                logger.info("Starting EMA at epoch {}".format(epoch))
                 for p in chain(model.parameters(), criterion.parameters()):
                     ema[p] = p.data.clone()
                 for k in range(len(optimizer.param_groups)):
@@ -1190,8 +1200,8 @@ def main(args):
                 eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
 
                 if args.rank == 0:
-                    print('-' * 89)
-                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
+                    logger.info('-' * 89)
+                    logger.info('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
                           '{:8.2f}'.format(epoch, 
                                            (time.time() - epoch_start_time),
                                            eval_ppl))
@@ -1200,9 +1210,9 @@ def main(args):
                     if eval_ppl < best_eval_ppl:
                         best_eval_ppl = eval_ppl
                         save_model(args, module, criterion)
-                        print("save averaged model")
+                        logger.info("save averaged model")
 
-                    print('-' * 89)
+                    logger.info('-' * 89)
 
                     writer.add_scalar("valid/ppl", eval_ppl, 
                                       epoch * len(train_loader))
@@ -1214,8 +1224,8 @@ def main(args):
 
 
         except KeyboardInterrupt:
-            print('-' * 89)
-            print('Exiting from training early')
+            logger.info('-' * 89)
+            logger.info('Exiting from training early')
 
     ### Reload the best model
 
@@ -1255,9 +1265,9 @@ def main(args):
         if args.adaptive:
             criterion.load_state_dict(eval_checkpoint["criterion"])
 
-        print("=" * 89)
-        print("experiment name: {}".format(args.save))
-        print("saved in: {}".format(os.path.abspath(args.savepath)))
+        logger.info("=" * 89)
+        logger.info("experiment name: {}".format(args.save))
+        logger.info("saved in: {}".format(os.path.abspath(args.savepath)))
 
     if args.distributed:
         broadcast(model)
@@ -1266,14 +1276,14 @@ def main(args):
     if args.eval_temp_search:
         best_temp_ppl = float("inf")
         best_temp = 1.0
-        print("temperature search")
+        logger.info("temperature search")
         for temp in np.arange(1.0, 1.2, 0.02):
             args.eval_temperature = temp
             temp_ppl = evaluate(model, valid_loader, criterion, writer, args)
             if temp_ppl < best_temp_ppl:
                 best_temp_ppl = temp_ppl
                 best_temp = temp
-                print("UPDATE best temp {:5.2f} | valid ppl {:8.2f}".format(temp, temp_ppl))
+                logger.info("UPDATE best temp {:5.2f} | valid ppl {:8.2f}".format(temp, temp_ppl))
             else:
                 break
         args.eval_temperature = best_temp
@@ -1282,14 +1292,14 @@ def main(args):
         module = model.module if args.distributed else model
         best_atheta_ppl = float("inf")
         best_atheta = 1.0
-        print("attn theta search")
+        logger.info("attn theta search")
         for atheta in np.arange(1.0, 0.7, -0.02):
             module.set_theta(1.0, atheta)
             atheta_ppl = evaluate(model, valid_loader, criterion, writer, args)
             if atheta_ppl < best_atheta_ppl:
                 best_atheta_ppl = atheta_ppl
                 best_atheta = atheta
-                print("UPDATE best attn theta {:5.2f} | valid ppl {:8.2f}".format(atheta, atheta_ppl))
+                logger.info("UPDATE best attn theta {:5.2f} | valid ppl {:8.2f}".format(atheta, atheta_ppl))
             else:
                 break
         module.set_theta(1.0, best_atheta)
@@ -1300,14 +1310,14 @@ def main(args):
         test_ppl = evaluate(model, test_loader, criterion, writer, args)
 
     if args.rank == 0:
-        print('=' * 89)
+        logger.info('=' * 89)
         if not args.eval_index == "none":
-            print('| End of training | best valid ppl {:8.2f} on {}'.format(best_eval_ppl, args.eval_index))
+            logger.info('| End of training | best valid ppl {:8.2f} on {}'.format(best_eval_ppl, args.eval_index))
         else:
-            print('| End of training | best valid ppl {:8.2f}'.format(best_eval_ppl))
-            print('=' * 89)
-            print('| test ppl {:8.2f}'.format(test_ppl))
-        print('=' * 89)
+            logger.info('| End of training | best valid ppl {:8.2f}'.format(best_eval_ppl))
+            logger.info('=' * 89)
+            logger.info('| test ppl {:8.2f}'.format(test_ppl))
+        logger.info('=' * 89)
 
     if args.distributed:
         dist.destroy_process_group()
@@ -1344,7 +1354,7 @@ if __name__ == "__main__":
     #### Load Data ###
     #datasets, vocab_size, data_time = load_dataset(args)
     #args.vocab_size = vocab_size
-    #print("Data loading finished. time: {:.3f} s".format(data_time))
+    #logger.info("Data loading finished. time: {:.3f} s".format(data_time))
 
     world_size = len(args.devices)
 
