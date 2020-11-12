@@ -125,3 +125,15 @@ def padding_cache(tensor_list, cache_eos, cache_L):
         cache_batches.append(padded_sentences.unsqueeze(0))
 
     return torch.cat(cache_batches, dim=0)
+
+class Logger(object):
+
+    def __init__(self, filename):
+        super().__init__()
+        self.filename = filename
+
+    def log(self, string):
+        with open(self.filename, "a") as f:
+            f.write(string)
+            f.write("\n")
+        print(string)
