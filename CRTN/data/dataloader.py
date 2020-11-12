@@ -373,13 +373,13 @@ class RandomLengthBPTTIterator(data.Iterator):
                     if mem_len > 0:
                         seq_len = max(self.bptt_len - mem_len + mem_min, seq_len)
                     seq_len = min(seq_len, len(_data) - i - 1)
-                    seq_len_tensor = torch.tensor(seq_len).int()
+                    seq_len_tensor = torch.tensor(seq_len).cuda()
                 else:
-                    seq_len_tensor = torch.zeros(1).int()
+                    seq_len_tensor = torch.zeros(1).cuda()
 
                 if dist.get_world_size() > 1:
                     dist.broadcast(seq_len_tensor, 0)
-                    seq_len = seq_len_tensor.item()
+                    seq_len = int(seq_len_tensor.item())
 
                 batch_text = _data[i:i + seq_len]
                 batch_target = _data[i + 1:i + 1 + seq_len]
