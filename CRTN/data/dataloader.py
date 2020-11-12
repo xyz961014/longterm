@@ -378,7 +378,7 @@ class RandomLengthBPTTIterator(data.Iterator):
                     seq_len_tensor = torch.zeros(1).int()
 
                 if dist.get_world_size() > 1:
-                    dist.broadcast(seq_len_tensor)
+                    dist.broadcast(seq_len_tensor, 0)
                     seq_len = seq_len_tensor.item()
 
                 batch_text = _data[i:i + seq_len]
