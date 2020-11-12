@@ -10,15 +10,14 @@ from tqdm import tqdm
 from copy import copy, deepcopy
 import pickle as pkl
 
-#ignore future warning from tensorboard
-import warnings
-warnings.filterwarnings("ignore")
 import logging
-logger = logging.getLogger()
-logger.setLevel("DEBUG")
-formatter = logging.Formatter("", "")
+logger = logging.getLogger("log")
+logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter("%(message)s", "")
 file_h = logging.FileHandler("log")
 console_h = logging.StreamHandler()
+file_h.setLevel(level=logging.DEBUG)
+console_h.setLevel(level=logging.DEBUG)
 file_h.setFormatter(formatter)
 console_h.setFormatter(formatter)
 logger.addHandler(file_h)
