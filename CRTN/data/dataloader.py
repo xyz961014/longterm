@@ -17,6 +17,8 @@ from torchtext import data, datasets
 from torchtext.data import Batch, Dataset
 from CRTN.utils.utils import partial_shuffle
 
+import torch.distributed as dist
+
 UNK_token = 0  # Unknown word token
 PAD_token = 1  # Used for padding short sentences
 EOS_token = 2  # End-of-sentence token
@@ -362,14 +364,22 @@ class RandomLengthBPTTIterator(data.Iterator):
                     break
                 self.iterations += 1
 
-                #bptt = self.bptt_len
-                bptt = self.bptt_len if np.random.random() < 0.95 else self.bptt_len / 2.
-                seq_len = max(5, int(np.random.normal(bptt, 5)))
-                # set max_len in case of OOM
-                seq_len = min(seq_len, max_len)
-                if mem_len > 0:
-                    seq_len = max(self.bptt_len - mem_len + mem_min, seq_len)
-                seq_len = min(seq_len, len(_data) - i - 1)
+                if dist.get_rank() == 0:
+                    #bptt = self.bptt_len
+                    bptt = self.bptt_len if np.random.random() < 0.95 else self.bptt_len / 2.
+                    seq_len = max(5, int(np.random.normal(bptt, 5)))
+                    # set max_len in case of OOM
+                    seq_len = min(seq_len, max_len)
+                    if mem_len > 0:
+                        seq_len = max(self.bptt_len - mem_len + mem_min, seq_len)
+                    seq_len = min(seq_len, len(_data) - i - 1)
+                    seq_len_tensor = torch.tensor(seq_len).int()
+                else:
+                    seq_len_tensor = torch.zeros(1).int()
+
+                if dist.get_world_size() > 1:
+                    dist.broadcast(seq_len_tensor)
+                    seq_len = seq_len_tensor.item()
 
                 batch_text = _data[i:i + seq_len]
                 batch_target = _data[i + 1:i + 1 + seq_len]
