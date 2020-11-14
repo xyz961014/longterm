@@ -434,8 +434,6 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         for group in optimizer.param_groups:
             for p in group["params"]:
                 if p.grad is not None:
-                    if args.distributed:
-                        dist.all_reduce(p.grad)
                     p.grad.mul_(1.0 / args.update_cycle)
 
         torch.nn.utils.clip_grad_norm_(params, args.clip)
@@ -1082,10 +1080,6 @@ def main(args):
 
     model.cuda()
     criterion.cuda()
-
-    if args.distributed:
-        broadcast(model)
-        broadcast(criterion)
 
     param_list = [nonemb_param, emb_param]
     lr_list = [args.lr, args.lr * args.emb_mult]
