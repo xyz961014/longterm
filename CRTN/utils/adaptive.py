@@ -68,7 +68,7 @@ class AdaptiveEmbedding(nn.Module):
                 l_idx, r_idx = self.cutoff_ends[i], self.cutoff_ends[i + 1]
 
                 mask_i = (inp_flat >= l_idx) & (inp_flat < r_idx)
-                indices_i = mask_i.nonzero().squeeze()
+                indices_i = torch.nonzero(mask_i).squeeze()
 
                 if indices_i.numel() == 0:
                     continue
@@ -244,7 +244,7 @@ class ProjectedAdaptiveLogSoftmax(nn.Module):
                 l_idx, r_idx = cutoff_values[i], cutoff_values[i + 1]
 
                 mask_i = (target >= l_idx) & (target < r_idx)
-                indices_i = mask_i.nonzero()
+                indices_i = torch.nonzero(mask_i)
                 indices_i.squeeze_()
 
                 if not output:

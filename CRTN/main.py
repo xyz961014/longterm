@@ -321,7 +321,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
 
             # train
 
-            len_target = (target.reshape(-1).size(0) - target.eq(pad_token).nonzero().size(0))
+            len_target = target.reshape(-1).size(0) - torch.nonzero(target.eq(pad_token)).size(0)
             len_train += len_target
 
             if args.farnear:
@@ -573,7 +573,7 @@ def evaluate(model, eval_loader, criterion, writer, args):
                         eos = data.eos
 
                 eval_batch_size = text.size(1)
-                len_eval += (target.reshape(-1).size(0) - target.eq(pad_token).nonzero().size(0))
+                len_eval += (target.reshape(-1).size(0) - torch.nonzero(target.eq(pad_token)).size(0))
 
                 if args.farnear:
                     if mem is not None:
