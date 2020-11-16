@@ -28,7 +28,7 @@ from data.dataloader import TextDataset, ExistingDataset
 from utils.adaptive import ProjectedAdaptiveLogSoftmax
 from utils.visual import TargetText
 from utils.utils import init_cache_info, batch_division, param_in
-from utils.utils import padding_hidden, padding_cache, Logger
+from utils.utils import padding_hidden, padding_cache, maintain_checkpoints, Logger
 from models.CRTNModel import CRTNModel
 
 import torch.distributed as dist
@@ -227,6 +227,8 @@ def parse_args():
                         help='report interval')
     parser.add_argument('--save', type=str, default='model',
                         help='path to save the final model')
+    parser.add_argument('--save_checkpoints', type=int, default=10,
+                        help='number of checkpoints remained')
     parser.add_argument('--word_loss', action="store_true",
                         help='output loss of every word')
     parser.add_argument('--compare_farnear', action="store_true",
@@ -839,13 +841,18 @@ def main(args):
             #if hasattr(model, 'bias') and model.bias is not None:
             #    nn.init.constant_(model.bias, 0.0)
 
-    def save_model(args, model, criterion, lattix="best"):
+    def save_model(args, model, criterion, lattix="best", valid_ppl=None):
+        savename = args.savepath + "/" + args.save + "_" + lattix + ".pt"
         torch.save({
             "model_args": args,
             "model_state_dict": model.state_dict(),
             "criterion": criterion.state_dict()
             }, 
-            args.savepath + "/" + args.save + "_" + lattix + ".pt")
+            savename)
+        if valid_ppl is not None:
+            with open("saved_model_ppls", "a") as f:
+                f.write(savename + "\t" + str(valid_ppl) + "\n")
+            maintain_checkpoints(args.save_checkpoints)
 
 
     writer = SummaryWriter("../log/" + args.save + args.timestr)
@@ -1138,7 +1145,7 @@ def main(args):
                                            (time.time() - epoch_start_time),
                                            eval_ppl))
                     # save model
-                    save_model(args, module, criterion, str(epoch))
+                    save_model(args, module, criterion, str(epoch), eval_ppl)
                     if eval_ppl < best_eval_ppl:
                         # save best model
                         best_eval_ppl = eval_ppl
@@ -1194,7 +1201,7 @@ def main(args):
                                            (time.time() - epoch_start_time),
                                            eval_ppl))
                     # save model
-                    save_model(args, module, criterion, str(epoch))
+                    save_model(args, module, criterion, str(epoch), eval_ppl)
                     if eval_ppl < best_eval_ppl:
                         best_eval_ppl = eval_ppl
                         save_model(args, module, criterion)

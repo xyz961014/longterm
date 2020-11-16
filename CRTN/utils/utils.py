@@ -1,5 +1,6 @@
 import torch
 import numpy as np
+import os
 
 import torch.distributed as dist
 
@@ -137,3 +138,25 @@ class Logger(object):
             f.write(string)
             f.write("\n")
         print(string)
+
+
+def maintain_checkpoints(num=10):
+    valid_ppls = []
+    with open("saved_model_ppls", "r") as f:
+        for line in f:
+            model, ppl = line.strip().split("\t")
+            valid_ppls.append((model, float(ppl)))
+    if num < len(valid_ppls):
+        valid_ppls = sorted(valid_ppls, key=lambda x:x[1])
+        for model, ppl in valid_ppls[num:]:
+            model_path = os.path.abspath(model)
+            try:
+                os.remove(model_path)
+                print("Remove checkpoint {} with PPL {:.2f}".format(model, ppl))
+            except FileNotFoundError:
+                #print("checkpoint {} already removed".format(model))
+                pass
+
+
+if __name__ == "__main__":
+    maintain_checkpoints(2)
