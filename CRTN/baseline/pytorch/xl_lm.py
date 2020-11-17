@@ -8,10 +8,7 @@ from copy import copy
 from tqdm import tqdm
 from itertools import chain
 
-#ignore future warning from tensorboard
-import warnings
 import pickle as pkl
-warnings.filterwarnings("ignore")
 
 sys.path.append("../../..")
 
@@ -28,12 +25,14 @@ from torch.utils.data import DataLoader
 from CRTN.data.dataloader import TextDataset, ExistingDataset
 from CRTN.utils.adaptive import ProjectedAdaptiveLogSoftmax
 from CRTN.utils.visual import TargetText
+from CRTN.utils.utils import batch_division, param_in, Logger
 from CRTN.baseline.pytorch.transformer import TransformerLM
 
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.utils.tensorboard import SummaryWriter
 
+logger = Logger("log")
 
 def parse_args():
     parser = argparse.ArgumentParser()
@@ -166,6 +165,8 @@ def parse_args():
     parser.add_argument('--eval_steps', type=int, default=2000, metavar='N',
                         help='evaluation steps')
     # setting
+    parser.add_argument('--eval_metric', type=str, default='ppl', choices=["ppl", "bpc"],
+                        help='evaluation metric. use ppl for word level models and bpc for char level models')
     parser.add_argument('--eval', action='store_true',
                         help='skip training')
     parser.add_argument('--demo', action='store_true',
@@ -205,32 +206,8 @@ class DistributedDataParallel(nn.parallel.DistributedDataParallel):
         self.module.set_batch_size(batch_size)
 
 
-def batch_division(batch_size, rank=0, world_size=None, single_value=False):
-    if world_size is None:
-        world_size = dist.get_world_size()
-    batch_div = batch_size // world_size
-    if rank < world_size - 1:
-        if not single_value:
-            return batch_div * rank, batch_div * (rank + 1)
-        else:
-            return batch_div
-    elif rank == world_size - 1:
-        if not single_value:
-            return batch_div * rank, batch_size
-        else:
-            return batch_size - batch_div * rank
-
-def param_in(p, params):
-    for param in params:
-        if p.equal(param):
-            return True
-    else:
-        return False
-        
-
-
 def train(model, train_loader, valid_loader, criterion, scheduler, 
-          args, epoch, step, optimizer, best_eval_ppl, writer, ema=None):
+          args, epoch, step, optimizer, best_eval_score, writer, ema=None):
 
     model.train()
     criterion.train()
@@ -320,7 +297,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
         if step % args.theta_annealing_steps == 0 and args.theta_annealing_alpha < 1:
             module.theta_annealing_step()
             if args.rank == 0:
-                print("STEP {:5d}, annealing theta to {:3.4f}".format(step, module.theta))
+                logger.log("STEP {:5d}, annealing theta to {:3.4f}".format(step, module.theta))
 
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
@@ -330,24 +307,29 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 cur_loss = cur_loss.item() / dist.get_world_size()
             elapsed = time.time() - start_time
             if args.rank == 0:
-                print('| epoch {:1d} | {:5d}/{:5d} batches | lr {:02.2e} | '
-                        'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
+                if args.eval_metric == "ppl":
+                    cur_score = math.exp(cur_loss)
+                elif args.eval_metric == "bpc":
+                    cur_score = cur_loss / math.log(2)
+                logger.log('| epoch {:1d} | {:5d}/{:5d} batches | lr {:02.2e} | '
+                        'ms/batch {:4.0f} | loss {:4.2f} | {} {:5.2f}'.format(
                     epoch, batch, len(train_loader), 
                     optimizer.param_groups[0]["lr"],
-                    elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
-            writer.add_scalar("train/ppl", math.exp(cur_loss), 
+                    elapsed * 1000 / args.log_interval, 
+                    cur_loss, args.eval_metric,
+                    cur_score))
+            writer.add_scalar("train/" + args.eval_metric, math.exp(cur_loss), 
                               batch + (epoch - 1) * len(train_loader))
             writer.flush()
             total_loss = 0.
             start_time = time.time()
 
         if batch % args.eval_steps == 0 and batch > 0:
-            eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+            eval_score = evaluate(model, valid_loader, criterion, writer, args)
             if args.rank == 0:
-                print('| eval at step {:3d} | eval ppl {:5.2f}'.format(batch, 
-                                                                       eval_ppl))
-                if eval_ppl < best_eval_ppl: 
-                    best_eval_ppl = eval_ppl
+                logger.log('| eval at step {:3d} | eval {} {:5.2f}'.format(batch, args.eval_metric, eval_score))
+                if eval_score < best_eval_score: 
+                    best_eval_score = eval_score
                     save_dict = {
                         "model_args": args,
                         "model_state_dict": module.state_dict(),
@@ -355,14 +337,14 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                         } 
                     torch.save(save_dict, 
                                args.savepath + "/" + args.save + "_best.pt")
-                    print("save best model")
-                print('-' * 60)
+                    logger.log("save best model")
+                logger.log('-' * 60)
             start_time = time.time()
 
     if ema is not None:
-        return best_eval_ppl, step, ema
+        return best_eval_score, step, ema
     else:
-        return best_eval_ppl, step
+        return best_eval_score, step
 
 
 
@@ -464,11 +446,16 @@ def evaluate(model, eval_loader, criterion, writer, args):
         loss = torch.cat(losses, dim=0)
         mean_loss = loss.index_select(0, idxs.cuda()).mean()
         ppl = mean_loss.exp().item()
+        bpc = mean_loss.item() / math.log(2)
     else:
         ppl = math.exp(total_loss / len_eval)
+        bpc = total_loss / len_eval / math.log(2)
     model.train()
     criterion.train()
-    return ppl
+    if args.eval_metric == "ppl":
+        return ppl
+    elif args.eval_metric == "bpc":
+        return bpc
 
 
 def main(args):
@@ -519,7 +506,7 @@ def main(args):
     
     if args.datasets == "ptb":
         if args.rank == 0:
-            print("Loading %s dataset from torchtext" % args.datasets)
+            logger.log("Loading %s dataset from torchtext" % args.datasets)
         if args.random_seq_len or args.partial_shuffle:
             corpus = ExistingDataset("ptb", args.num_steps)
             if args.random_seq_len:
@@ -542,7 +529,7 @@ def main(args):
         args.vocab_size = len(vocab.itos)
     elif args.datasets == "wt2":
         if args.rank == 0:
-            print("Loading %s dataset from torchtext" % args.datasets)
+            logger.log("Loading %s dataset from torchtext" % args.datasets)
         if args.random_seq_len or args.partial_shuffle:
             corpus = ExistingDataset("wt2", args.num_steps)
             if args.random_seq_len:
@@ -565,7 +552,7 @@ def main(args):
         args.vocab_size = len(vocab.itos)
     elif args.datasets == "wt103":
         if args.rank == 0:
-            print("Loading %s dataset from torchtext" % args.datasets)
+            logger.log("Loading %s dataset from torchtext" % args.datasets)
         if args.random_seq_len or args.partial_shuffle:
             corpus = ExistingDataset("wt103", args.num_steps)
             if args.random_seq_len:
@@ -588,7 +575,7 @@ def main(args):
         args.vocab_size = len(vocab.itos)
     elif args.datasets == "fromfile":
         if args.rank == 0:
-            print("Loading data from %s" % args.data)
+            logger.log("Loading data from %s" % args.data)
         corpus = TextDataset(args.data, args.vocab_size, args.num_steps)
         args.vocab_size = len(corpus.TEXT.vocab.itos)
 
@@ -631,19 +618,19 @@ def main(args):
             model_args.d_head = model_args.nhid // model_args.nhead
 
         if not model_args.num_steps == args.num_steps:
-            print("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
+            logger.log("REDEFINE num_steps: {} --> {}".format(model_args.num_steps, 
                                                          args.num_steps))
             model_args.num_steps = args.num_steps
         if not model_args.mem_len == args.mem_len:
-            print("REDEFINE mem_len: {} --> {}".format(model_args.mem_len, 
+            logger.log("REDEFINE mem_len: {} --> {}".format(model_args.mem_len, 
                                                        args.mem_len))
             model_args.mem_len = args.mem_len
         if not model_args.clamp_len == args.clamp_len:
-            print("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
+            logger.log("REDEFINE clamp_len: {} --> {}".format(model_args.clamp_len, 
                                                          args.clamp_len))
             model_args.clamp_len = args.clamp_len
         if not model_args.theta == args.theta:
-            print("REDEFINE theta: {} --> {}".format(model_args.theta, 
+            logger.log("REDEFINE theta: {} --> {}".format(model_args.theta, 
                                                      args.theta))
             model_args.theta = args.theta
         model_args.same_length = args.same_length
@@ -667,9 +654,9 @@ def main(args):
     #Print Params
     if args.rank == 0:
         for argk, argv in args.__dict__.items():
-            print("{}: {}".format(argk, argv))
-        print("")
-        print("Data loading finished. time: {:.3f} s".format(datatime_end-datatime_begin))
+            logger.log("{}: {}".format(argk, argv))
+        logger.log("")
+        logger.log("Data loading finished. time: {:.3f} s".format(datatime_end-datatime_begin))
 
     if args.load:
 
@@ -770,14 +757,14 @@ def main(args):
     if args.rank == 0:
         nonemb_param_num = sum([p.numel() for p in nonemb_param])
         emb_param_num = sum([p.numel() for p in emb_param])
-        print("#model params = {}".format(nonemb_param_num + emb_param_num))
-        print('#non emb params = {}'.format(nonemb_param_num))
-        print('#emb params = {}'.format(emb_param_num))
+        logger.log("#model params = {}".format(nonemb_param_num + emb_param_num))
+        logger.log('#non emb params = {}'.format(nonemb_param_num))
+        logger.log('#emb params = {}'.format(emb_param_num))
 
         if args.eval:
-            print("SKIP TRAINING")
+            logger.log("SKIP TRAINING")
         else:
-            print("TRAINING......")
+            logger.log("TRAINING......")
 
 
     model.apply(init_weights)
@@ -812,14 +799,14 @@ def main(args):
 
     if not args.eval:
         try:
-            best_eval_ppl = float('inf')
-            eval_ppls = []
+            best_eval_score = float('inf')
+            eval_scores = []
             train_step = 0
             ema = dict()
             module = model.module if args.distributed else model
             for epoch in range(1, args.std_epochs+1):
                 epoch_start_time = time.time()
-                best_eval_ppl, train_step  = train(model, 
+                best_eval_score, train_step  = train(model, 
                                                    train_loader, 
                                                    valid_loader, 
                                                    criterion,
@@ -828,20 +815,21 @@ def main(args):
                                                    epoch, 
                                                    train_step,
                                                    optimizer, 
-                                                   best_eval_ppl, 
+                                                   best_eval_score, 
                                                    writer)
 
-                eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+                eval_score = evaluate(model, valid_loader, criterion, writer, args)
 
                 if args.rank == 0:
 
-                    print('-' * 89)
-                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
+                    logger.log('-' * 89)
+                    logger.log('| end of epoch {:3d} | time: {:5.2f}s | valid {} '
                           '{:8.2f}'.format(epoch, 
                                            (time.time() - epoch_start_time),
-                                           eval_ppl))
-                    if eval_ppl < best_eval_ppl:
-                        best_eval_ppl = eval_ppl
+                                           args.eval_metric,
+                                           eval_score))
+                    if eval_score < best_eval_score:
+                        best_eval_score = eval_score
                         save_dict = {
                             "model_args": args,
                             "model_state_dict": module.state_dict(),
@@ -849,23 +837,23 @@ def main(args):
                             } 
                         torch.save(save_dict, 
                                    args.savepath + "/" + args.save + "_best.pt")
-                        print("save best model")
-                    print('-' * 89)
+                        logger.log("save best model")
+                    logger.log('-' * 89)
 
-                    writer.add_scalar("valid/ppl", eval_ppl, 
+                    writer.add_scalar("valid/" + args.eval_metric, eval_score, 
                                       epoch * len(train_loader))
                     writer.flush()                
 
                 if args.nonmono > 0:
-                    if len(eval_ppls) > args.nonmono:
-                        if eval_ppl > min(eval_ppls[:-args.nonmono]):
+                    if len(eval_scores) > args.nonmono:
+                        if eval_score > min(eval_scores[:-args.nonmono]):
                             break
-                    eval_ppls.append(eval_ppl)
+                    eval_scores.append(eval_score)
 
 
             ema_start = epoch
             if args.ema_epochs > 0:
-                print("Starting EMA at epoch {}".format(epoch))
+                logger.log("Starting EMA at epoch {}".format(epoch))
                 for p in chain(model.parameters(), criterion.parameters()):
                     ema[p] = p.data.clone()
                 for k in range(len(optimizer.param_groups)):
@@ -873,7 +861,7 @@ def main(args):
 
             for epoch in range(ema_start+1, ema_start+args.ema_epochs+1):
                 epoch_start_time = time.time()
-                best_eval_ppl, train_step, ema = train(model, 
+                best_eval_score, train_step, ema = train(model, 
                                                        train_loader, 
                                                        valid_loader, 
                                                        criterion,
@@ -882,7 +870,7 @@ def main(args):
                                                        epoch, 
                                                        train_step,
                                                        optimizer, 
-                                                       best_eval_ppl, 
+                                                       best_eval_score, 
                                                        writer,
                                                        ema=ema)
                 tmp = dict()
@@ -892,16 +880,17 @@ def main(args):
                     tmp[prm] = prm.data.clone()
                     prm.data.copy_(ema[prm])
 
-                eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+                eval_score = evaluate(model, valid_loader, criterion, writer, args)
 
                 if args.rank == 0:
-                    print('-' * 89)
-                    print('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
+                    logger.log('-' * 89)
+                    logger.log('| end of epoch {:3d} | time: {:5.2f}s | valid {} '
                           '{:8.2f}'.format(epoch, 
                                            (time.time() - epoch_start_time),
-                                           eval_ppl))
-                    if eval_ppl < best_eval_ppl:
-                        best_eval_ppl = eval_ppl
+                                           args.eval_metric,
+                                           eval_score))
+                    if eval_score < best_eval_score:
+                        best_eval_score = eval_score
                         save_dict = {
                             "model_args": args,
                             "model_state_dict": module.state_dict(),
@@ -909,11 +898,11 @@ def main(args):
                             } 
                         torch.save(save_dict, 
                                    args.savepath + "/" + args.save + "_best.pt")
-                        print("save averaged model")
+                        logger.log("save averaged model")
 
-                    print('-' * 89)
+                    logger.log('-' * 89)
 
-                    writer.add_scalar("valid/ppl", eval_ppl, 
+                    writer.add_scalar("valid/" + args.eval_metric, eval_score, 
                                       epoch * len(train_loader))
                     writer.flush()                
 
@@ -923,8 +912,8 @@ def main(args):
 
 
         except KeyboardInterrupt:
-            print('-' * 89)
-            print('Exiting from training early')
+            logger.log('-' * 89)
+            logger.log('Exiting from training early')
 
     ### Reload best model
 
@@ -943,59 +932,60 @@ def main(args):
         if args.adaptive:
             criterion.load_state_dict(eval_checkpoint["criterion"])
 
-        print("=" * 89)
-        print("experiment name: {}".format(args.save))
-        print("saved in: {}".format(os.path.abspath(args.savepath)))
+        logger.log("=" * 89)
+        logger.log("experiment name: {}".format(args.save))
+        logger.log("saved in: {}".format(os.path.abspath(args.savepath)))
 
     if args.distributed:
         broadcast(model)
         broadcast(criterion)
 
     if args.eval_temp_search:
-        best_temp_ppl = float("inf")
+        best_temp_score = float("inf")
         best_temp = 1.0
-        print("temperature search")
+        logger.log("temperature search")
         for temp in np.arange(1.0, 1.2, 0.02):
             args.eval_temperature = temp
-            temp_ppl = evaluate(model, valid_loader, criterion, writer, args)
-            if temp_ppl < best_temp_ppl:
-                best_temp_ppl = temp_ppl
+            temp_score = evaluate(model, valid_loader, criterion, writer, args)
+            if temp_score < best_temp_score:
+                best_temp_score = temp_score
                 best_temp = temp
-                print("UPDATE best temp {:5.2f} | valid ppl {:8.2f}".format(temp, temp_ppl))
+                logger.log("UPDATE best temp {:5.2f} | valid {} {:8.2f}".format(temp, args.eval_metric, temp_score))
             else:
                 break
         args.eval_temperature = best_temp
 
     if args.eval_theta_search:
         module = model.module if args.distributed else model
-        best_theta_ppl = float("inf")
+        best_theta_score = float("inf")
         best_theta = 1.0
-        print("theta search")
+        logger.log("theta search")
         for theta in np.arange(1.0, 0.7, -0.02):
             module.theta = theta
-            theta_ppl = evaluate(model, valid_loader, criterion, writer, args)
-            if theta_ppl < best_theta_ppl:
-                best_theta_ppl = theta_ppl
+            theta_score = evaluate(model, valid_loader, criterion, writer, args)
+            if theta_score < best_theta_score:
+                best_theta_score = theta_score
                 best_theta = theta
-                print("UPDATE best theta {:5.2f} | valid ppl {:8.2f}".format(theta, theta_ppl))
+                logger.log("UPDATE best theta {:5.2f} | valid {} {:8.2f}".format(theta, args.eval_metric, theta_score))
             else:
                 break
         module.theta = best_theta
 
-    best_eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+    best_eval_score = evaluate(model, valid_loader, criterion, writer, args)
 
     if args.eval_index == "none":
-        test_ppl = evaluate(model, test_loader, criterion, writer, args)
+        test_score = evaluate(model, test_loader, criterion, writer, args)
 
     if args.rank == 0:
-        print('=' * 89)
+        logger.log('=' * 89)
         if not args.eval_index == "none":
-            print('| End of training | best valid ppl {:8.2f} on {}'.format(best_eval_ppl, args.eval_index))
+            logger.log('| End of training | best valid {} {:8.2f} on {}'.format(best_eval_score, args.eval_metric,
+                                                                           args.eval_index))
         else:
-            print('| End of training | best valid ppl {:8.2f}'.format(best_eval_ppl))
-            print('=' * 89)
-            print('| test ppl {:8.2f}'.format(test_ppl))
-        print('=' * 89)
+            logger.log('| End of training | best valid {} {:8.2f}'.format(args.eval_metric, best_eval_score))
+            logger.log('=' * 89)
+            logger.log('| test {} {:8.2f}'.format(args.eval_metric, test_score))
+        logger.log('=' * 89)
 
     if args.distributed:
         dist.destroy_process_group()
