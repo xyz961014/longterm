@@ -207,21 +207,16 @@ class TextDataset(object):
         
         self.TEXT = data.Field(sequential=True)
 
-        self.train_set = datasets.LanguageModelingDataset(path + "train.txt", 
-                                                              self.TEXT)
-        self.valid_set = datasets.LanguageModelingDataset(path + "valid.txt", 
-                                                              self.TEXT)
-        self.test_set = datasets.LanguageModelingDataset(path + "test.txt", 
-                                                             self.TEXT)
+        self.train_set = datasets.LanguageModelingDataset(os.path.join(path, "train.txt"), self.TEXT)
+        self.valid_set = datasets.LanguageModelingDataset(os.path.join(path, "valid.txt"), self.TEXT)
+        self.test_set = datasets.LanguageModelingDataset(os.path.join(path, "test.txt"), self.TEXT)
         self.TEXT.build_vocab(self.train_set, max_size=vocab_size)
 
     def get_train_loader(self, batch_size, **kwargs):
-        return data.BPTTIterator(self.train_set, batch_size, self.num_steps,
-                                 **kwargs)
+        return data.BPTTIterator(self.train_set, batch_size, self.num_steps, **kwargs)
 
     def randomlen_train_loader(self, batch_size, **kwargs):
-        return RandomLengthBPTTIterator(self.train_set, batch_size, self.num_steps,
-                                 **kwargs)
+        return RandomLengthBPTTIterator(self.train_set, batch_size, self.num_steps, **kwargs)
 
     def get_valid_loader(self, batch_size, **kwargs):
         return data.BPTTIterator(self.valid_set, batch_size, self.num_steps,
@@ -236,6 +231,10 @@ class TextDataset(object):
     def recl_loader(self, batch_size, target_len, context_len, **kwargs):
         return RECLIterator(self.valid_set, batch_size, target_len, context_len, 
                             **kwargs)
+
+    def partial_shuffle_loader(self, batch_size, **kwargs):
+        return PartialShuffleBPTTIterator(self.train_set, batch_size, self.num_steps, 
+                                          **kwargs)
 
 class ExistingDataset(object):
     def __init__(self, name, num_steps):

@@ -211,6 +211,8 @@ def parse_args():
     parser.add_argument('--eval_theta_search', action="store_true",
                         help='search best theta on valid set during test. 0.7-1/0.02')
     # setting
+    parser.add_argument('--eval_metric', type=str, default='ppl', choices=["ppl", "bpc"],
+                        help='evaluation metric. use ppl for word level models and bpc for char level models')
     parser.add_argument("--cache_theta", type=float, default=1.0, 
                         help="cache query theta, default: 1.0")
     parser.add_argument("--attn_theta", type=float, default=1.0, 
@@ -262,7 +264,7 @@ class DistributedDataParallel(nn.parallel.DistributedDataParallel):
 
 
 def train(model, train_loader, valid_loader, criterion, scheduler, 
-          args, epoch, step, optimizer, best_eval_ppl, writer, ema=None):
+          args, epoch, step, optimizer, best_eval_score, writer, ema=None):
 
     model.train()
     criterion.train()
@@ -478,14 +480,18 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
                 cur_loss = cur_loss.item() / dist.get_world_size()
             elapsed = time.time() - start_time
             if args.rank == 0:
+                if args.eval_metric == "ppl":
+                    cur_score = math.exp(cur_loss)
+                elif args.eval_metric == "bpc":
+                    cur_score = cur_loss / math.log(2)
                 logger.log('| epoch {:1d} | {:5d}/{:5d} batches | lr {:02.2e} | '
-                      'ms/batch {:4.0f} | loss {:4.2f} | ppl {:5.2f}'.format(
+                      'ms/batch {:4.0f} | loss {:4.2f} | {} {:5.2f}'.format(
                     epoch, batch, len(train_loader), 
                     optimizer.param_groups[0]["lr"],
                     elapsed * 1000 / args.log_interval, 
-                    cur_loss, 
-                    math.exp(cur_loss)))
-            writer.add_scalar("train/ppl", math.exp(cur_loss), 
+                    cur_loss, args.eval_metric, 
+                    cur_score))
+            writer.add_scalar("train/" + args.eval_metric, math.exp(cur_loss), 
                                 batch + (epoch - 1) * len(train_loader))
             writer.flush()
             total_loss = 0.
@@ -493,21 +499,20 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             start_time = time.time()
 
         if batch % args.eval_steps == 0 and batch > 0:
-            eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+            eval_score = evaluate(model, valid_loader, criterion, writer, args)
             if args.rank == 0:
-                logger.log('| eval at step {:3d} | eval ppl {:5.2f}'.format(batch, 
-                                                                       eval_ppl))
-                if eval_ppl < best_eval_ppl: 
-                    best_eval_ppl = eval_ppl
+                logger.log('| eval at step {:3d} | eval {} {:5.2f}'.format(batch, args.eval_metric, eval_score))
+                if eval_score < best_eval_score: 
+                    best_eval_score = eval_score
                     save_model(module.args, module, criterion)
                     logger.log("save best model")
                 logger.log('-' * 60)
             start_time = time.time()
 
     if ema is not None:
-        return best_eval_ppl, step, ema
+        return best_eval_score, step, ema
     else:
-        return best_eval_ppl, step
+        return best_eval_score, step
 
 
 def evaluate(model, eval_loader, criterion, writer, args):
@@ -705,12 +710,17 @@ def evaluate(model, eval_loader, criterion, writer, args):
         loss = torch.cat(losses, dim=0)
         mean_loss = loss.index_select(0, idxs.cuda()).mean()
         ppl = mean_loss.exp().item()
+        bpc = mean_loss.item() / math.log(2)
     else:
         ppl = math.exp(total_loss / len_eval)
+        bpc = total_loss / len_eval / math.log(2)
     model.set_batch_size(args.batch_size)
     model.train()
     criterion.train()
-    return ppl
+    if args.eval_metric == "ppl":
+        return ppl
+    elif args.eval_metric == "bpc":
+        return bpc
 
 def load_dataset(args):
     datatime_begin = time.time()
@@ -807,11 +817,19 @@ def load_dataset(args):
         if args.rank == 0:
             logger.log("Loading data from %s" % args.data)
         corpus = TextDataset(args.data, args.vocab_size, args.num_steps)
-        vocab_size = len(corpus.TEXT.vocab.itos)
-
-        train_loader = corpus.get_train_loader(args.batch_size)
+        if args.random_seq_len or args.partial_shuffle:
+            if args.random_seq_len:
+                train_loader = corpus.randomlen_train_loader(args.batch_size, 
+                                                             mem_len=args.neighbor_len,
+                                                             partial_shuffled=args.partial_shuffle)
+            else:
+                train_loader = corpus.partial_shuffle_loader(args.batch_size)
+        else:
+            train_loader = corpus.get_train_loader(args.batch_size)
         valid_loader = corpus.get_valid_loader(args.eval_batch_size)
         test_loader = corpus.get_test_loader(args.eval_batch_size)
+
+        vocab_size = len(corpus.TEXT.vocab.itos)
 
     datatime_end = time.time()
     datatime = datatime_end - datatime_begin
@@ -819,6 +837,18 @@ def load_dataset(args):
     return (train_loader, valid_loader, test_loader), vocab_size, datatime
 
 
+def save_model(args, model, criterion, lattix="best", valid_score=None):
+    savename = args.savepath + "/" + args.save + "_" + lattix + ".pt"
+    torch.save({
+        "model_args": args,
+        "model_state_dict": model.state_dict(),
+        "criterion": criterion.state_dict()
+        }, 
+        savename)
+    if valid_score is not None:
+        with open("saved_model_scores", "a") as f:
+            f.write(savename + "\t" + str(valid_score) + "\n")
+        maintain_checkpoints(args.save_checkpoints)
 
 
 def main(args):
@@ -840,20 +870,6 @@ def main(args):
                 nn.init.normal_(model.weight, 0.0, args.init_std)
             #if hasattr(model, 'bias') and model.bias is not None:
             #    nn.init.constant_(model.bias, 0.0)
-
-    def save_model(args, model, criterion, lattix="best", valid_ppl=None):
-        savename = args.savepath + "/" + args.save + "_" + lattix + ".pt"
-        torch.save({
-            "model_args": args,
-            "model_state_dict": model.state_dict(),
-            "criterion": criterion.state_dict()
-            }, 
-            savename)
-        if valid_ppl is not None:
-            with open("saved_model_ppls", "a") as f:
-                f.write(savename + "\t" + str(valid_ppl) + "\n")
-            maintain_checkpoints(args.save_checkpoints)
-
 
     writer = SummaryWriter("../log/" + args.save + args.timestr)
 
@@ -1116,14 +1132,14 @@ def main(args):
 
     if not args.eval:
         try:
-            best_eval_ppl = float('inf')
-            eval_ppls = []
+            best_eval_score = float('inf')
+            eval_scores = []
             train_step = 0
             ema = dict()
             module = model.module if args.distributed else model
             for epoch in range(1, args.std_epochs+1):
                 epoch_start_time = time.time()
-                best_eval_ppl, train_step = train(model, 
+                best_eval_score, train_step = train(model, 
                                                   train_loader, 
                                                   valid_loader, 
                                                   criterion,
@@ -1132,36 +1148,36 @@ def main(args):
                                                   epoch,
                                                   train_step,
                                                   optimizer, 
-                                                  best_eval_ppl, 
+                                                  best_eval_score, 
                                                   writer)
 
-                eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+                eval_score = evaluate(model, valid_loader, criterion, writer, args)
 
                 if args.rank == 0:
 
                     logger.log('-' * 89)
-                    logger.log('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
-                          '{:8.2f}'.format(epoch, 
-                                           (time.time() - epoch_start_time),
-                                           eval_ppl))
+
+                    logger.log('| end of epoch {:3d} | time: {:5.2f}s | valid {} '
+                               '{:8.2f}'.format(epoch, (time.time() - epoch_start_time),
+                                                args.eval_metric, eval_score))
                     # save model
-                    save_model(args, module, criterion, str(epoch), eval_ppl)
-                    if eval_ppl < best_eval_ppl:
+                    save_model(args, module, criterion, str(epoch), eval_score)
+                    if eval_score < best_eval_score:
                         # save best model
-                        best_eval_ppl = eval_ppl
+                        best_eval_score = eval_score
                         save_model(args, module, criterion)
                         logger.log("save best model")
                     logger.log('-' * 89)
 
-                    writer.add_scalar("valid/ppl", eval_ppl, 
+                    writer.add_scalar("valid/" + args.eval_metric, eval_score, 
                                       epoch * len(train_loader))
                     writer.flush()
                 
                 if args.nonmono > 0:
-                    if len(eval_ppls) > args.nonmono:
-                        if eval_ppl > min(eval_ppls[:-args.nonmono]):
+                    if len(eval_scores) > args.nonmono:
+                        if eval_score > min(eval_scores[:-args.nonmono]):
                             break
-                    eval_ppls.append(eval_ppl)
+                    eval_scores.append(eval_score)
 
             ema_start = epoch
             if args.ema_epochs > 0:
@@ -1173,7 +1189,7 @@ def main(args):
 
             for epoch in range(ema_start+1, ema_start+args.ema_epochs+1):
                 epoch_start_time = time.time()
-                best_eval_ppl, train_step, ema = train(model, 
+                best_eval_score, train_step, ema = train(model, 
                                                        train_loader, 
                                                        valid_loader, 
                                                        criterion,
@@ -1182,7 +1198,7 @@ def main(args):
                                                        epoch, 
                                                        train_step,
                                                        optimizer, 
-                                                       best_eval_ppl, 
+                                                       best_eval_score, 
                                                        writer,
                                                        ema=ema)
                 tmp = dict()
@@ -1192,24 +1208,23 @@ def main(args):
                     tmp[prm] = prm.data.clone()
                     prm.data.copy_(ema[prm])
 
-                eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+                eval_score = evaluate(model, valid_loader, criterion, writer, args)
 
                 if args.rank == 0:
                     logger.log('-' * 89)
-                    logger.log('| end of epoch {:3d} | time: {:5.2f}s | valid ppl '
-                          '{:8.2f}'.format(epoch, 
-                                           (time.time() - epoch_start_time),
-                                           eval_ppl))
+                    logger.log('| end of epoch {:3d} | time: {:5.2f}s | valid {} '
+                          '{:8.2f}'.format(epoch, (time.time() - epoch_start_time),
+                                           args.eval_metric, eval_score))
                     # save model
-                    save_model(args, module, criterion, str(epoch), eval_ppl)
-                    if eval_ppl < best_eval_ppl:
-                        best_eval_ppl = eval_ppl
+                    save_model(args, module, criterion, str(epoch), eval_score)
+                    if eval_score < best_eval_score:
+                        best_eval_score = eval_score
                         save_model(args, module, criterion)
                         logger.log("save averaged model")
 
                     logger.log('-' * 89)
 
-                    writer.add_scalar("valid/ppl", eval_ppl, 
+                    writer.add_scalar("valid/" + args.eval_metric, eval_score, 
                                       epoch * len(train_loader))
                     writer.flush()                
 
@@ -1269,49 +1284,52 @@ def main(args):
         broadcast(criterion)
 
     if args.eval_temp_search:
-        best_temp_ppl = float("inf")
+        best_temp_score = float("inf")
         best_temp = 1.0
         logger.log("temperature search")
         for temp in np.arange(1.0, 1.2, 0.02):
             args.eval_temperature = temp
-            temp_ppl = evaluate(model, valid_loader, criterion, writer, args)
-            if temp_ppl < best_temp_ppl:
-                best_temp_ppl = temp_ppl
+            temp_score = evaluate(model, valid_loader, criterion, writer, args)
+            if temp_score < best_temp_score:
+                best_temp_score = temp_score
                 best_temp = temp
-                logger.log("UPDATE best temp {:5.2f} | valid ppl {:8.2f}".format(temp, temp_ppl))
+                logger.log("UPDATE best temp {:5.2f} | valid {} {:8.2f}".format(temp, args.eval_metric, 
+                                                                                temp_score))
             else:
                 break
         args.eval_temperature = best_temp
 
     if args.eval_theta_search:
         module = model.module if args.distributed else model
-        best_atheta_ppl = float("inf")
+        best_atheta_score = float("inf")
         best_atheta = 1.0
         logger.log("attn theta search")
         for atheta in np.arange(1.0, 0.7, -0.02):
             module.set_theta(1.0, atheta)
-            atheta_ppl = evaluate(model, valid_loader, criterion, writer, args)
-            if atheta_ppl < best_atheta_ppl:
-                best_atheta_ppl = atheta_ppl
+            atheta_score = evaluate(model, valid_loader, criterion, writer, args)
+            if atheta_score < best_atheta_score:
+                best_atheta_score = atheta_score
                 best_atheta = atheta
-                logger.log("UPDATE best attn theta {:5.2f} | valid ppl {:8.2f}".format(atheta, atheta_ppl))
+                logger.log("UPDATE best attn theta {:5.2f} | valid {} {:8.2f}".format(atheta, args.eval_metric,
+                                                                                      atheta_score))
             else:
                 break
         module.set_theta(1.0, best_atheta)
 
-    best_eval_ppl = evaluate(model, valid_loader, criterion, writer, args)
+    best_eval_score = evaluate(model, valid_loader, criterion, writer, args)
 
     if args.eval_index == "none":
-        test_ppl = evaluate(model, test_loader, criterion, writer, args)
+        test_score = evaluate(model, test_loader, criterion, writer, args)
 
     if args.rank == 0:
         logger.log('=' * 89)
         if not args.eval_index == "none":
-            logger.log('| End of training | best valid ppl {:8.2f} on {}'.format(best_eval_ppl, args.eval_index))
+            logger.log('| End of training | best valid {} {:8.2f} on {}'.format(best_eval_score, args.eval_metric,
+                                                                                args.eval_index))
         else:
-            logger.log('| End of training | best valid ppl {:8.2f}'.format(best_eval_ppl))
+            logger.log('| End of training | best valid {} {:8.2f}'.format(args.eval_metric, best_eval_score))
             logger.log('=' * 89)
-            logger.log('| test ppl {:8.2f}'.format(test_ppl))
+            logger.log('| test {} {:8.2f}'.format(args.eval_metric, test_score))
         logger.log('=' * 89)
 
     if args.distributed:
