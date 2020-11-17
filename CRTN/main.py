@@ -132,7 +132,7 @@ def parse_args():
     parser.add_argument('--vocab_size', type=int, default=10000,
                         help='size of vocabulary, excluding special chars')
     parser.add_argument('--cutoffs', type=int, 
-                        default=[2000, 4000, 6000], nargs="+",
+                        default=[], nargs="+",
                         help='cutoffs for adaptive embedding')
     parser.add_argument('--max_pooling', action="store_true",
                         help='use max pooling to justice importance' 
