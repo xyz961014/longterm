@@ -995,6 +995,7 @@ def main(args):
         model_args.log_interval = args.log_interval
         model_args.eval_steps = args.eval_steps
         model_args.word_loss = args.word_loss
+        model_args.eval_metric = args.eval_metric
         model_args.eval_temperature = args.eval_temperature
         model_args.eval_temp_search = args.eval_temp_search
         model_args.eval_theta_search = args.eval_theta_search
