@@ -502,6 +502,7 @@ def train(model, train_loader, valid_loader, criterion, scheduler,
             eval_score = evaluate(model, valid_loader, criterion, writer, args)
             if args.rank == 0:
                 logger.log('| eval at step {:3d} | eval {} {:5.2f}'.format(batch, args.eval_metric, eval_score))
+                save_model(args, module, criterion, str(step), eval_score)
                 if eval_score < best_eval_score: 
                     best_eval_score = eval_score
                     save_model(module.args, module, criterion)
@@ -1161,7 +1162,7 @@ def main(args):
                                '{:8.2f}'.format(epoch, (time.time() - epoch_start_time),
                                                 args.eval_metric, eval_score))
                     # save model
-                    save_model(args, module, criterion, str(epoch), eval_score)
+                    save_model(args, module, criterion, str(train_step), eval_score)
                     if eval_score < best_eval_score:
                         # save best model
                         best_eval_score = eval_score
@@ -1216,7 +1217,7 @@ def main(args):
                           '{:8.2f}'.format(epoch, (time.time() - epoch_start_time),
                                            args.eval_metric, eval_score))
                     # save model
-                    save_model(args, module, criterion, str(epoch), eval_score)
+                    save_model(args, module, criterion, str(train_step), eval_score)
                     if eval_score < best_eval_score:
                         best_eval_score = eval_score
                         save_model(args, module, criterion)

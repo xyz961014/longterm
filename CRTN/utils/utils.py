@@ -142,7 +142,7 @@ class Logger(object):
 
 def maintain_checkpoints(num=10):
     valid_ppls = []
-    with open("saved_model_ppls", "r") as f:
+    with open("saved_model_scores", "r") as f:
         for line in f:
             model, ppl = line.strip().split("\t")
             valid_ppls.append((model, float(ppl)))
