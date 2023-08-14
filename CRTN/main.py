@@ -42,10 +42,10 @@ def parse_args():
     parser = argparse.ArgumentParser()
     # data
     parser.add_argument('--data', type=str,
-                        default='/home/xyz/Documents/Dataset/ptb_sample/',
-                        help='location of the data corpus')
-    parser.add_argument('--datasets', type=str, choices=["fromfile", "ptb", "wt2", "wt103"], 
-                        default="fromfile", help='load datasets from torchtext')
+                        default='',
+                        help='path of the data corpus')
+    parser.add_argument('--datasets', type=str, 
+                        default="ptb", help='dataset name, load datasets from torchtext: ptb, wt2, wt103')
     # optimization
     parser.add_argument('--adam', action='store_true',
                         help='adam optimizer')
@@ -725,12 +725,18 @@ def evaluate(model, eval_loader, criterion, writer, args):
 
 def load_dataset(args):
     datatime_begin = time.time()
-    
+
+    corpus_path = "../.data/" + args.datasets + ".pt"
+
     if args.datasets == "ptb":
         if args.rank == 0:
             logger.log("Loading %s dataset from torchtext" % args.datasets)
         if args.random_seq_len or args.partial_shuffle or args.sentence_cache:
-            corpus = ExistingDataset("ptb", args.num_steps)
+            if os.path.exists(corpus_path):
+                corpus = torch.load(corpus_path)
+            else:
+                corpus = ExistingDataset("ptb", args.num_steps)
+                torch.save(corpus, corpus_path)
             if args.random_seq_len:
                 train_loader = corpus.randomlen_train_loader(args.batch_size, 
                                                              mem_len=args.neighbor_len,
